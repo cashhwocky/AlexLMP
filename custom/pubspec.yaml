@@ -1,8 +1,8 @@
 # FILE: custom/pubspec.yaml
 name: audio_player
-description: Local audio player with Pixel 10 Material You themes.
+description: Local audio player with Pixel 10 Material You themes and iOS style.
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -10,8 +10,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  cupertino_icons: ^1.0.8
+  audio_service: ^0.18.15
   just_audio: ^0.9.40
   file_picker: ^8.1.2
+  image_picker: ^1.1.2
   shared_preferences: ^2.3.2
   permission_handler: ^11.3.1
 
