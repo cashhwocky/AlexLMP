@@ -32,6 +32,47 @@ jobs:
           cp custom/main.dart lib/main.dart
           rm -rf test analysis_options.yaml
 
+      - name: Force compileSdk 36 on app and all plugins
+        run: |
+          if [ -f android/build.gradle.kts ]; then
+            cat > /tmp/patch.kts <<'EOF'
+          subprojects {
+              if (!state.executed) {
+                  afterEvaluate {
+                      val androidExt = extensions.findByName("android")
+                      if (androidExt != null) {
+                          androidExt.withGroovyBuilder {
+                              "compileSdkVersion"(36)
+                          }
+                      }
+                  }
+              }
+          }
+
+          EOF
+            cat /tmp/patch.kts android/build.gradle.kts > /tmp/root.kts
+            mv /tmp/root.kts android/build.gradle.kts
+          else
+            cat > /tmp/patch.gradle <<'EOF'
+          subprojects {
+              afterEvaluate { p ->
+                  if (p.hasProperty('android')) {
+                      p.android.compileSdkVersion 36
+                  }
+              }
+          }
+
+          EOF
+            cat /tmp/patch.gradle android/build.gradle > /tmp/root.gradle
+            mv /tmp/root.gradle android/build.gradle
+          fi
+          for f in android/app/build.gradle.kts android/app/build.gradle; do
+            if [ -f "$f" ]; then
+              sed -i -E 's/compileSdk(Version)?\s*=?\s*flutter\.compileSdkVersion/compileSdk = 36/' "$f"
+              sed -i -E 's/targetSdk(Version)?\s*=?\s*flutter\.targetSdkVersion/targetSdk = 35/' "$f"
+            fi
+          done
+
       - name: Get packages
         run: flutter pub get
 
