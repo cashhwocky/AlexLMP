@@ -31,6 +31,9 @@ jobs:
           cp custom/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           cp custom/main.dart lib/main.dart
           rm -rf test analysis_options.yaml
+          find android/app/src/main -name 'MainActivity.*' -delete
+          mkdir -p android/app/src/main/kotlin/com/alexdesrosier/audio_player
+          cp custom/MainActivity.kt android/app/src/main/kotlin/com/alexdesrosier/audio_player/MainActivity.kt
 
       - name: Force compileSdk 36 on app and all plugins
         run: |
