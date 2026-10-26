@@ -1,7 +1,11 @@
 // FILE: custom/MainActivity.kt
 package com.alexdesrosier.audio_player
 
+import android.content.Context
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.media.MediaMetadataRetriever
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import com.ryanheise.audioservice.AudioServiceActivity
@@ -13,6 +17,69 @@ class MainActivity : AudioServiceActivity() {
     private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    private fun outputInfo(): HashMap<String, Any?> {
+        val map = HashMap<String, Any?>()
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val devices = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            val priority = intArrayOf(
+                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                26,
+                27,
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                AudioDeviceInfo.TYPE_USB_HEADSET,
+                AudioDeviceInfo.TYPE_USB_DEVICE,
+                AudioDeviceInfo.TYPE_HDMI
+            )
+            var best: AudioDeviceInfo? = null
+            var bestRank = Int.MAX_VALUE
+            for (d in devices) {
+                var rank = -1
+                for (i in priority.indices) {
+                    if (priority[i] == d.type) {
+                        rank = i
+                        break
+                    }
+                }
+                if (rank >= 0 && rank < bestRank) {
+                    best = d
+                    bestRank = rank
+                }
+            }
+            val b = best
+            if (b != null) {
+                val kind = when (b.type) {
+                    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, 26, 27, AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "bluetooth"
+                    AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET -> "wired"
+                    AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE -> "usb"
+                    AudioDeviceInfo.TYPE_HDMI -> "hdmi"
+                    else -> "other"
+                }
+                var name = b.productName?.toString() ?: ""
+                if (name.isBlank()) {
+                    name = when (kind) {
+                        "bluetooth" -> "Bluetooth device"
+                        "wired" -> "Wired headphones"
+                        "usb" -> "USB audio"
+                        "hdmi" -> "HDMI"
+                        else -> "External device"
+                    }
+                }
+                map["name"] = name
+                map["kind"] = kind
+            } else {
+                map["name"] = Build.MODEL
+                map["kind"] = "phone"
+            }
+        } catch (e: Exception) {
+            map["name"] = Build.MODEL
+            map["kind"] = "phone"
+        }
+        return map
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "pixelaudio/meta")
@@ -20,6 +87,7 @@ class MainActivity : AudioServiceActivity() {
                 when (call.method) {
                     "cacheDir" -> result.success(cacheDir.absolutePath)
                     "filesDir" -> result.success(filesDir.absolutePath)
+                    "outputDevice" -> result.success(outputInfo())
                     "read" -> {
                         val path = call.argument<String>("path")
                         if (path == null) {
