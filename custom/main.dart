@@ -72,9 +72,10 @@ enum PlayerStyle {
   neon,
   orb,
   minimal,
+  materialYou,
 }
 
-enum CtrlKind { tonal, plain, circle }
+enum CtrlKind { tonal, plain, circle, materialYou }
 
 const Map<PlayerStyle, String> playerLabels = {
   PlayerStyle.appleMusic: 'Apple Music',
@@ -91,6 +92,7 @@ const Map<PlayerStyle, String> playerLabels = {
   PlayerStyle.neon: 'Neon glow',
   PlayerStyle.orb: 'Orb',
   PlayerStyle.minimal: 'Typography',
+  PlayerStyle.materialYou: 'Material You',
 };
 
 const Map<PlayerStyle, String> playerDescs = {
@@ -113,6 +115,7 @@ const Map<PlayerStyle, String> playerDescs = {
   PlayerStyle.neon: 'Glowing artwork lit by the album color.',
   PlayerStyle.orb: 'Round artwork inside a glowing ring.',
   PlayerStyle.minimal: 'Typography first: a huge song title and a tiny cover.',
+  PlayerStyle.materialYou: 'Squishy pill layout matching the exact reference style.',
 };
 
 final GlobalKey<ScaffoldMessengerState> messengerKey =
@@ -3825,6 +3828,7 @@ Color accentFor(PlayerStyle s, ColorScheme cs, Color? dom) {
     case PlayerStyle.amazon:
       return const Color(0xFF25D1DA);
     case PlayerStyle.spotify:
+    case PlayerStyle.materialYou:
       return const Color(0xFF1DB954);
     case PlayerStyle.youtube:
       return const Color(0xFFFF3B3B);
@@ -3884,8 +3888,8 @@ Widget playerBackground(
     case PlayerStyle.amazon:
       return grad(const Color(0xFF14222E), const Color(0xFF05080B));
     case PlayerStyle.spotify:
-      return grad(shade(base, 0.36), const Color(0xFF121212),
-          stops: const [0.0, 0.75]);
+    case PlayerStyle.materialYou:
+      return const ColoredBox(color: Color(0xFF121212));
     case PlayerStyle.immersive:
       return const ColoredBox(color: Colors.black);
     case PlayerStyle.half:
@@ -4082,6 +4086,56 @@ Widget buildStage(StageCtx c, PlayerStyle s) {
                 shadowArt(c, sz, 8),
                 const SizedBox(height: 24),
                 titleCol(c, ts: 24, ss: 16, w: FontWeight.w800),
+              ],
+            ),
+          ),
+        );
+      });
+    case PlayerStyle.materialYou:
+      return stageBody(c, (w, h) {
+        final sz = max(80.0, min(w - 48, h - 140));
+        final fav = app.isFavorite(c.track);
+        return Center(
+          child: SizedBox(
+            width: sz,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: ArtBox(size: sz, radius: 24, artPath: c.art, active: c.active),
+                ),
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(c.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  color: c.fg,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 4),
+                          Text(c.sub,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: c.dim, fontSize: 15)),
+                        ],
+                      ),
+                    ),
+                    PIconButton(
+                      icon: fav ? Icons.favorite : Icons.favorite_border,
+                      color: fav ? Colors.white : c.fg,
+                      size: 28,
+                      onTap: () => app.toggleFavorite(c.track),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -4476,7 +4530,6 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
         final dim = dark ? Colors.white70 : cs.onSurfaceVariant;
         final accent = accentFor(s, cs, app.currentColor);
         final mq = MediaQuery.of(context);
-        final fav = app.isFavorite(t);
         final sleepEnd = app.sleepEnd;
 
         final topR = mq.padding.top + 56;
@@ -4533,6 +4586,15 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
             pfg = Colors.black;
             psz = 68;
             thumbR = 6;
+            break;
+          case PlayerStyle.materialYou:
+            kind = CtrlKind.materialYou;
+            pbg = Colors.white;
+            pfg = Colors.black;
+            psz = 88;
+            trackH = 4;
+            thumbR = 8;
+            seekActive = Colors.white;
             break;
           default:
             break;
@@ -4593,7 +4655,7 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text('PLAYING ON',
+                        Text('NOW PLAYING',
                             style: TextStyle(
                                 color: dim,
                                 fontSize: 10,
@@ -4620,11 +4682,12 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
                       ],
                     ),
                   ),
-                  PIconButton(
-                    icon: fav ? Icons.favorite : Icons.favorite_border,
-                    color: fav ? (dark ? accent : cs.primary) : fg,
-                    onTap: () => app.toggleFavorite(t),
-                  ),
+                  if (s != PlayerStyle.materialYou)
+                    PIconButton(
+                      icon: app.isFavorite(t) ? Icons.favorite : Icons.favorite_border,
+                      color: app.isFavorite(t) ? (dark ? accent : cs.primary) : fg,
+                      onTap: () => app.toggleFavorite(t),
+                    ),
                   PIconButton(
                     icon: Icons.queue_music,
                     color: fg,
@@ -4844,8 +4907,63 @@ class NpControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final dark = fg == Colors.white;
+    if (kind == CtrlKind.materialYou) {
+      Widget squishPill({
+        required Widget child,
+        required VoidCallback onTap,
+        required Color bg,
+        required double width,
+        required double height,
+      }) {
+        return Pressable(
+          scale: 0.82,
+          child: GestureDetector(
+            onTap: onTap,
+            child: Container(
+              width: width,
+              height: height,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(height / 2),
+              ),
+              child: child,
+            ),
+          ),
+        );
+      }
+
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          squishPill(
+            child: Icon(Icons.skip_previous_rounded, color: fg, size: 36),
+            onTap: app.previous,
+            bg: const Color(0xFF262626),
+            width: 88,
+            height: 72,
+          ),
+          squishPill(
+            child: Icon(
+              app.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+              color: playFg,
+              size: 42,
+            ),
+            onTap: app.togglePlay,
+            bg: playBg,
+            width: 104,
+            height: 72,
+          ),
+          squishPill(
+            child: Icon(Icons.skip_next_rounded, color: fg, size: 36),
+            onTap: app.next,
+            bg: const Color(0xFF262626),
+            width: 88,
+            height: 72,
+          ),
+        ],
+      );
+    }
 
     Widget tog(IconData icon, bool on, VoidCallback tapFn) => PIconButton(
           icon: icon,
@@ -4862,506 +4980,5 @@ class NpControls extends StatelessWidget {
     Widget skip(IconData icon, VoidCallback tapFn) {
       if (kind == CtrlKind.tonal) {
         final skipBg =
-            dark ? Colors.white.withValues(alpha: 0.2) : cs.secondaryContainer;
-        final skipFg = dark ? Colors.white : cs.onSecondaryContainer;
-        final skipR = isOneUi ? 30.0 : 22.0;
-        return Pressable(
-          scale: 0.88,
-          child: Material(
-            color: skipBg,
-            borderRadius: BorderRadius.circular(skipR),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(skipR),
-              onTap: tapFn,
-              child: SizedBox(
-                width: 60,
-                height: 60,
-                child: Icon(icon, color: skipFg, size: 32),
-              ),
-            ),
-          ),
-        );
-      }
-      return PIconButton(icon: icon, onTap: tapFn, size: 40, color: fg);
-    }
-
-    final play = PlayButton(
-      size: playSize,
-      playing: app.playing,
-      onTap: app.togglePlay,
-      bg: playBg,
-      fg: playFg,
-      morph: kind == CtrlKind.tonal && !isOneUi,
-      iconScale: kind == CtrlKind.plain ? 0.95 : 0.52,
-    );
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        tog(Icons.shuffle_rounded, app.shuffle, app.toggleShuffle),
-        skip(Icons.skip_previous_rounded, app.previous),
-        play,
-        skip(Icons.skip_next_rounded, app.next),
-        tog(rep, app.repeat != RepeatMode.off, app.cycleRepeat),
-      ],
-    );
-  }
-}
-
-class SeekBar extends StatefulWidget {
-  final Color? color;
-  final Color? active;
-  final double trackH;
-  final double thumbR;
-  const SeekBar({
-    super.key,
-    this.color,
-    this.active,
-    this.trackH = 4,
-    this.thumbR = 8,
-  });
-
-  @override
-  State<SeekBar> createState() => _SeekBarState();
-}
-
-class _SeekBarState extends State<SeekBar> {
-  double? drag;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = widget.color ?? Theme.of(context).colorScheme.onSurface;
-    final a = widget.active ?? c;
-    return StreamBuilder<Duration?>(
-      stream: app.player.durationStream,
-      builder: (context, ds) {
-        final dur = ds.data ?? app.player.duration ?? Duration.zero;
-        final maxMs = dur.inMilliseconds > 0 ? dur.inMilliseconds.toDouble() : 1.0;
-        return StreamBuilder<Duration>(
-          stream: app.player.positionStream,
-          builder: (context, ps) {
-            final pos = ps.data ?? Duration.zero;
-            final value = (drag ?? pos.inMilliseconds.toDouble())
-                .clamp(0.0, maxMs)
-                .toDouble();
-            final theme = SliderTheme.of(context).copyWith(
-              trackHeight: widget.trackH,
-              activeTrackColor: a,
-              inactiveTrackColor: c.withValues(alpha: 0.25),
-              thumbColor: a,
-              overlayColor: a.withValues(alpha: 0.12),
-              thumbShape: widget.thumbR <= 0
-                  ? SliderComponentShape.noThumb
-                  : RoundSliderThumbShape(enabledThumbRadius: widget.thumbR),
-              overlayShape: widget.thumbR <= 0
-                  ? SliderComponentShape.noOverlay
-                  : const RoundSliderOverlayShape(overlayRadius: 14),
-            );
-            return Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SliderTheme(
-                  data: theme,
-                  child: Slider(
-                    min: 0,
-                    max: maxMs,
-                    value: value,
-                    onChanged: (v) => setState(() => drag = v),
-                    onChangeEnd: (v) {
-                      app.player.seek(Duration(milliseconds: v.round()));
-                      setState(() => drag = null);
-                    },
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(fmt(Duration(milliseconds: value.round())),
-                          style: TextStyle(color: c, fontSize: 12)),
-                      Text(fmt(dur), style: TextStyle(color: c, fontSize: 12)),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Settings
-// ---------------------------------------------------------------------------
-
-class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: app,
-      builder: (context, _) {
-        final cs = Theme.of(context).colorScheme;
-        final tt = Theme.of(context).textTheme;
-        final styleLabel = isIos
-            ? (glass ? 'iOS Liquid Glass' : 'iOS AMOLED')
-            : (isOneUi ? 'One UI' : (isSpotify ? 'Spotify' : 'Material You'));
-
-        Widget group(List<Widget> kids) => Card(
-              elevation: 0,
-              color: isSpotify ? const Color(0xFF181818) : cs.surfaceContainer,
-              shape: cardShape(cardR),
-              clipBehavior: Clip.antiAlias,
-              child: Column(children: kids),
-            );
-        Widget title(String s) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(s,
-                  style: tt.titleLarge?.copyWith(
-                      fontWeight: isSpotify ? FontWeight.w800 : FontWeight.w600)),
-            );
-        Widget hint(String s) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Text(s, style: TextStyle(color: cs.onSurfaceVariant)),
-            );
-        Widget sw(IconData icon, String t, String sub, bool v,
-                ValueChanged<bool> f) =>
-            Pressable(
-              scale: 0.985,
-              child: SwitchListTile.adaptive(
-                secondary: Icon(icon),
-                title: Text(t),
-                subtitle: Text(sub),
-                value: v,
-                onChanged: f,
-              ),
-            );
-
-        final forcedDark = isSpotify || (isIos && !glass);
-
-        return AppBackdrop(
-          child: Scaffold(
-            backgroundColor: glass ? Colors.transparent : null,
-            bottomNavigationBar: app.current == null
-                ? null
-                : const SafeArea(child: MiniPlayer()),
-            body: SafeArea(
-              bottom: false,
-              child: ListView(
-                padding: EdgeInsets.fromLTRB(16, isOneUi ? 24 : 8, 16, 24),
-                children: [
-                  Padding(
-                    padding: EdgeInsets.only(bottom: isOneUi ? 28 : 12, top: isOneUi ? 24 : 0),
-                    child: Row(
-                      children: [
-                        PIconButton(
-                          icon: ic(Icons.arrow_back, CupertinoIcons.back),
-                          onTap: () => Navigator.of(context).pop(),
-                        ),
-                        const SizedBox(width: 4),
-                        Text('Settings',
-                            style: TextStyle(
-                              fontSize: isOneUi ? 34 : (isSpotify ? 26 : 30),
-                              fontWeight: isOneUi
-                                  ? FontWeight.w500
-                                  : (isSpotify ? FontWeight.w800 : FontWeight.w700),
-                              color: cs.onSurface,
-                            )),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.all(22),
-                    decoration: BoxDecoration(
-                      borderRadius:
-                          BorderRadius.circular(isIos ? 20 : (isSpotify ? 12 : 32)),
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [cs.primaryContainer, cs.tertiaryContainer],
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              width: 60,
-                              height: 60,
-                              decoration: BoxDecoration(
-                                  color: cs.primary, shape: BoxShape.circle),
-                              child: Icon(Icons.developer_mode,
-                                  color: cs.onPrimary, size: 32),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('Made by Alex Desrosier',
-                                      style: tt.headlineSmall?.copyWith(
-                                          color: cs.onPrimaryContainer)),
-                                  const SizedBox(height: 4),
-                                  Text('Pixel Audio Player',
-                                      style: TextStyle(
-                                          color: cs.onPrimaryContainer
-                                              .withValues(alpha: 0.8))),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            Chip(
-                              avatar: Icon(Icons.android,
-                                  color: cs.onPrimary, size: 18),
-                              label: Text('Custom AOSP ROM Build',
-                                  style: TextStyle(color: cs.onPrimary)),
-                              backgroundColor: cs.primary,
-                              side: BorderSide.none,
-                            ),
-                            Chip(
-                              avatar: Icon(Icons.verified,
-                                  color: cs.onSecondaryContainer, size: 18),
-                              label: Text(styleLabel),
-                              backgroundColor: cs.secondaryContainer,
-                              side: BorderSide.none,
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 28),
-
-                  title('Interface style'),
-                  hint('Switches the whole app look instantly.'),
-                  seg<UiStyle>(
-                    {
-                      UiStyle.material: 'Material',
-                      UiStyle.ios: 'iOS',
-                      UiStyle.oneui: 'One UI',
-                      UiStyle.spotify: 'Spotify',
-                    },
-                    app.uiStyle,
-                    app.setUiStyle,
-                  ),
-                  const SizedBox(height: 28),
-
-                  if (isIos) ...[
-                    title('iOS look'),
-                    hint('AMOLED Black is pure black. Liquid Glass is a frosted translucent blur.'),
-                    seg<IosVariant>(
-                      {
-                        IosVariant.amoled: 'AMOLED Black',
-                        IosVariant.glass: 'Liquid Glass',
-                      },
-                      app.iosVariant,
-                      app.setIosVariant,
-                    ),
-                    const SizedBox(height: 28),
-                  ],
-
-                  if (app.uiStyle == UiStyle.material) ...[
-                    title('Material You colors'),
-                    hint('Uses your wallpaper colors. Pick a Pixel 10 color to override.'),
-                    group([
-                      sw(Icons.wallpaper, 'Dynamic color (wallpaper)',
-                          'Follow your Android wallpaper', app.dynamicColor,
-                          app.setDynamic),
-                    ]),
-                    const SizedBox(height: 16),
-                    Opacity(
-                      opacity: app.dynamicColor ? 0.55 : 1.0,
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 16,
-                        children: [
-                          for (int i = 0; i < seedOptions.length; i++)
-                            _Swatch(
-                                index: i,
-                                selected: !app.dynamicColor && app.seedIndex == i),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 28),
-                  ] else ...[
-                    title('Accent color'),
-                    hint(isIos
-                        ? 'iOS uses system blue. Pixel 10 colors apply in Material style.'
-                        : (isOneUi
-                            ? 'One UI uses its own blue accent. Pixel 10 colors apply in Material style.'
-                            : 'Spotify green is fixed. Pixel 10 colors apply in Material style.')),
-                    const SizedBox(height: 16),
-                  ],
-
-                  title('Appearance'),
-                  if (forcedDark)
-                    hint('This style is always dark.')
-                  else
-                    const SizedBox(height: 8),
-                  if (!forcedDark)
-                    seg<ThemeMode>(
-                      {
-                        ThemeMode.system: 'System',
-                        ThemeMode.light: 'Light',
-                        ThemeMode.dark: 'Dark',
-                      },
-                      app.themeMode,
-                      app.setThemeMode,
-                    ),
-                  if (app.uiStyle == UiStyle.material || isOneUi) ...[
-                    const SizedBox(height: 8),
-                    group([
-                      sw(Icons.contrast, 'Pure AMOLED Black',
-                          'True #000000 background in dark mode', app.amoled,
-                          app.setAmoled),
-                    ]),
-                  ],
-                  const SizedBox(height: 28),
-
-                  title('Player style'),
-                  hint('Pick how the full-screen player looks. Swipe left or right to change songs.'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final ps in PlayerStyle.values)
-                        Pressable(
-                          child: ChoiceChip(
-                            label: Text(playerLabels[ps] ?? ''),
-                            selected: app.playerStyle == ps,
-                            onSelected: (_) => app.setPlayerStyle(ps),
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(playerDescs[app.playerStyle] ?? '',
-                      style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
-                  const SizedBox(height: 28),
-
-                  title('Playback'),
-                  const SizedBox(height: 8),
-                  group([
-                    sw(Icons.volume_up_outlined, 'Volume slider in player',
-                        'Show a volume slider in the playback window',
-                        app.showVolume, app.setShowVolume),
-                    sw(Icons.power_settings_new, 'Stop playback on task clear',
-                        'Stops the music when you swipe the app away from recents',
-                        app.stopOnTaskClear, app.setStopOnTaskClear),
-                  ]),
-                  const SizedBox(height: 28),
-
-                  title('Library'),
-                  const SizedBox(height: 8),
-                  group([
-                    ListTile(
-                      leading: Icon(outputIcon(app.outputKind)),
-                      title: const Text('Playing on'),
-                      subtitle: Text(app.outputName),
-                      onTap: () async {
-                        await app.requestPermissions();
-                        app.refreshOutput();
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.refresh),
-                      title: const Text('Rescan Music & Download'),
-                      subtitle: Text('${app.tracks.length} songs in library'),
-                      onTap: app.scan,
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.audio_file),
-                      title: const Text('Add songs'),
-                      onTap: app.pickFiles,
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.folder_open),
-                      title: const Text('Scan folder'),
-                      onTap: app.pickFolder,
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.security),
-                      title: const Text(
-                          'Grant audio, notification & Bluetooth permission'),
-                      onTap: () async {
-                        await app.requestPermissions();
-                        app.scan();
-                      },
-                    ),
-                  ]),
-                  const SizedBox(height: 28),
-                  Center(
-                    child: Text('Pixel Audio Player 2.0.0',
-                        style: TextStyle(color: cs.outline)),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _Swatch extends StatelessWidget {
-  final int index;
-  final bool selected;
-  const _Swatch({required this.index, required this.selected});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final opt = seedOptions[index];
-    final checkColor =
-        ThemeData.estimateBrightnessForColor(opt.color) == Brightness.dark
-            ? Colors.white
-            : Colors.black;
-    return Pressable(
-      scale: 0.88,
-      child: GestureDetector(
-        onTap: () => app.setSeed(index),
-        child: SizedBox(
-          width: 76,
-          child: Column(
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 58,
-                height: 58,
-                decoration: BoxDecoration(
-                  color: opt.color,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: selected ? cs.primary : cs.outlineVariant,
-                    width: selected ? 4 : 1.5,
-                  ),
-                ),
-                child: selected ? Icon(Icons.check, color: checkColor) : null,
-              ),
-              const SizedBox(height: 6),
-              Text(opt.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight:
-                          selected ? FontWeight.w700 : FontWeight.w400)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
+            fg == Colors.white ? Colors.white.withValues(alpha: 0.2) : Theme.of(context).colorScheme.secondaryContainer;
+        final skip
