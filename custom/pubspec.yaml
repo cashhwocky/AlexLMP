@@ -1,4 +1,3 @@
-# FILE: custom/pubspec.yaml
 name: audio_player
 description: Local audio player with Material You, iOS, One UI and Spotify themes.
 publish_to: 'none'
@@ -18,6 +17,7 @@ dependencies:
   shared_preferences: ^2.3.2
   permission_handler: ^11.3.1
   dynamic_color: ^1.7.0
+  youtube_explode_dart: ^2.1.2
 
 flutter:
   uses-material-design: true
