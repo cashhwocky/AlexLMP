@@ -4702,16 +4702,24 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
         final dim = dark ? Colors.white70 : cs.onSurfaceVariant;
         final accent = accentFor(s, cs, app.currentColor);
         final mq = MediaQuery.of(context);
+        final view = View.of(context);
+        final sysTop = view.padding.top / view.devicePixelRatio;
+        final sysBottom = view.padding.bottom / view.devicePixelRatio;
+        final topPad =
+            max(mq.padding.top, max(mq.viewPadding.top, max(sysTop, 32.0))) +
+                10.0;
+        final botPad =
+            max(mq.padding.bottom, max(mq.viewPadding.bottom, sysBottom));
         final sleepEnd = app.sleepEnd;
 
-        final topR = mq.padding.top + 56;
+        final topR = topPad + 56;
         final bottomBarH = isMatYou ? 68.0 : 48.0;
         final overlayH = 72.0 +
             96 +
             bottomBarH +
             (app.showVolume ? 44 : 0) +
             (lyricsOpen ? 184 : 0) +
-            mq.padding.bottom +
+            botPad +
             12;
         final botR = overlayH + 10;
 
@@ -4813,7 +4821,7 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
               ),
             ),
             Positioned(
-              top: mq.padding.top,
+              top: topPad,
               left: 12,
               right: 12,
               height: 56,
@@ -4912,7 +4920,7 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
               right: 0,
               bottom: 0,
               child: Padding(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, mq.padding.bottom + 10),
+                padding: EdgeInsets.fromLTRB(20, 0, 20, botPad + 10),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
