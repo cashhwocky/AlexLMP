@@ -193,7 +193,7 @@ class Track {
   String get ytId => path.startsWith('yt:') ? path.substring(3).split('|')[0] : '';
 
   String get searchQuery {
-    if (path.startsWith('sp:') || path.startsWith('yt:')) {
+    if (path.startsWith('yt:')) {
       final p = path.substring(3).split('|');
       final t = p.length > 1 ? p[1] : title;
       final a = p.length > 2 ? p[2] : '';
@@ -203,15 +203,13 @@ class Track {
   }
 
   factory Track.fromStream(String raw) {
-    final isSp = raw.startsWith('sp:');
     final parts = raw.substring(3).split('|');
     final t = parts.length > 1 ? parts[1] : 'Stream Track';
-    return Track(raw, t, DateTime.now(), isSp ? 'SPOTIFY' : 'STREAM',
-        isStream: true);
+    return Track(raw, t, DateTime.now(), 'YT', isStream: true);
   }
 
   factory Track.fromPath(String p) {
-    if (p.startsWith('yt:') || p.startsWith('sp:')) {
+    if (p.startsWith('yt:')) {
       return Track.fromStream(p);
     }
     DateTime d;
@@ -330,12 +328,6 @@ class AppState extends ChangeNotifier {
   bool stopOnTaskClear = false;
   double volume = 1.0;
 
-  String spClientId = '';
-  String spClientSecret = '';
-  String spAccessToken = '';
-  String spUserId = '';
-  String spDisplayName = '';
-
   List<Track> tracks = [];
   Set<String> favorites = {};
   Map<String, List<String>> playlists = {};
@@ -377,10 +369,6 @@ class AppState extends ChangeNotifier {
   Track? get current =>
       (index >= 0 && index < queue.length) ? queue[index] : null;
 
-  bool get spotifyConnected =>
-      spAccessToken.isNotEmpty ||
-      (spClientId.isNotEmpty && spClientSecret.isNotEmpty);
-
   ThemeMode get effectiveMode {
     if (uiStyle == UiStyle.spotify) return ThemeMode.dark;
     if (uiStyle == UiStyle.ios && iosVariant == IosVariant.amoled) {
@@ -420,12 +408,6 @@ class AppState extends ChangeNotifier {
     favorites = (p.getStringList('favorites') ?? <String>[]).toSet();
     extraPaths = p.getStringList('extra') ?? <String>[];
     recent = p.getStringList('recent') ?? <String>[];
-
-    spClientId = p.getString('spClientId') ?? '';
-    spClientSecret = p.getString('spClientSecret') ?? '';
-    spAccessToken = p.getString('spAccessToken') ?? '';
-    spUserId = p.getString('spUserId') ?? '';
-    spDisplayName = p.getString('spDisplayName') ?? '';
 
     final pl = p.getString('playlists');
     if (pl != null) {
@@ -492,70 +474,6 @@ class AppState extends ChangeNotifier {
   void _saveRecent() {
     _prefs?.setStringList('recent', recent);
     _prefs?.setString('counts', jsonEncode(counts));
-  }
-
-  void saveSpotifyCreds({
-    required String clientId,
-    required String clientSecret,
-    required String token,
-    required String userId,
-    String displayName = '',
-  }) {
-    spClientId = clientId.trim();
-    spClientSecret = clientSecret.trim();
-    spAccessToken = token.trim();
-    spUserId = userId.trim();
-    if (displayName.isNotEmpty) spDisplayName = displayName;
-    _prefs?.setString('spClientId', spClientId);
-    _prefs?.setString('spClientSecret', spClientSecret);
-    _prefs?.setString('spAccessToken', spAccessToken);
-    _prefs?.setString('spUserId', spUserId);
-    _prefs?.setString('spDisplayName', spDisplayName);
-    notifyListeners();
-  }
-
-  void logoutSpotify() {
-    spClientId = '';
-    spClientSecret = '';
-    spAccessToken = '';
-    spUserId = '';
-    spDisplayName = '';
-    _prefs?.remove('spClientId');
-    _prefs?.remove('spClientSecret');
-    _prefs?.remove('spAccessToken');
-    _prefs?.remove('spUserId');
-    _prefs?.remove('spDisplayName');
-    notifyListeners();
-    toast('Disconnected from Spotify');
-  }
-
-  Future<String?> getValidSpotifyToken() async {
-    if (spAccessToken.isNotEmpty && spClientId.isEmpty) {
-      return spAccessToken;
-    }
-    if (spClientId.isNotEmpty && spClientSecret.isNotEmpty) {
-      try {
-        final creds = base64Encode(utf8.encode('$spClientId:$spClientSecret'));
-        final res = await http.post(
-          Uri.parse('https://accounts.spotify.com/api/token'),
-          headers: {
-            'Authorization': 'Basic $creds',
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: 'grant_type=client_credentials',
-        );
-        if (res.statusCode == 200) {
-          final data = jsonDecode(res.body) as Map;
-          final tok = data['access_token'] as String?;
-          if (tok != null && tok.isNotEmpty) {
-            spAccessToken = tok;
-            _prefs?.setString('spAccessToken', tok);
-            return tok;
-          }
-        }
-      } catch (_) {}
-    }
-    return spAccessToken.isNotEmpty ? spAccessToken : null;
   }
 
   Future<void> refreshOutput() async {
@@ -724,12 +642,11 @@ class AppState extends ChangeNotifier {
     String? artist;
     String? album;
     String? artPath;
-    if (path.startsWith('yt:') || path.startsWith('sp:')) {
-      final isSp = path.startsWith('sp:');
+    if (path.startsWith('yt:')) {
       final parts = path.substring(3).split('|');
       title = parts.length > 1 ? parts[1] : 'Track';
-      artist = parts.length > 2 ? parts[2] : (isSp ? 'Spotify' : 'YouTube Music');
-      album = isSp ? 'Spotify' : 'YouTube Music';
+      artist = parts.length > 2 ? parts[2] : 'YouTube Music';
+      album = 'YouTube Music';
       artPath = parts.length > 3 && parts[3].isNotEmpty ? parts[3] : null;
     } else {
       try {
@@ -895,11 +812,19 @@ class AppState extends ChangeNotifier {
         orElse: () => Track.fromStream(key));
   }
 
+  Track addYtTrack(Video v) => addStreamTrack(
+      prefix: 'yt',
+      id: v.id.value,
+      title: v.title,
+      artist: v.author,
+      artUrl: v.thumbnails.highResUrl,
+    );
+
   void _rebuildTracks() {
     final paths = <String>{
       ..._scanned,
       ...extraPaths.where((p) {
-        if (p.startsWith('yt:') || p.startsWith('sp:')) return true;
+        if (p.startsWith('yt:')) return true;
         try {
           return File(p).existsSync();
         } catch (_) {
@@ -1067,9 +992,9 @@ class AppState extends ChangeNotifier {
   void toggleFavorite(Track t) {
     if (!favorites.remove(t.path)) {
       favorites.add(t.path);
-      toast('Added to Liked Songs');
+      toast('Added to Favorites');
     } else {
-      toast('Removed from Liked Songs');
+      toast('Removed from Favorites');
     }
     _saveFavorites();
     notifyListeners();
@@ -1227,24 +1152,6 @@ class AppState extends ChangeNotifier {
             final best = dlUrls.last as Map;
             final url = best['url'] as String?;
             if (url != null && url.startsWith('http')) return url;
-          }
-        }
-      }
-    } catch (_) {}
-
-    try {
-      final uri = Uri.parse(
-          'https://itunes.apple.com/search?term=${Uri.encodeComponent(searchQuery)}&entity=song&limit=3');
-      final res = await http.get(uri).timeout(const Duration(seconds: 5));
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body) as Map;
-        final results = data['results'] as List?;
-        if (results != null && results.isNotEmpty) {
-          for (final item in results) {
-            if (item is Map) {
-              final pUrl = item['previewUrl'] as String?;
-              if (pUrl != null && pUrl.startsWith('http')) return pUrl;
-            }
           }
         }
       }
@@ -1853,11 +1760,11 @@ class _HomeShellState extends State<HomeShell> {
     return ListenableBuilder(
       listenable: app,
       builder: (context, _) {
-        const pages = <Widget>[
-          HomePage(),
-          LibraryPage(),
-          FavoritesPage(),
-          PlaylistsPage(),
+        final pages = <Widget>[
+          const HomePage(),
+          const LibraryPage(),
+          const FavoritesPage(),
+          const PlaylistsPage(),
         ];
         final content = IndexedStack(index: tab, children: pages);
         final nav = AppNavBar(index: tab, onTap: (i) => setState(() => tab = i));
@@ -2041,6 +1948,2528 @@ class AppNavBar extends StatelessWidget {
         child: SizedBox(
           height: h,
           child: Row(children: [for (var i = 0; i < 4; i++) item(i)]),
+        ),
+      ),
+    );
+  }
+}
+
+Widget pageHeader(BuildContext context, String title,
+    {List<Widget> actions = const []}) {
+  final cs = Theme.of(context).colorScheme;
+  final tt = Theme.of(context).textTheme;
+  TextStyle st;
+  if (isOneUi) {
+    st = TextStyle(fontSize: 34, fontWeight: FontWeight.w500, color: cs.onSurface);
+  } else if (isIos) {
+    st = TextStyle(
+        fontSize: 34,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.3,
+        color: cs.onSurface);
+  } else if (isSpotify) {
+    st = const TextStyle(
+        fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white);
+  } else {
+    st = (tt.headlineMedium ?? const TextStyle())
+        .copyWith(fontSize: 30, color: cs.onSurface);
+  }
+  return Padding(
+    padding: EdgeInsets.fromLTRB(20, isOneUi ? 72 : 12, 8, isOneUi ? 20 : 8),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(title,
+              maxLines: 1, overflow: TextOverflow.ellipsis, style: st),
+        ),
+        ...actions,
+        PIconButton(
+          icon: ic(Icons.settings_outlined, CupertinoIcons.gear),
+          tooltip: 'Settings',
+          onTap: () => openSettings(context),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget sectionTitle(BuildContext context, String text) {
+  final cs = Theme.of(context).colorScheme;
+  return Padding(
+    padding: const EdgeInsets.fromLTRB(20, 18, 16, 10),
+    child: Text(
+      text,
+      style: TextStyle(
+        fontSize: isSpotify ? 22 : 20,
+        fontWeight: isSpotify ? FontWeight.w800 : FontWeight.w700,
+        color: cs.onSurface,
+      ),
+    ),
+  );
+}
+
+Widget seg<T extends Object>(
+    Map<T, String> options, T value, ValueChanged<T> onChanged) {
+  if (isIos) {
+    return SizedBox(
+      width: double.infinity,
+      child: CupertinoSlidingSegmentedControl<T>(
+        groupValue: value,
+        children: {
+          for (final e in options.entries)
+            e.key: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: Text(e.value, style: const TextStyle(fontSize: 13)),
+            ),
+        },
+        onValueChanged: (v) {
+          if (v != null) onChanged(v);
+        },
+      ),
+    );
+  }
+  return SizedBox(
+    width: double.infinity,
+    child: SegmentedButton<T>(
+      showSelectedIcon: false,
+      segments: [
+        for (final e in options.entries)
+          ButtonSegment<T>(value: e.key, label: Text(e.value)),
+      ],
+      selected: {value},
+      onSelectionChanged: (s) => onChanged(s.first),
+    ),
+  );
+}
+
+Widget artFill(String? path, ColorScheme cs, {int w = 800}) {
+  final fallback = DecoratedBox(
+    decoration: BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [cs.primaryContainer, cs.tertiaryContainer],
+      ),
+    ),
+    child: Center(
+      child: Icon(Icons.music_note_rounded,
+          size: 64, color: cs.onPrimaryContainer),
+    ),
+  );
+  if (path == null || path.isEmpty) return fallback;
+  if (path.startsWith('http')) {
+    return Image.network(
+      path,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      gaplessPlayback: true,
+      errorBuilder: (_, __, ___) => fallback,
+    );
+  }
+  return Image.file(
+    File(path),
+    fit: BoxFit.cover,
+    width: double.infinity,
+    height: double.infinity,
+    gaplessPlayback: true,
+    cacheWidth: w,
+    errorBuilder: (_, __, ___) => fallback,
+  );
+}
+
+class ArtBox extends StatelessWidget {
+  final double size;
+  final double radius;
+  final bool active;
+  final String? artPath;
+  const ArtBox({
+    super.key,
+    required this.size,
+    required this.radius,
+    this.active = false,
+    this.artPath,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final fallback = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(radius),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [cs.primaryContainer, cs.tertiaryContainer],
+        ),
+      ),
+      child: Icon(
+        active ? Icons.graphic_eq : Icons.music_note_rounded,
+        size: size * 0.5,
+        color: cs.onPrimaryContainer,
+      ),
+    );
+    final p = artPath;
+    if (p == null || p.isEmpty) return fallback;
+    if (p.startsWith('http')) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: Image.network(
+          p,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) => fallback,
+        ),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: Image.file(
+        File(p),
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        cacheWidth: min(1200, (size * 2.5).round()),
+        errorBuilder: (_, __, ___) => fallback,
+      ),
+    );
+  }
+}
+
+class CoverBox extends StatelessWidget {
+  final String? path;
+  final double size;
+  final double radius;
+  const CoverBox(
+      {super.key, required this.path, required this.size, required this.radius});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final fallback = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: cs.tertiaryContainer,
+        borderRadius: BorderRadius.circular(radius),
+      ),
+      child: Icon(Icons.queue_music,
+          size: size * 0.45, color: cs.onTertiaryContainer),
+    );
+    final p = path;
+    if (p == null || p.isEmpty) return fallback;
+    if (p.startsWith('http')) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: Image.network(
+          p,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) => fallback,
+        ),
+      );
+    }
+    if (!fileOk(p)) return fallback;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: Image.file(
+        File(p),
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        cacheWidth: min(900, (size * 2.5).round()),
+        errorBuilder: (_, __, ___) => fallback,
+      ),
+    );
+  }
+}
+
+class PlayButton extends StatelessWidget {
+  final double size;
+  final bool playing;
+  final VoidCallback onTap;
+  final Color bg;
+  final Color fg;
+  final bool morph;
+  final double iconScale;
+  const PlayButton({
+    super.key,
+    required this.size,
+    required this.playing,
+    required this.onTap,
+    required this.bg,
+    required this.fg,
+    this.morph = true,
+    this.iconScale = 0.52,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Pressable(
+      scale: 0.88,
+      squish: true,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+          width: size,
+          height: size,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(
+                (morph && playing) ? size * 0.32 : size / 2),
+          ),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            transitionBuilder: (child, anim) =>
+                ScaleTransition(scale: anim, child: child),
+            child: Icon(
+              playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+              key: ValueKey<bool>(playing),
+              color: fg,
+              size: size * iconScale,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class VinylDisc extends StatefulWidget {
+  final double size;
+  final bool playing;
+  final String? artPath;
+  const VinylDisc(
+      {super.key, required this.size, required this.playing, this.artPath});
+
+  @override
+  State<VinylDisc> createState() => _VinylDiscState();
+}
+
+class _VinylDiscState extends State<VinylDisc>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController c =
+      AnimationController(vsync: this, duration: const Duration(seconds: 10));
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.playing) c.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant VinylDisc oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.playing && !c.isAnimating) {
+      c.repeat();
+    } else if (!widget.playing && c.isAnimating) {
+      c.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.size;
+    return RotationTransition(
+      turns: c,
+      child: Container(
+        width: s,
+        height: s,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: const Color(0xFF101010),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.45),
+              blurRadius: 30,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            for (final f in const [0.94, 0.84, 0.74, 0.64])
+              Container(
+                width: s * f,
+                height: s * f,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white12, width: 1),
+                ),
+              ),
+            ArtBox(
+              size: s * 0.46,
+              radius: s * 0.23,
+              artPath: widget.artPath,
+              active: widget.playing,
+            ),
+            Container(
+              width: s * 0.07,
+              height: s * 0.07,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Color(0xFF101010),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class EqBars extends StatefulWidget {
+  final bool playing;
+  final Color color;
+  final double height;
+  const EqBars(
+      {super.key,
+      required this.playing,
+      required this.color,
+      required this.height});
+
+  @override
+  State<EqBars> createState() => _EqBarsState();
+}
+
+class _EqBarsState extends State<EqBars> with SingleTickerProviderStateMixin {
+  late final AnimationController c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1800));
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.playing) c.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant EqBars oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.playing && !c.isAnimating) {
+      c.repeat();
+    } else if (!widget.playing && c.isAnimating) {
+      c.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: c,
+      builder: (context, _) {
+        const n = 21;
+        return SizedBox(
+          height: widget.height,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: List<Widget>.generate(n, (i) {
+              final phase = c.value * 2 * pi * (1 + (i % 4)) + i * 0.7;
+              final v = 0.18 + 0.82 * ((sin(phase) + 1) / 2);
+              return Container(
+                width: 8,
+                height: widget.height * v,
+                decoration: BoxDecoration(
+                  color: widget.color.withValues(alpha: 0.45 + 0.55 * v),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              );
+            }),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class EmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget? action;
+  const EmptyState(
+      {super.key,
+      required this.icon,
+      required this.title,
+      required this.subtitle,
+      this.action});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 72, color: cs.outline),
+            const SizedBox(height: 16),
+            Text(title,
+                style: Theme.of(context).textTheme.titleLarge,
+                textAlign: TextAlign.center),
+            const SizedBox(height: 8),
+            Text(subtitle,
+                style: TextStyle(color: cs.onSurfaceVariant),
+                textAlign: TextAlign.center),
+            if (action != null) ...[const SizedBox(height: 20), action!],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Future<NewPlaylist?> askPlaylist(BuildContext context) {
+  return showDialog<NewPlaylist>(
+    context: context,
+    builder: (_) => const NameDialog(),
+  );
+}
+
+class NameDialog extends StatefulWidget {
+  const NameDialog({super.key});
+
+  @override
+  State<NameDialog> createState() => _NameDialogState();
+}
+
+class _NameDialogState extends State<NameDialog> {
+  final TextEditingController c = TextEditingController();
+  String? cover;
+
+  @override
+  void dispose() {
+    c.dispose();
+    super.dispose();
+  }
+
+  Future<void> pick() async {
+    final p = await app.pickCoverImage();
+    if (p != null && mounted) setState(() => cover = p);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New playlist'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Pressable(
+              child: GestureDetector(
+                onTap: pick,
+                child: CoverBox(path: cover, size: 96, radius: isIos ? 14 : 28),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: pick,
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              label: Text(cover == null ? 'Add photo' : 'Change photo'),
+            ),
+            const SizedBox(height: 4),
+            TextField(
+              controller: c,
+              autofocus: true,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                hintText: 'Playlist name',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (v) =>
+                  Navigator.pop(context, NewPlaylist(v.trim(), cover)),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+            onPressed: () =>
+                Navigator.pop(context, NewPlaylist(c.text.trim(), cover)),
+            child: const Text('Create')),
+      ],
+    );
+  }
+}
+
+Future<void> editSongDialog(BuildContext context, Track t) async {
+  final m = await app.metaFor(t.path);
+  if (!context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (_) => EditSongDialog(track: t, meta: m),
+  );
+}
+
+class EditSongDialog extends StatefulWidget {
+  final Track track;
+  final TrackMeta meta;
+  const EditSongDialog({super.key, required this.track, required this.meta});
+
+  @override
+  State<EditSongDialog> createState() => _EditSongDialogState();
+}
+
+class _EditSongDialogState extends State<EditSongDialog> {
+  late final TextEditingController title =
+      TextEditingController(text: widget.meta.title ?? widget.track.title);
+  late final TextEditingController artist =
+      TextEditingController(text: widget.meta.artist ?? '');
+  String? art;
+  bool artChanged = false;
+
+  @override
+  void initState() {
+    super.initState();
+    art = widget.meta.art;
+  }
+
+  @override
+  void dispose() {
+    title.dispose();
+    artist.dispose();
+    super.dispose();
+  }
+
+  Future<void> pick() async {
+    final p = await app.pickImageTo('artwork');
+    if (p != null && mounted) {
+      setState(() {
+        art = p;
+        artChanged = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit song'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Pressable(
+              child: GestureDetector(
+                onTap: pick,
+                child: ArtBox(size: 120, radius: isIos ? 14 : 28, artPath: art),
+              ),
+            ),
+            Wrap(
+              alignment: WrapAlignment.center,
+              children: [
+                TextButton.icon(
+                  onPressed: pick,
+                  icon: const Icon(Icons.image_outlined),
+                  label: const Text('Artwork'),
+                ),
+                if (art != null)
+                  TextButton(
+                    onPressed: () => setState(() {
+                      art = null;
+                      artChanged = true;
+                    }),
+                    child: const Text('Remove'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: title,
+              decoration: const InputDecoration(
+                labelText: 'Title',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: artist,
+              decoration: const InputDecoration(
+                labelText: 'Artist',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            app.resetEdit(widget.track.path);
+            Navigator.pop(context);
+          },
+          child: const Text('Reset'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            app.saveEdit(
+              widget.track.path,
+              title: title.text,
+              artist: artist.text,
+              art: art,
+              artChanged: artChanged,
+            );
+            Navigator.pop(context);
+          },
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
+class LyricsDialog extends StatefulWidget {
+  final Track track;
+  const LyricsDialog({super.key, required this.track});
+
+  @override
+  State<LyricsDialog> createState() => _LyricsDialogState();
+}
+
+class _LyricsDialogState extends State<LyricsDialog> {
+  late final TextEditingController c =
+      TextEditingController(text: app.lyricsFor(widget.track.path) ?? '');
+
+  @override
+  void dispose() {
+    c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Lyrics'),
+      content: TextField(
+        controller: c,
+        autofocus: true,
+        minLines: 8,
+        maxLines: 12,
+        keyboardType: TextInputType.multiline,
+        decoration: const InputDecoration(
+          hintText: 'Paste the lyrics here',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () {
+            app.setLyrics(widget.track.path, '');
+            Navigator.pop(context);
+          },
+          child: const Text('Clear'),
+        ),
+        FilledButton(
+          onPressed: () {
+            app.setLyrics(widget.track.path, c.text);
+            Navigator.pop(context);
+          },
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
+Future<void> addToPlaylistSheet(BuildContext context, Track t) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (ctx) {
+      return SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.add),
+              title: const Text('New playlist'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final n = await askPlaylist(context);
+                if (n != null && n.name.isNotEmpty) {
+                  app.createPlaylist(n.name, cover: n.cover);
+                  app.addToPlaylist(n.name, t);
+                  toast('Added to ${n.name}');
+                }
+              },
+            ),
+            for (final n in app.playlists.keys)
+              ListTile(
+                leading: const Icon(Icons.queue_music),
+                title: Text(n),
+                onTap: () {
+                  app.addToPlaylist(n, t);
+                  Navigator.pop(ctx);
+                  toast('Added to $n');
+                },
+              ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+void openNowPlaying(BuildContext context) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: false,
+    showDragHandle: false,
+    clipBehavior: Clip.antiAlias,
+    shape: RoundedRectangleBorder(
+      borderRadius:
+          BorderRadius.vertical(top: Radius.circular(isIos ? 14 : 28)),
+    ),
+    builder: (ctx) => SizedBox(
+      height: MediaQuery.of(ctx).size.height,
+      child: const NowPlayingSheet(),
+    ),
+  );
+}
+
+void openQueue(BuildContext context) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (ctx) => SizedBox(
+      height: MediaQuery.of(ctx).size.height * 0.75,
+      child: const QueueSheet(),
+    ),
+  );
+}
+
+class CloudSearchItem {
+  final String prefix;
+  final String id;
+  final String title;
+  final String artist;
+  final String artUrl;
+  const CloudSearchItem({
+    required this.prefix,
+    required this.id,
+    required this.title,
+    required this.artist,
+    required this.artUrl,
+  });
+}
+
+Future<void> showCloudSearchDialog(BuildContext context) async {
+  final TextEditingController searchCtrl = TextEditingController();
+  List<CloudSearchItem> results = [];
+  bool searching = false;
+
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (context, setStateModal) {
+        Future<void> runSearch(String q) async {
+          final query = q.trim();
+          if (query.isEmpty) return;
+          setStateModal(() => searching = true);
+          final found = <CloudSearchItem>[];
+
+          final yt = YoutubeExplode();
+          try {
+            final searchResults = await yt.search
+                .search(query)
+                .timeout(const Duration(seconds: 6));
+            for (final v in searchResults) {
+              found.add(CloudSearchItem(
+                prefix: 'yt',
+                id: v.id.value,
+                title: v.title,
+                artist: v.author,
+                artUrl: v.thumbnails.highResUrl,
+              ));
+            }
+          } catch (_) {
+          } finally {
+            yt.close();
+          }
+
+          if (found.isEmpty) {
+            try {
+              final res = await http
+                  .get(Uri.parse(
+                      'https://itunes.apple.com/search?term=${Uri.encodeComponent(query)}&entity=song&limit=15'))
+                  .timeout(const Duration(seconds: 5));
+              if (res.statusCode == 200) {
+                final data = jsonDecode(res.body) as Map;
+                final items = (data['results'] as List?) ?? [];
+                for (final item in items) {
+                  if (item is! Map) continue;
+                  found.add(CloudSearchItem(
+                    prefix: 'yt',
+                    id: '${item['trackId'] ?? found.length}',
+                    title: (item['trackName'] as String?) ?? 'Track',
+                    artist: (item['artistName'] as String?) ?? 'Artist',
+                    artUrl: ((item['artworkUrl100'] as String?) ?? '')
+                        .replaceAll('100x100bb', '600x600bb'),
+                  ));
+                }
+              }
+            } catch (_) {}
+          }
+
+          results = found;
+          if (context.mounted) setStateModal(() => searching = false);
+        }
+
+        return AlertDialog(
+          title: const Text('Search Songs Online'),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 400,
+            child: Column(
+              children: [
+                TextField(
+                  controller: searchCtrl,
+                  autofocus: true,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    hintText: 'Song or artist name...',
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.search),
+                      onPressed: () => runSearch(searchCtrl.text),
+                    ),
+                  ),
+                  onSubmitted: runSearch,
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: searching
+                      ? const Center(child: CircularProgressIndicator())
+                      : results.isEmpty
+                          ? const Center(
+                              child: Text('Search any song to stream or save.'))
+                          : ListView.builder(
+                              itemCount: results.length,
+                              itemBuilder: (context, i) {
+                                final r = results[i];
+                                return ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: r.artUrl.isNotEmpty
+                                        ? Image.network(
+                                            r.artUrl,
+                                            width: 48,
+                                            height: 48,
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (_, __, ___) =>
+                                                const Icon(Icons.music_note),
+                                          )
+                                        : const Icon(Icons.music_note, size: 40),
+                                  ),
+                                  title: Text(r.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis),
+                                  subtitle: Text(r.artist,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.add_circle_outline),
+                                    tooltip: 'Save to Library',
+                                    onPressed: () {
+                                      app.addStreamTrack(
+                                        prefix: r.prefix,
+                                        id: r.id,
+                                        title: r.title,
+                                        artist: r.artist,
+                                        artUrl: r.artUrl,
+                                      );
+                                      toast('Saved to Library');
+                                    },
+                                  ),
+                                  onTap: () {
+                                    final t = app.addStreamTrack(
+                                      prefix: r.prefix,
+                                      id: r.id,
+                                      title: r.title,
+                                      artist: r.artist,
+                                      artUrl: r.artUrl,
+                                    );
+                                    app.playQueue([t], 0, force: true);
+                                    Navigator.pop(ctx);
+                                  },
+                                );
+                              },
+                            ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+class TrackTile extends StatelessWidget {
+  final Track track;
+  final List<Track> queue;
+  final int index;
+  final String? playlist;
+  final bool first;
+  final bool last;
+  const TrackTile({
+    super.key,
+    required this.track,
+    required this.queue,
+    required this.index,
+    this.playlist,
+    this.first = false,
+    this.last = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final isCur = app.current?.path == track.path;
+    final fav = app.isFavorite(track);
+    Color bg;
+    if (isSpotify) {
+      bg = Colors.transparent;
+    } else if (isCur) {
+      bg = isIos
+          ? cs.primary.withValues(alpha: 0.14)
+          : (isOneUi ? cs.primaryContainer : cs.secondaryContainer);
+    } else {
+      bg = cs.surfaceContainer;
+    }
+    final r = cardR;
+    BorderRadius br;
+    if (isOneUi) {
+      br = BorderRadius.vertical(
+        top: Radius.circular(first ? r : 4),
+        bottom: Radius.circular(last ? r : 4),
+      );
+    } else {
+      br = BorderRadius.circular(r);
+    }
+    final shape = RoundedRectangleBorder(
+      borderRadius: br,
+      side: glass
+          ? BorderSide(color: Colors.white.withValues(alpha: 0.18))
+          : BorderSide.none,
+    );
+    var titleStyle = Theme.of(context).textTheme.titleMedium;
+    if (isSpotify && isCur) {
+      titleStyle = titleStyle?.copyWith(color: cs.primary);
+    }
+    return Pressable(
+      scale: 0.975,
+      child: Card(
+        elevation: 0,
+        margin: EdgeInsets.only(
+            bottom: isOneUi ? 2 : (isSpotify ? 0 : (isIos ? 6 : 8))),
+        color: bg,
+        shape: shape,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => app.playQueue(queue, index),
+          child: FutureBuilder<TrackMeta>(
+            initialData: app.metaNow(track.path),
+            future: app.metaFor(track.path),
+            builder: (context, snap) {
+              final m = snap.data;
+              final sub =
+                  m?.artist ?? (track.ext.isEmpty ? 'Audio' : track.ext);
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+                child: Row(
+                  children: [
+                    ArtBox(
+                      size: 52,
+                      radius: artR,
+                      active: isCur && app.playing,
+                      artPath: m?.art,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(app.listTitle(track),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: titleStyle),
+                          const SizedBox(height: 2),
+                          Text(sub,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: cs.onSurfaceVariant)),
+                        ],
+                      ),
+                    ),
+                    PIconButton(
+                      icon: isSpotify
+                          ? (fav
+                              ? Icons.check_circle_rounded
+                              : Icons.add_circle_outline_rounded)
+                          : (isIos
+                              ? (fav
+                                  ? CupertinoIcons.heart_fill
+                                  : CupertinoIcons.heart)
+                              : (fav ? Icons.favorite : Icons.favorite_border)),
+                      color: fav ? cs.primary : cs.onSurfaceVariant,
+                      onTap: () => app.toggleFavorite(track),
+                    ),
+                    Pressable(
+                      scale: 0.85,
+                      squish: true,
+                      child: PopupMenuButton<String>(
+                        icon: Icon(isSpotify ? Icons.more_horiz : Icons.more_vert),
+                        onSelected: (v) {
+                          if (v == 'next') {
+                            app.playNext(track);
+                          } else if (v == 'queue') {
+                            app.addToQueue(track);
+                          } else if (v == 'add') {
+                            addToPlaylistSheet(context, track);
+                          } else if (v == 'edit') {
+                            editSongDialog(context, track);
+                          } else if (v == 'remove' && playlist != null) {
+                            app.removeFromPlaylist(playlist!, track);
+                          }
+                        },
+                        itemBuilder: (_) => [
+                          const PopupMenuItem(
+                              value: 'next', child: Text('Play next')),
+                          const PopupMenuItem(
+                              value: 'queue', child: Text('Add to queue')),
+                          const PopupMenuItem(
+                              value: 'add', child: Text('Add to playlist')),
+                          const PopupMenuItem(
+                              value: 'edit',
+                              child: Text('Edit title & artwork')),
+                          if (playlist != null)
+                            const PopupMenuItem(
+                                value: 'remove',
+                                child: Text('Remove from playlist')),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class TrackList extends StatelessWidget {
+  final List<Track> tracks;
+  final String? playlist;
+  final Future<void> Function()? onRefresh;
+  const TrackList(
+      {super.key, required this.tracks, this.playlist, this.onRefresh});
+
+  @override
+  Widget build(BuildContext context) {
+    final list = ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: EdgeInsets.fromLTRB(16, 4, 16, listBottom),
+      itemCount: tracks.length,
+      itemBuilder: (_, i) => TrackTile(
+        track: tracks[i],
+        queue: tracks,
+        index: i,
+        playlist: playlist,
+        first: i == 0,
+        last: i == tracks.length - 1,
+      ),
+    );
+    if (onRefresh == null) return list;
+    return RefreshIndicator(onRefresh: onRefresh!, child: list);
+  }
+}
+
+class TrackRow extends StatelessWidget {
+  final String title;
+  final List<Track> tracks;
+  const TrackRow({super.key, required this.title, required this.tracks});
+
+  @override
+  Widget build(BuildContext context) {
+    final sz = isSpotify ? 144.0 : 108.0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        sectionTitle(context, title),
+        SizedBox(
+          height: isSpotify ? 204 : 158,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: tracks.length,
+            itemBuilder: (_, i) {
+              final t = tracks[i];
+              return Pressable(
+                scale: 0.93,
+                child: GestureDetector(
+                  onTap: () => app.playQueue(tracks, i, force: true),
+                  child: SizedBox(
+                    width: sz + 12,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: FutureBuilder<TrackMeta>(
+                        initialData: app.metaNow(t.path),
+                        future: app.metaFor(t.path),
+                        builder: (c, s) => Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ArtBox(
+                              size: sz,
+                              radius: isSpotify ? 6 : artR + 4,
+                              artPath: s.data?.art,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(app.listTitle(t),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700, fontSize: 13)),
+                            if (isSpotify)
+                              Text(
+                                s.data?.artist ?? t.ext,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFFB3B3B3),
+                                  fontSize: 12,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class BigCard extends StatelessWidget {
+  final Track track;
+  final List<Track> list;
+  final int index;
+  const BigCard(
+      {super.key, required this.track, required this.list, required this.index});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return FutureBuilder<TrackMeta>(
+      initialData: app.metaNow(track.path),
+      future: app.metaFor(track.path),
+      builder: (context, snap) {
+        final m = snap.data;
+        final cur = app.current?.path == track.path;
+        final r = isSpotify ? 8.0 : (isIos ? 20.0 : 32.0);
+        return Pressable(
+          scale: 0.94,
+          child: GestureDetector(
+            onTap: () => app.playQueue(list, index),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(r),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  artFill(m?.art, cs, w: 700),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0x00000000), Color(0xD9000000)],
+                        stops: [0.45, 1.0],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 14,
+                    right: 14,
+                    bottom: 12,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(app.listTitle(track),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700)),
+                        if (m?.artist != null)
+                          Text(m!.artist!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white70, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    top: 10,
+                    right: 10,
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Color(0x73000000),
+                      ),
+                      child: Icon(
+                        cur && app.playing
+                            ? Icons.graphic_eq
+                            : Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SpotifyCompactTile extends StatelessWidget {
+  final Track track;
+  final List<Track> list;
+  final int index;
+  const _SpotifyCompactTile(
+      {required this.track, required this.list, required this.index});
+
+  @override
+  Widget build(BuildContext context) {
+    final isCur = app.current?.path == track.path;
+    return FutureBuilder<TrackMeta>(
+      initialData: app.metaNow(track.path),
+      future: app.metaFor(track.path),
+      builder: (context, snap) {
+        final m = snap.data;
+        return Pressable(
+          scale: 0.96,
+          squish: true,
+          child: GestureDetector(
+            onTap: () => app.playQueue(list, index),
+            child: Container(
+              height: 56,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color: const Color(0xFF282828),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(
+                children: [
+                  ArtBox(
+                    size: 56,
+                    radius: 0,
+                    artPath: m?.art,
+                    active: isCur && app.playing,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Text(
+                        app.listTitle(track),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isCur ? const Color(0xFF1DB954) : Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          height: 1.15,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (isCur && app.playing)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 8),
+                      child: Icon(Icons.graphic_eq,
+                          color: Color(0xFF1DB954), size: 18),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  int spChip = 0;
+
+  Widget _buildSpotifyHome(BuildContext context) {
+    final all = app.visible;
+    final recent = app.recentTracks;
+    final favs = app.favoriteTracks;
+    final most = app.mostPlayed;
+    final topSix = (recent.isNotEmpty ? recent : all).take(6).toList();
+    final filterLabels = ['All', 'Music', 'Liked'];
+
+    List<Track> displayPool = all;
+    if (spChip == 2) displayPool = favs;
+
+    return ListView(
+      padding: EdgeInsets.only(bottom: listBottom),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 17,
+                backgroundColor: const Color(0xFF1DB954),
+                child: const Text(
+                  'A',
+                  style: TextStyle(
+                    color: Colors.black,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              for (int i = 0; i < filterLabels.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Pressable(
+                    squish: true,
+                    child: GestureDetector(
+                      onTap: () => setState(() => spChip = i),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: spChip == i
+                              ? const Color(0xFF1DB954)
+                              : const Color(0xFF282828),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          filterLabels[i],
+                          style: TextStyle(
+                            color: spChip == i ? Colors.black : Colors.white,
+                            fontWeight: spChip == i
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              const Spacer(),
+              PIconButton(
+                tooltip: 'Search Songs',
+                icon: Icons.search_rounded,
+                color: Colors.white,
+                onTap: () => showCloudSearchDialog(context),
+              ),
+              PIconButton(
+                tooltip: 'Settings',
+                icon: Icons.settings_outlined,
+                color: Colors.white,
+                onTap: () => openSettings(context),
+              ),
+            ],
+          ),
+        ),
+        if (topSix.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: GridView.builder(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: topSix.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                mainAxisExtent: 56,
+              ),
+              itemBuilder: (ctx, i) => _SpotifyCompactTile(
+                track: topSix[i],
+                list: topSix,
+                index: i,
+              ),
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF181818),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Search & Stream Music',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Search online songs or scan your local storage.',
+                    style: TextStyle(color: Color(0xFFB3B3B3), fontSize: 13),
+                  ),
+                  const SizedBox(height: 14),
+                  FilledButton.tonalIcon(
+                    onPressed: () => showCloudSearchDialog(context),
+                    icon: const Icon(Icons.search),
+                    label: const Text('Search Songs'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        if (recent.isNotEmpty) TrackRow(title: 'Jump back in', tracks: recent),
+        if (most.isNotEmpty) TrackRow(title: 'Your heavy rotation', tracks: most),
+        if (favs.isNotEmpty) TrackRow(title: 'Liked Songs', tracks: favs),
+        if (displayPool.isNotEmpty)
+          TrackRow(title: 'Made For Alex', tracks: displayPool.take(12).toList()),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        if (isSpotify) {
+          return _buildSpotifyHome(context);
+        }
+        final cs = Theme.of(context).colorScheme;
+        final recent = app.recentTracks;
+        final grid = recent.take(6).toList();
+        final most = app.mostPlayed;
+        final favs = app.favoriteTracks;
+        final all = app.visible;
+        return ListView(
+          padding: EdgeInsets.only(bottom: listBottom),
+          children: [
+            pageHeader(context, 'Welcome Home', actions: [
+              PIconButton(
+                tooltip: 'Search Songs',
+                icon: Icons.travel_explore_rounded,
+                onTap: () => showCloudSearchDialog(context),
+              ),
+            ]),
+            if (app.tracks.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Pressable(
+                        squish: true,
+                        child: FilledButton.icon(
+                          onPressed: () => app.shufflePlay(all),
+                          icon: const Icon(Icons.shuffle),
+                          label: const Text('Shuffle all'),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Pressable(
+                        squish: true,
+                        child: FilledButton.tonalIcon(
+                          onPressed: () => app.playQueue(all, 0, force: true),
+                          icon: const Icon(Icons.play_arrow),
+                          label: const Text('Play all'),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            sectionTitle(context, 'Recently Played'),
+            if (app.tracks.isEmpty)
+              EmptyState(
+                icon: Icons.music_off_outlined,
+                title: 'No songs yet',
+                subtitle:
+                    'Search songs online or scan your local Music folder.',
+                action: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: () => showCloudSearchDialog(context),
+                      icon: const Icon(Icons.search),
+                      label: const Text('Search Songs'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: app.pickFiles,
+                      icon: const Icon(Icons.audio_file),
+                      label: const Text('Local files'),
+                    ),
+                  ],
+                ),
+              )
+            else if (grid.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Container(
+                  padding: const EdgeInsets.all(28),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainer,
+                    borderRadius: BorderRadius.circular(cardR + 6),
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(Icons.history, size: 48, color: cs.outline),
+                      const SizedBox(height: 10),
+                      Text('Play something and it shows up here.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: cs.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: GridView.count(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  physics: const NeverScrollableScrollPhysics(),
+                  children: [
+                    for (var i = 0; i < grid.length; i++)
+                      BigCard(track: grid[i], list: grid, index: i),
+                  ],
+                ),
+              ),
+            if (most.isNotEmpty) TrackRow(title: 'Most played', tracks: most),
+            if (favs.isNotEmpty) TrackRow(title: 'Your favorites', tracks: favs),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class LibraryPage extends StatelessWidget {
+  const LibraryPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        final cs = Theme.of(context).colorScheme;
+        final list = app.visible;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            pageHeader(context, 'Library', actions: [
+              PIconButton(
+                tooltip: 'Search Songs',
+                icon: Icons.travel_explore_rounded,
+                onTap: () => showCloudSearchDialog(context),
+              ),
+              if (app.scanning)
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: isIos
+                        ? const CupertinoActivityIndicator()
+                        : const CircularProgressIndicator(strokeWidth: 2.5),
+                  ),
+                )
+              else
+                PIconButton(
+                  tooltip: 'Rescan storage',
+                  icon: Icons.refresh,
+                  onTap: app.scan,
+                ),
+              Pressable(
+                scale: 0.85,
+                squish: true,
+                child: PopupMenuButton<String>(
+                  tooltip: 'Add songs',
+                  icon: const Icon(Icons.add_circle_outline),
+                  onSelected: (v) {
+                    if (v == 'search') showCloudSearchDialog(context);
+                    if (v == 'files') app.pickFiles();
+                    if (v == 'folder') app.pickFolder();
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                        value: 'search',
+                        child: ListTile(
+                            leading: Icon(Icons.search),
+                            title: Text('Search Songs Online'))),
+                    PopupMenuItem(
+                        value: 'files',
+                        child: ListTile(
+                            leading: Icon(Icons.audio_file),
+                            title: Text('Add local songs'))),
+                    PopupMenuItem(
+                        value: 'folder',
+                        child: ListTile(
+                            leading: Icon(Icons.folder_open),
+                            title: Text('Scan folder'))),
+                  ],
+                ),
+              ),
+            ]),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: TextField(
+                onChanged: app.setQuery,
+                decoration: InputDecoration(
+                  hintText: 'Search ${app.tracks.length} songs',
+                  prefixIcon: Icon(isIos ? CupertinoIcons.search : Icons.search),
+                  filled: true,
+                  fillColor: cs.surfaceContainerHigh,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                  border: OutlineInputBorder(
+                    borderRadius:
+                        BorderRadius.circular(isSpotify ? 6 : (isIos ? 12 : 28)),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Wrap(
+                spacing: 8,
+                children: [
+                  Pressable(
+                    squish: true,
+                    child: ChoiceChip(
+                      label: const Text('A-Z'),
+                      selected: app.sort == SortMode.az,
+                      onSelected: (_) => app.setSort(SortMode.az),
+                    ),
+                  ),
+                  Pressable(
+                    squish: true,
+                    child: ChoiceChip(
+                      label: const Text('Recently Added'),
+                      selected: app.sort == SortMode.recent,
+                      onSelected: (_) => app.setSort(SortMode.recent),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: list.isEmpty
+                  ? EmptyState(
+                      icon: Icons.music_off_outlined,
+                      title: app.tracks.isEmpty ? 'No songs yet' : 'No matches',
+                      subtitle: app.tracks.isEmpty
+                          ? 'Search songs online or add local songs.'
+                          : 'Try a different search.',
+                    )
+                  : TrackList(tracks: list, onRefresh: app.scan),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class FavoritesPage extends StatelessWidget {
+  const FavoritesPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        final list = app.favoriteTracks;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            pageHeader(context, isSpotify ? 'Liked Songs' : 'Favorites',
+                actions: [
+                  if (list.isNotEmpty)
+                    Pressable(
+                      squish: true,
+                      child: FilledButton.tonalIcon(
+                        onPressed: () => app.shufflePlay(list),
+                        icon: const Icon(Icons.shuffle),
+                        label: const Text('Shuffle'),
+                      ),
+                    ),
+                ]),
+            Expanded(
+              child: list.isEmpty
+                  ? EmptyState(
+                      icon: isSpotify
+                          ? Icons.add_circle_outline_rounded
+                          : Icons.favorite_border,
+                      title: 'No liked songs yet',
+                      subtitle:
+                          'Tap the + or heart on any song to save it here.',
+                    )
+                  : TrackList(tracks: list),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class PlaylistsPage extends StatelessWidget {
+  const PlaylistsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        final cs = Theme.of(context).colorScheme;
+        final names = app.playlists.keys.toList();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            pageHeader(context, 'Playlists', actions: [
+              Pressable(
+                squish: true,
+                child: FilledButton.tonalIcon(
+                  onPressed: () async {
+                    final n = await askPlaylist(context);
+                    if (n != null && n.name.isNotEmpty) {
+                      app.createPlaylist(n.name, cover: n.cover);
+                    }
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('New'),
+                ),
+              ),
+            ]),
+            Expanded(
+              child: names.isEmpty
+                  ? const EmptyState(
+                      icon: Icons.queue_music_outlined,
+                      title: 'No playlists yet',
+                      subtitle:
+                          'Create a playlist and add songs from the ⋮ menu on any track.',
+                    )
+                  : ListView.builder(
+                      padding: EdgeInsets.fromLTRB(16, 4, 16, listBottom),
+                      itemCount: names.length,
+                      itemBuilder: (_, i) {
+                        final n = names[i];
+                        final count = app.playlistTracks(n).length;
+                        final hasCover = app.covers[n] != null;
+                        return Pressable(
+                          scale: 0.975,
+                          child: Card(
+                            elevation: 0,
+                            margin: const EdgeInsets.only(bottom: 8),
+                            color: isSpotify
+                                ? Colors.transparent
+                                : cs.surfaceContainer,
+                            shape: cardShape(cardR),
+                            clipBehavior: Clip.antiAlias,
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 6),
+                              leading: CoverBox(
+                                  path: app.covers[n], size: 52, radius: artR),
+                              title: Text(n,
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium),
+                              subtitle: Text('$count song(s)'),
+                              trailing: PopupMenuButton<String>(
+                                icon: const Icon(Icons.more_vert),
+                                onSelected: (v) {
+                                  if (v == 'photo') app.setCover(n);
+                                  if (v == 'removephoto') app.removeCover(n);
+                                  if (v == 'delete') app.deletePlaylist(n);
+                                },
+                                itemBuilder: (_) => [
+                                  PopupMenuItem(
+                                      value: 'photo',
+                                      child: Text(hasCover
+                                          ? 'Change photo'
+                                          : 'Add photo')),
+                                  if (hasCover)
+                                    const PopupMenuItem(
+                                        value: 'removephoto',
+                                        child: Text('Remove photo')),
+                                  const PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text('Delete playlist')),
+                                ],
+                              ),
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                    builder: (_) => PlaylistPage(name: n)),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class PlaylistPage extends StatelessWidget {
+  final String name;
+  const PlaylistPage({super.key, required this.name});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        final cs = Theme.of(context).colorScheme;
+        final list = app.playlistTracks(name);
+        return AppBackdrop(
+          child: Scaffold(
+            backgroundColor: glass ? Colors.transparent : null,
+            appBar: AppBar(
+              title: Text(name),
+              actions: [
+                PIconButton(
+                  tooltip: 'Set cover photo',
+                  icon: Icons.add_photo_alternate_outlined,
+                  onTap: () => app.setCover(name),
+                ),
+                PIconButton(
+                  tooltip: 'Delete playlist',
+                  icon: Icons.delete_outline,
+                  onTap: () async {
+                    final ok = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Delete playlist?'),
+                        content: Text('"$name" will be removed.'),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: const Text('Cancel')),
+                          FilledButton(
+                              onPressed: () => Navigator.pop(ctx, true),
+                              child: const Text('Delete')),
+                        ],
+                      ),
+                    );
+                    if (ok == true) {
+                      if (context.mounted) Navigator.pop(context);
+                      app.deletePlaylist(name);
+                    }
+                  },
+                ),
+                PIconButton(
+                  tooltip: 'Settings',
+                  icon: ic(Icons.settings_outlined, CupertinoIcons.gear),
+                  onTap: () => openSettings(context),
+                ),
+              ],
+            ),
+            body: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 12),
+                  child: Pressable(
+                    scale: 0.96,
+                    child: GestureDetector(
+                      onTap: () => app.setCover(name),
+                      onLongPress: () => app.removeCover(name),
+                      child: Stack(
+                        children: [
+                          CoverBox(
+                              path: app.covers[name],
+                              size: 140,
+                              radius: isIos ? 16 : (isSpotify ? 8 : 36)),
+                          Positioned(
+                            right: 6,
+                            bottom: 6,
+                            child: CircleAvatar(
+                              radius: 17,
+                              backgroundColor: cs.primary,
+                              child: Icon(Icons.add_a_photo,
+                                  size: 17, color: cs.onPrimary),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (list.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Pressable(
+                            squish: true,
+                            child: FilledButton.icon(
+                              onPressed: () =>
+                                  app.playQueue(list, 0, force: true),
+                              icon: const Icon(Icons.play_arrow),
+                              label: const Text('Play all'),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Pressable(
+                            squish: true,
+                            child: FilledButton.tonalIcon(
+                              onPressed: () => app.shufflePlay(list),
+                              icon: const Icon(Icons.shuffle),
+                              label: const Text('Shuffle'),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                Expanded(
+                  child: list.isEmpty
+                      ? const EmptyState(
+                          icon: Icons.library_add_outlined,
+                          title: 'Empty playlist',
+                          subtitle:
+                              'Use the ⋮ menu on any song in your Library to add it here.',
+                        )
+                      : TrackList(tracks: list, playlist: name),
+                ),
+              ],
+            ),
+            bottomNavigationBar: app.current == null
+                ? null
+                : const SafeArea(child: MiniPlayer()),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class SettingsPage extends StatelessWidget {
+  const SettingsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        final cs = Theme.of(context).colorScheme;
+        final tt = Theme.of(context).textTheme;
+        final styleLabel = isIos
+            ? (glass ? 'iOS Liquid Glass' : 'iOS AMOLED')
+            : (isOneUi ? 'One UI' : (isSpotify ? 'Spotify' : 'Material You'));
+
+        Widget group(List<Widget> kids) => Card(
+              elevation: 0,
+              color: isSpotify ? const Color(0xFF181818) : cs.surfaceContainer,
+              shape: cardShape(cardR),
+              clipBehavior: Clip.antiAlias,
+              child: Column(children: kids),
+            );
+        Widget title(String s) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(s,
+                  style: tt.titleLarge?.copyWith(
+                      fontWeight: isSpotify ? FontWeight.w800 : FontWeight.w600)),
+            );
+        Widget hint(String s) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(s, style: TextStyle(color: cs.onSurfaceVariant)),
+            );
+        Widget sw(IconData icon, String t, String sub, bool v,
+                ValueChanged<bool> f) =>
+            Pressable(
+              scale: 0.985,
+              child: SwitchListTile.adaptive(
+                secondary: Icon(icon),
+                title: Text(t),
+                subtitle: Text(sub),
+                value: v,
+                onChanged: f,
+              ),
+            );
+
+        final forcedDark = isSpotify || (isIos && !glass);
+
+        return AppBackdrop(
+          child: Scaffold(
+            backgroundColor: glass ? Colors.transparent : null,
+            bottomNavigationBar: app.current == null
+                ? null
+                : const SafeArea(child: MiniPlayer()),
+            body: SafeArea(
+              bottom: false,
+              child: ListView(
+                padding: EdgeInsets.fromLTRB(16, isOneUi ? 24 : 8, 16, 24),
+                children: [
+                  Padding(
+                    padding: EdgeInsets.only(
+                        bottom: isOneUi ? 28 : 12, top: isOneUi ? 24 : 0),
+                    child: Row(
+                      children: [
+                        PIconButton(
+                          icon: ic(Icons.arrow_back, CupertinoIcons.back),
+                          onTap: () => Navigator.of(context).pop(),
+                        ),
+                        const SizedBox(width: 4),
+                        Text('Settings',
+                            style: TextStyle(
+                              fontSize: isOneUi ? 34 : (isSpotify ? 26 : 30),
+                              fontWeight: isOneUi
+                                  ? FontWeight.w500
+                                  : (isSpotify
+                                      ? FontWeight.w800
+                                      : FontWeight.w700),
+                              color: cs.onSurface,
+                            )),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.all(22),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(
+                          isIos ? 20 : (isSpotify ? 12 : 32)),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [cs.primaryContainer, cs.tertiaryContainer],
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 60,
+                              height: 60,
+                              decoration: BoxDecoration(
+                                  color: cs.primary, shape: BoxShape.circle),
+                              child: Icon(Icons.developer_mode,
+                                  color: cs.onPrimary, size: 32),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Made by Alex Desrosier',
+                                      style: tt.headlineSmall?.copyWith(
+                                          color: cs.onPrimaryContainer)),
+                                  const SizedBox(height: 4),
+                                  Text('Pixel Audio Player',
+                                      style: TextStyle(
+                                          color: cs.onPrimaryContainer
+                                              .withValues(alpha: 0.8))),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            Chip(
+                              avatar: Icon(Icons.android,
+                                  color: cs.onPrimary, size: 18),
+                              label: Text('Custom AOSP ROM Build',
+                                  style: TextStyle(color: cs.onPrimary)),
+                              backgroundColor: cs.primary,
+                              side: BorderSide.none,
+                            ),
+                            Chip(
+                              avatar: Icon(Icons.verified,
+                                  color: cs.onSecondaryContainer, size: 18),
+                              label: Text(styleLabel),
+                              backgroundColor: cs.secondaryContainer,
+                              side: BorderSide.none,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+
+                  title('Cloud Streaming'),
+                  hint('Search online songs to stream or save to your library.'),
+                  group([
+                    ListTile(
+                      leading: const Icon(Icons.travel_explore_rounded,
+                          color: Color(0xFF1DB954)),
+                      title: const Text('Search Songs Online'),
+                      subtitle: const Text(
+                          'Stream and save tracks from cloud CDNs'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => showCloudSearchDialog(context),
+                    ),
+                  ]),
+                  const SizedBox(height: 28),
+
+                  title('Interface style'),
+                  hint('Switches the whole app look instantly.'),
+                  seg<UiStyle>(
+                    {
+                      UiStyle.material: 'Material',
+                      UiStyle.ios: 'iOS',
+                      UiStyle.oneui: 'One UI',
+                      UiStyle.spotify: 'Spotify',
+                    },
+                    app.uiStyle,
+                    app.setUiStyle,
+                  ),
+                  const SizedBox(height: 28),
+
+                  if (isIos) ...[
+                    title('iOS look'),
+                    hint(
+                        'AMOLED Black is pure black. Liquid Glass is a frosted translucent blur.'),
+                    seg<IosVariant>(
+                      {
+                        IosVariant.amoled: 'AMOLED Black',
+                        IosVariant.glass: 'Liquid Glass',
+                      },
+                      app.iosVariant,
+                      app.setIosVariant,
+                    ),
+                    const SizedBox(height: 28),
+                  ],
+
+                  if (app.uiStyle == UiStyle.material) ...[
+                    title('Material You colors'),
+                    hint(
+                        'Uses your wallpaper colors. Pick a Pixel 10 color to override.'),
+                    group([
+                      sw(Icons.wallpaper, 'Dynamic color (wallpaper)',
+                          'Follow your Android wallpaper', app.dynamicColor,
+                          app.setDynamic),
+                    ]),
+                    const SizedBox(height: 16),
+                    Opacity(
+                      opacity: app.dynamicColor ? 0.55 : 1.0,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 16,
+                        children: [
+                          for (int i = 0; i < seedOptions.length; i++)
+                            _Swatch(
+                                index: i,
+                                selected:
+                                    !app.dynamicColor && app.seedIndex == i),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                  ] else ...[
+                    title('Accent color'),
+                    hint(isIos
+                        ? 'iOS uses system blue. Pixel 10 colors apply in Material style.'
+                        : (isOneUi
+                            ? 'One UI uses its own blue accent. Pixel 10 colors apply in Material style.'
+                            : 'Spotify green is fixed. Pixel 10 colors apply in Material style.')),
+                    const SizedBox(height: 16),
+                  ],
+
+                  title('Appearance'),
+                  if (forcedDark)
+                    hint('This style is always dark.')
+                  else
+                    const SizedBox(height: 8),
+                  if (!forcedDark)
+                    seg<ThemeMode>(
+                      {
+                        ThemeMode.system: 'System',
+                        ThemeMode.light: 'Light',
+                        ThemeMode.dark: 'Dark',
+                      },
+                      app.themeMode,
+                      app.setThemeMode,
+                    ),
+                  if (app.uiStyle == UiStyle.material || isOneUi) ...[
+                    const SizedBox(height: 8),
+                    group([
+                      sw(Icons.contrast, 'Pure AMOLED Black',
+                          'True #000000 background in dark mode', app.amoled,
+                          app.setAmoled),
+                    ]),
+                  ],
+                  const SizedBox(height: 28),
+
+                  title('Player style'),
+                  hint(
+                      'Pick how the full-screen player looks. Swipe left or right to change songs.'),
+                  group([
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 6),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<PlayerStyle>(
+                          value: app.playerStyle,
+                          isExpanded: true,
+                          borderRadius: BorderRadius.circular(18),
+                          dropdownColor: cs.surfaceContainerHigh,
+                          icon: Icon(Icons.keyboard_arrow_down_rounded,
+                              color: cs.onSurface),
+                          items: [
+                            for (final ps in PlayerStyle.values)
+                              DropdownMenuItem<PlayerStyle>(
+                                value: ps,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      ps == app.playerStyle
+                                          ? Icons.radio_button_checked_rounded
+                                          : Icons.radio_button_off_rounded,
+                                      size: 20,
+                                      color: ps == app.playerStyle
+                                          ? cs.primary
+                                          : cs.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      playerLabels[ps] ?? '',
+                                      style: TextStyle(
+                                        fontWeight: ps == app.playerStyle
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                          onChanged: (ps) {
+                            if (ps != null) app.setPlayerStyle(ps);
+                          },
+                        ),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(playerDescs[app.playerStyle] ?? '',
+                        style: TextStyle(
+                            color: cs.onSurfaceVariant, fontSize: 12)),
+                  ),
+                  const SizedBox(height: 28),
+
+                  title('Playback'),
+                  const SizedBox(height: 8),
+                  group([
+                    sw(Icons.volume_up_outlined, 'Volume slider in player',
+                        'Show a volume slider in the playback window',
+                        app.showVolume, app.setShowVolume),
+                    sw(Icons.power_settings_new, 'Stop playback on task clear',
+                        'Stops the music when you swipe the app away from recents',
+                        app.stopOnTaskClear, app.setStopOnTaskClear),
+                  ]),
+                  const SizedBox(height: 28),
+
+                  title('Library'),
+                  const SizedBox(height: 8),
+                  group([
+                    ListTile(
+                      leading: Icon(outputIcon(app.outputKind)),
+                      title: const Text('Playing on'),
+                      subtitle: Text(app.outputName),
+                      onTap: () async {
+                        await app.requestPermissions();
+                        app.refreshOutput();
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.refresh),
+                      title: const Text('Rescan Music & Download'),
+                      subtitle: Text('${app.tracks.length} songs in library'),
+                      onTap: app.scan,
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.audio_file),
+                      title: const Text('Add songs'),
+                      onTap: app.pickFiles,
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.folder_open),
+                      title: const Text('Scan folder'),
+                      onTap: app.pickFolder,
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.security),
+                      title: const Text(
+                          'Grant audio, notification & Bluetooth permission'),
+                      onTap: () async {
+                        await app.requestPermissions();
+                        app.scan();
+                      },
+                    ),
+                  ]),
+                  const SizedBox(height: 28),
+                  Center(
+                    child: Text('Pixel Audio Player 2.0.0',
+                        style: TextStyle(color: cs.outline)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _Swatch extends StatelessWidget {
+  final int index;
+  final bool selected;
+  const _Swatch({required this.index, required this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final opt = seedOptions[index];
+    final checkColor =
+        ThemeData.estimateBrightnessForColor(opt.color) == Brightness.dark
+            ? Colors.white
+            : Colors.black;
+    return Pressable(
+      scale: 0.88,
+      squish: true,
+      child: GestureDetector(
+        onTap: () => app.setSeed(index),
+        child: SizedBox(
+          width: 76,
+          child: Column(
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 58,
+                height: 58,
+                decoration: BoxDecoration(
+                  color: opt.color,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected ? cs.primary : cs.outlineVariant,
+                    width: selected ? 4 : 1.5,
+                  ),
+                ),
+                child: selected ? Icon(Icons.check, color: checkColor) : null,
+              ),
+              const SizedBox(height: 6),
+              Text(opt.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight:
+                          selected ? FontWeight.w700 : FontWeight.w400)),
+            ],
+          ),
         ),
       ),
     );
