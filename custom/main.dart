@@ -22,10 +22,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 class PixelColor {
   final String name;
   final Color color;
@@ -51,11 +47,8 @@ const List<String> scanDirs = [
 ];
 
 enum SortMode { az, recent }
-
 enum RepeatMode { off, all, one }
-
 enum UiStyle { material, ios, oneui, spotify }
-
 enum IosVariant { amoled, glass }
 
 enum PlayerStyle {
@@ -186,10 +179,6 @@ IconData outputIcon(String kind) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Models
-// ---------------------------------------------------------------------------
-
 class Track {
   final String path;
   final String title;
@@ -241,10 +230,6 @@ class NewPlaylist {
   const NewPlaylist(this.name, this.cover);
 }
 
-// ---------------------------------------------------------------------------
-// Audio handler
-// ---------------------------------------------------------------------------
-
 class PlayerHandler extends BaseAudioHandler with SeekHandler {
   PlayerHandler(this.player) {
     player.playbackEventStream.listen((_) => _broadcast(), onError: (Object e) {});
@@ -293,13 +278,10 @@ class PlayerHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> play() async => player.play();
-
   @override
   Future<void> pause() => player.pause();
-
   @override
   Future<void> seek(Duration position) => player.seek(position);
-
   @override
   Future<void> stop() async {
     await player.stop();
@@ -308,19 +290,13 @@ class PlayerHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> skipToNext() async => await onNext?.call();
-
   @override
   Future<void> skipToPrevious() async => await onPrev?.call();
-
   @override
   Future<void> onTaskRemoved() async {
     if (app.stopOnTaskClear) await stop();
   }
 }
-
-// ---------------------------------------------------------------------------
-// App state
-// ---------------------------------------------------------------------------
 
 class AppState extends ChangeNotifier {
   final AudioPlayer player = AudioPlayer();
@@ -600,9 +576,7 @@ class AppState extends ChangeNotifier {
   }
 
   String listTitle(Track t) => edits[t.path]?['title'] ?? t.title;
-
   String nameOf(Track t, TrackMeta? m) => m?.title ?? listTitle(t);
-
   TrackMeta? metaNow(String path) => _metaDone[path];
 
   Future<TrackMeta> metaFor(String path) =>
@@ -1135,16 +1109,63 @@ class AppState extends ChangeNotifier {
     Duration? dur;
     try {
       if (t.isStream) {
-        final yt = YoutubeExplode();
-        try {
-          final manifest = await yt.videos.streamsClient.getManifest(t.ytId);
-          final streamInfo = manifest.audioOnly.withHighestBitrate();
-          dur = await player.setUrl(streamInfo.url.toString());
-          await player.setSpeed(speed);
-          player.play();
-        } finally {
-          yt.close();
+        toast('Loading stream...');
+        final dir = await _cacheDir();
+        final cachedM4a = File('$dir/yt_${t.ytId}.mp4');
+        final cachedWebm = File('$dir/yt_${t.ytId}.webm');
+
+        if (await cachedM4a.exists() && await cachedM4a.length() > 10240) {
+          dur = await player.setFilePath(cachedM4a.path);
+        } else if (await cachedWebm.exists() && await cachedWebm.length() > 10240) {
+          dur = await player.setFilePath(cachedWebm.path);
+        } else {
+          final yt = YoutubeExplode();
+          try {
+            StreamManifest manifest;
+            try {
+              manifest = await yt.videos.streamsClient.getManifest(
+                t.ytId,
+                ytClients: [YoutubeApiClient.androidVr],
+              );
+            } catch (_) {
+              manifest = await yt.videos.streamsClient.getManifest(t.ytId);
+            }
+
+            final mp4Audio = manifest.audioOnly
+                .where((s) => s.container == StreamContainer.mp4)
+                .toList();
+            final StreamInfo streamInfo = mp4Audio.isNotEmpty
+                ? mp4Audio.withHighestBitrate()
+                : (manifest.audioOnly.isNotEmpty
+                    ? manifest.audioOnly.withHighestBitrate()
+                    : manifest.muxed.withHighestBitrate());
+
+            try {
+              dur = await player.setAudioSource(
+                AudioSource.uri(
+                  streamInfo.url,
+                  headers: const {
+                    'User-Agent':
+                        'com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12; en_US; Quest 2; Build/SQ3A.220605.009.A1) gzip',
+                  },
+                ),
+              );
+            } catch (_) {
+              final ext = streamInfo.container.name;
+              final cacheFile = File('$dir/yt_${t.ytId}.$ext');
+              final stream = yt.videos.streamsClient.get(streamInfo);
+              final sink = cacheFile.openWrite();
+              await stream.pipe(sink);
+              await sink.flush();
+              await sink.close();
+              dur = await player.setFilePath(cacheFile.path);
+            }
+          } finally {
+            yt.close();
+          }
         }
+        await player.setSpeed(speed);
+        player.play();
       } else {
         dur = await player.setFilePath(t.path);
         await player.setSpeed(speed);
@@ -1275,10 +1296,6 @@ class AppState extends ChangeNotifier {
 }
 
 final AppState app = AppState();
-
-// ---------------------------------------------------------------------------
-// Entry / themes
-// ---------------------------------------------------------------------------
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1489,10 +1506,6 @@ class AudioApp extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Press & Squish animation helpers
-// ---------------------------------------------------------------------------
-
 class Pressable extends StatefulWidget {
   final Widget child;
   final double scale;
@@ -1583,10 +1596,6 @@ class PIconButton extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Backdrop
-// ---------------------------------------------------------------------------
-
 class AppBackdrop extends StatelessWidget {
   final Widget child;
   const AppBackdrop({super.key, required this.child});
@@ -1633,10 +1642,6 @@ class AppBackdrop extends StatelessWidget {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Shell + navigation
-// ---------------------------------------------------------------------------
 
 void openSettings(BuildContext context) {
   Navigator.of(context).push(
@@ -1852,10 +1857,6 @@ class AppNavBar extends StatelessWidget {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Shared widgets
-// ---------------------------------------------------------------------------
 
 Widget pageHeader(BuildContext context, String title,
     {List<Widget> actions = const []}) {
@@ -2334,10 +2335,6 @@ class EmptyState extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Dialogs / sheets
-// ---------------------------------------------------------------------------
-
 Future<NewPlaylist?> askPlaylist(BuildContext context) {
   return showDialog<NewPlaylist>(
     context: context,
@@ -2670,10 +2667,6 @@ void openQueue(BuildContext context) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// YouTube Music Search & Playlist Import Dialogs
-// ---------------------------------------------------------------------------
-
 Future<void> showYouTubeSearchDialog(BuildContext context) async {
   final TextEditingController searchCtrl = TextEditingController();
   List<Video> results = [];
@@ -2853,10 +2846,6 @@ Future<void> showYouTubePlaylistImportDialog(BuildContext context) async {
     ),
   );
 }
-
-// ---------------------------------------------------------------------------
-// Track lists
-// ---------------------------------------------------------------------------
 
 class TrackTile extends StatelessWidget {
   final Track track;
@@ -3186,10 +3175,6 @@ class BigCard extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Home
-// ---------------------------------------------------------------------------
-
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
@@ -3317,10 +3302,6 @@ class HomePage extends StatelessWidget {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Library
-// ---------------------------------------------------------------------------
 
 class LibraryPage extends StatelessWidget {
   const LibraryPage({super.key});
@@ -3455,10 +3436,6 @@ class LibraryPage extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Favorites
-// ---------------------------------------------------------------------------
-
 class FavoritesPage extends StatelessWidget {
   const FavoritesPage({super.key});
 
@@ -3497,10 +3474,6 @@ class FavoritesPage extends StatelessWidget {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Playlists
-// ---------------------------------------------------------------------------
 
 class PlaylistsPage extends StatelessWidget {
   const PlaylistsPage({super.key});
@@ -3744,10 +3717,6 @@ class PlaylistPage extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Queue pager
-// ---------------------------------------------------------------------------
-
 class QueuePager extends StatefulWidget {
   final Widget Function(BuildContext, Track, int) builder;
   const QueuePager({super.key, required this.builder});
@@ -3810,10 +3779,6 @@ class _QueuePagerState extends State<QueuePager> {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Mini player
-// ---------------------------------------------------------------------------
 
 class MiniPage extends StatelessWidget {
   final Track track;
@@ -4019,10 +3984,6 @@ class MiniPlayer extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Queue sheet
-// ---------------------------------------------------------------------------
-
 class QueueSheet extends StatelessWidget {
   const QueueSheet({super.key});
 
@@ -4108,10 +4069,6 @@ class QueueSheet extends StatelessWidget {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Now playing: styles
-// ---------------------------------------------------------------------------
 
 bool psDark(PlayerStyle s) =>
     !(s == PlayerStyle.half ||
@@ -4833,10 +4790,6 @@ Widget fillSwitcher(Object key, Widget child) {
     ),
   );
 }
-
-// ---------------------------------------------------------------------------
-// Now playing sheet
-// ---------------------------------------------------------------------------
 
 class NowPlayingSheet extends StatefulWidget {
   const NowPlayingSheet({super.key});
@@ -5667,10 +5620,6 @@ class _SeekBarState extends State<SeekBar> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Settings
-// ---------------------------------------------------------------------------
-
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
@@ -5780,7 +5729,7 @@ class SettingsPage extends StatelessWidget {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('Made by Alex',
+                                  Text('Made by Alex Desrosier',
                                       style: tt.headlineSmall?.copyWith(
                                           color: cs.onPrimaryContainer)),
                                   const SizedBox(height: 4),
