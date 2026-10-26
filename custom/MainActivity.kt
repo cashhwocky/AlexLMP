@@ -22,22 +22,35 @@ class MainActivity : AudioServiceActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "scan" -> executor.execute {
-                        val list = ArrayList<HashMap<String, Any?>>()
-                        try {
-                            val M = MediaStore.Audio.Media
-                            val proj = arrayOf(M._ID, M.TITLE, M.ARTIST, M.ALBUM, M.DURATION, M.DATA, M.ALBUM_ID, M.DATE_ADDED)
-                            contentResolver.query(M.EXTERNAL_CONTENT_URI, proj, "${M.IS_MUSIC} != 0", null, null)?.use { c ->
-                                while (c.moveToNext()) {
-                                    val m = HashMap<String, Any?>()
-                                    m["id"] = c.getLong(0)
-                                    m["title"] = c.getString(1) ?: "Unknown"
-                                    m["artist"] = c.getString(2) ?: "Unknown artist"
-                                    m["album"] = c.getString(3) ?: "Unknown album"
-                                    m["dur"] = c.getLong(4)
-                                    m["path"] = c.getString(5) ?: ""
-                                    m["albumId"] = c.getLong(6)
-                                    m["added"] = c.getLong(7)
-                                    list.add(m)
+    val list = ArrayList<HashMap<String, Any?>>()
+    try {
+        val proj = arrayOf(
+            MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.ARTIST, MediaStore.Audio.Media.ALBUM,
+            MediaStore.Audio.Media.DURATION, MediaStore.Audio.Media.DATA,
+            MediaStore.Audio.Media.ALBUM_ID, MediaStore.Audio.Media.DATE_ADDED
+        )
+        contentResolver.query(
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, proj,
+            MediaStore.Audio.Media.IS_MUSIC + " != 0", null, null
+        )?.use { c ->
+            while (c.moveToNext()) {
+                val m = HashMap<String, Any?>()
+                m["id"] = c.getLong(0)
+                m["title"] = c.getString(1) ?: "Unknown"
+                m["artist"] = c.getString(2) ?: "Unknown artist"
+                m["album"] = c.getString(3) ?: "Unknown album"
+                m["dur"] = c.getLong(4)
+                m["path"] = c.getString(5) ?: ""
+                m["albumId"] = c.getLong(6)
+                m["added"] = c.getLong(7)
+                list.add(m)
+            }
+        }
+    } catch (e: Exception) {
+    }
+    mainHandler.post { result.success(list) }
+}
                                 }
                             }
                         } catch (e: Exception) {
