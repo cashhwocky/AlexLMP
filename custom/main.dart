@@ -5341,7 +5341,7 @@ class _Swatch extends StatelessWidget {
                 width: 58,
                 height: 58,
                 decoration: BoxDecoration(
-                    AnimatedContainer(
+              AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 width: 58,
                 height: 58,
