@@ -13851,6 +13851,780 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
+class SettingsPage extends StatelessWidget {
+  const SettingsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        final cs = Theme.of(context).colorScheme;
+        final tt = Theme.of(context).textTheme;
+        final styleLabel = isIos
+            ? (glass ? 'iOS Liquid Glass' : 'iOS AMOLED')
+            : (isOneUi ? 'One UI' : (isSpotify ? 'Spotify' : 'Material You'));
+
+        Widget group(List<Widget> kids) => Card(
+              elevation: 0,
+              color: isSpotify ? const Color(0xFF181818) : cs.surfaceContainer,
+              shape: cardShape(cardR),
+              clipBehavior: Clip.antiAlias,
+              child: Column(children: kids),
+            );
+        Widget title(String s) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(s,
+                  style: tt.titleLarge?.copyWith(
+                      fontWeight: isSpotify ? FontWeight.w800 : FontWeight.w600)),
+            );
+        Widget hint(String s) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(s, style: TextStyle(color: cs.onSurfaceVariant)),
+            );
+        Widget sw(IconData icon, String t, String sub, bool v,
+                ValueChanged<bool> f) =>
+            Pressable(
+              scale: 0.985,
+              child: SwitchListTile.adaptive(
+                secondary: Icon(icon),
+                title: Text(t),
+                subtitle: Text(sub),
+                value: v,
+                onChanged: f,
+              ),
+            );
+
+        final forcedDark = isSpotify || (isIos && !glass);
+
+        return AppBackdrop(
+          child: Scaffold(
+            backgroundColor: glass ? Colors.transparent : null,
+            bottomNavigationBar: app.current == null
+                ? null
+                : const SafeArea(child: MiniPlayer()),
+            body: SafeArea(
+              bottom: false,
+              child: ListView(
+                padding: EdgeInsets.fromLTRB(16, isOneUi ? 24 : 8, 16, 24),
+                children: [
+                  Padding(
+                    padding: EdgeInsets.only(
+                        bottom: isOneUi ? 28 : 12, top: isOneUi ? 24 : 0),
+                    child: Row(
+                      children: [
+                        PIconButton(
+                          icon: ic(Icons.arrow_back, CupertinoIcons.back),
+                          onTap: () => Navigator.of(context).pop(),
+                        ),
+                        const SizedBox(width: 4),
+                        Text('Settings',
+                            style: TextStyle(
+                              fontSize: isOneUi ? 34 : (isSpotify ? 26 : 30),
+                              fontWeight: isOneUi
+                                  ? FontWeight.w500
+                                  : (isSpotify
+                                      ? FontWeight.w800
+                                      : FontWeight.w700),
+                              color: cs.onSurface,
+                            )),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.all(22),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(
+                          isIos ? 20 : (isSpotify ? 12 : 32)),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [cs.primaryContainer, cs.tertiaryContainer],
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 60,
+                              height: 60,
+                              decoration: BoxDecoration(
+                                  color: cs.primary, shape: BoxShape.circle),
+                              child: Icon(Icons.developer_mode,
+                                  color: cs.onPrimary, size: 32),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Made by Alex Desrosier',
+                                      style: tt.headlineSmall?.copyWith(
+                                          color: cs.onPrimaryContainer)),
+                                  const SizedBox(height: 4),
+                                  Text('Pixel Audio Player',
+                                      style: TextStyle(
+                                          color: cs.onPrimaryContainer
+                                              .withValues(alpha: 0.8))),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            Chip(
+                              avatar: Icon(Icons.android,
+                                  color: cs.onPrimary, size: 18),
+                              label: Text('Custom AOSP ROM Build',
+                                  style: TextStyle(color: cs.onPrimary)),
+                              backgroundColor: cs.primary,
+                              side: BorderSide.none,
+                            ),
+                            Chip(
+                              avatar: Icon(Icons.verified,
+                                  color: cs.onSecondaryContainer, size: 18),
+                              label: Text(styleLabel),
+                              backgroundColor: cs.secondaryContainer,
+                              side: BorderSide.none,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+
+                  title('Spotify & Cloud Streaming'),
+                  hint('Login with your Spotify credentials or paste any Spotify playlist link to sync.'),
+                  group([
+                    ListTile(
+                      leading: const Icon(Icons.album_rounded,
+                          color: Color(0xFF1DB954)),
+                      title: Text(app.spotifyConnected
+                          ? 'Spotify Connected (${app.spDisplayName.isNotEmpty ? app.spDisplayName : (app.spUserId.isNotEmpty ? app.spUserId : "Active")})'
+                          : 'Spotify Client Login & Playlist Sync'),
+                      subtitle: const Text(
+                          'Sync account playlists, Liked Songs, or paste playlist URLs'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => showSpotifyClientDialog(context),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.travel_explore_rounded),
+                      title: const Text('Search Songs Online'),
+                      subtitle: const Text(
+                          'Stream and save tracks from Spotify & cloud CDNs'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => showCloudSearchDialog(context),
+                    ),
+                  ]),
+                  const SizedBox(height: 28),
+
+                  title('Interface style'),
+                  hint('Switches the whole app look instantly.'),
+                  seg<UiStyle>(
+                    {
+                      UiStyle.material: 'Material',
+                      UiStyle.ios: 'iOS',
+                      UiStyle.oneui: 'One UI',
+                      UiStyle.spotify: 'Spotify',
+                    },
+                    app.uiStyle,
+                    app.setUiStyle,
+                  ),
+                  const SizedBox(height: 28),
+
+                  if (isIos) ...[
+                    title('iOS look'),
+                    hint(
+                        'AMOLED Black is pure black. Liquid Glass is a frosted translucent blur.'),
+                    seg<IosVariant>(
+                      {
+                        IosVariant.amoled: 'AMOLED Black',
+                        IosVariant.glass: 'Liquid Glass',
+                      },
+                      app.iosVariant,
+                      app.setIosVariant,
+                    ),
+                    const SizedBox(height: 28),
+                  ],
+
+                  if (app.uiStyle == UiStyle.material) ...[
+                    title('Material You colors'),
+                    hint(
+                        'Uses your wallpaper colors. Pick a Pixel 10 color to override.'),
+                    group([
+                      sw(Icons.wallpaper, 'Dynamic color (wallpaper)',
+                          'Follow your Android wallpaper', app.dynamicColor,
+                          app.setDynamic),
+                    ]),
+                    const SizedBox(height: 16),
+                    Opacity(
+                      opacity: app.dynamicColor ? 0.55 : 1.0,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 16,
+                        children: [
+                          for (int i = 0; i < seedOptions.length; i++)
+                            _Swatch(
+                                index: i,
+                                selected:
+                                    !app.dynamicColor && app.seedIndex == i),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                  ] else ...[
+                    title('Accent color'),
+                    hint(isIos
+                        ? 'iOS uses system blue. Pixel 10 colors apply in Material style.'
+                        : (isOneUi
+                            ? 'One UI uses its own blue accent. Pixel 10 colors apply in Material style.'
+                            : 'Spotify green is fixed. Pixel 10 colors apply in Material style.')),
+                    const SizedBox(height: 16),
+                  ],
+
+                  title('Appearance'),
+                  if (forcedDark)
+                    hint('This style is always dark.')
+                  else
+                    const SizedBox(height: 8),
+                  if (!forcedDark)
+                    seg<ThemeMode>(
+                      {
+                        ThemeMode.system: 'System',
+                        ThemeMode.light: 'Light',
+                        ThemeMode.dark: 'Dark',
+                      },
+                      app.themeMode,
+                      app.setThemeMode,
+                    ),
+                  if (app.uiStyle == UiStyle.material || isOneUi) ...[
+                    const SizedBox(height: 8),
+                    group([
+                      sw(Icons.contrast, 'Pure AMOLED Black',
+                          'True #000000 background in dark mode', app.amoled,
+                          app.setAmoled),
+                    ]),
+                  ],
+                  const SizedBox(height: 28),
+
+                  title('Player style'),
+                  hint(
+                      'Pick how the full-screen player looks. Swipe left or right to change songs.'),
+                  group([
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 6),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<PlayerStyle>(
+                          value: app.playerStyle,
+                          isExpanded: true,
+                          borderRadius: BorderRadius.circular(18),
+                          dropdownColor: cs.surfaceContainerHigh,
+                          icon: Icon(Icons.keyboard_arrow_down_rounded,
+                              color: cs.onSurface),
+                          items: [
+                            for (final ps in PlayerStyle.values)
+                              DropdownMenuItem<PlayerStyle>(
+                                value: ps,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      ps == app.playerStyle
+                                          ? Icons.radio_button_checked_rounded
+                                          : Icons.radio_button_off_rounded,
+                                      size: 20,
+                                      color: ps == app.playerStyle
+                                          ? cs.primary
+                                          : cs.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      playerLabels[ps] ?? '',
+                                      style: TextStyle(
+                                        fontWeight: ps == app.playerStyle
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                          onChanged: (ps) {
+                            if (ps != null) app.setPlayerStyle(ps);
+                          },
+                        ),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(playerDescs[app.playerStyle] ?? '',
+                        style: TextStyle(
+                            color: cs.onSurfaceVariant, fontSize: 12)),
+                  ),
+                  const SizedBox(height: 28),
+
+                  title('Playback'),
+                  const SizedBox(height: 8),
+                  group([
+                    sw(Icons.volume_up_outlined, 'Volume slider in player',
+                        'Show a volume slider in the playback window',
+                        app.showVolume, app.setShowVolume),
+                    sw(Icons.power_settings_new, 'Stop playback on task clear',
+                        'Stops the music when you swipe the app away from recents',
+                        app.stopOnTaskClear, app.setStopOnTaskClear),
+                  ]),
+                  const SizedBox(height: 28),
+
+                  title('Library'),
+                  const SizedBox(height: 8),
+                  group([
+                    ListTile(
+                      leading: Icon(outputIcon(app.outputKind)),
+                      title: const Text('Playing on'),
+                      subtitle: Text(app.outputName),
+                      onTap: () async {
+                        await app.requestPermissions();
+                        app.refreshOutput();
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.refresh),
+                      title: const Text('Rescan Music & Download'),
+                      subtitle: Text('${app.tracks.length} songs in library'),
+                      onTap: app.scan,
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.audio_file),
+                      title: const Text('Add songs'),
+                      onTap: app.pickFiles,
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.folder_open),
+                      title: const Text('Scan folder'),
+                      onTap: app.pickFolder,
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.security),
+                      title: const Text(
+                          'Grant audio, notification & Bluetooth permission'),
+                      onTap: () async {
+                        await app.requestPermissions();
+                        app.scan();
+                      },
+                    ),
+                  ]),
+                  const SizedBox(height: 28),
+                  Center(
+                    child: Text('Pixel Audio Player 2.0.0',
+                        style: TextStyle(color: cs.outline)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class SettingsPage extends StatelessWidget {
+  const SettingsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        final cs = Theme.of(context).colorScheme;
+        final tt = Theme.of(context).textTheme;
+        final styleLabel = isIos
+            ? (glass ? 'iOS Liquid Glass' : 'iOS AMOLED')
+            : (isOneUi ? 'One UI' : (isSpotify ? 'Spotify' : 'Material You'));
+
+        Widget group(List<Widget> kids) => Card(
+              elevation: 0,
+              color: isSpotify ? const Color(0xFF181818) : cs.surfaceContainer,
+              shape: cardShape(cardR),
+              clipBehavior: Clip.antiAlias,
+              child: Column(children: kids),
+            );
+        Widget title(String s) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(s,
+                  style: tt.titleLarge?.copyWith(
+                      fontWeight: isSpotify ? FontWeight.w800 : FontWeight.w600)),
+            );
+        Widget hint(String s) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(s, style: TextStyle(color: cs.onSurfaceVariant)),
+            );
+        Widget sw(IconData icon, String t, String sub, bool v,
+                ValueChanged<bool> f) =>
+            Pressable(
+              scale: 0.985,
+              child: SwitchListTile.adaptive(
+                secondary: Icon(icon),
+                title: Text(t),
+                subtitle: Text(sub),
+                value: v,
+                onChanged: f,
+              ),
+            );
+
+        final forcedDark = isSpotify || (isIos && !glass);
+
+        return AppBackdrop(
+          child: Scaffold(
+            backgroundColor: glass ? Colors.transparent : null,
+            bottomNavigationBar: app.current == null
+                ? null
+                : const SafeArea(child: MiniPlayer()),
+            body: SafeArea(
+              bottom: false,
+              child: ListView(
+                padding: EdgeInsets.fromLTRB(16, isOneUi ? 24 : 8, 16, 24),
+                children: [
+                  Padding(
+                    padding: EdgeInsets.only(
+                        bottom: isOneUi ? 28 : 12, top: isOneUi ? 24 : 0),
+                    child: Row(
+                      children: [
+                        PIconButton(
+                          icon: ic(Icons.arrow_back, CupertinoIcons.back),
+                          onTap: () => Navigator.of(context).pop(),
+                        ),
+                        const SizedBox(width: 4),
+                        Text('Settings',
+                            style: TextStyle(
+                              fontSize: isOneUi ? 34 : (isSpotify ? 26 : 30),
+                              fontWeight: isOneUi
+                                  ? FontWeight.w500
+                                  : (isSpotify
+                                      ? FontWeight.w800
+                                      : FontWeight.w700),
+                              color: cs.onSurface,
+                            )),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.all(22),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(
+                          isIos ? 20 : (isSpotify ? 12 : 32)),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [cs.primaryContainer, cs.tertiaryContainer],
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 60,
+                              height: 60,
+                              decoration: BoxDecoration(
+                                  color: cs.primary, shape: BoxShape.circle),
+                              child: Icon(Icons.developer_mode,
+                                  color: cs.onPrimary, size: 32),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Made by Alex Desrosier',
+                                      style: tt.headlineSmall?.copyWith(
+                                          color: cs.onPrimaryContainer)),
+                                  const SizedBox(height: 4),
+                                  Text('Pixel Audio Player',
+                                      style: TextStyle(
+                                          color: cs.onPrimaryContainer
+                                              .withValues(alpha: 0.8))),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            Chip(
+                              avatar: Icon(Icons.android,
+                                  color: cs.onPrimary, size: 18),
+                              label: Text('Custom AOSP ROM Build',
+                                  style: TextStyle(color: cs.onPrimary)),
+                              backgroundColor: cs.primary,
+                              side: BorderSide.none,
+                            ),
+                            Chip(
+                              avatar: Icon(Icons.verified,
+                                  color: cs.onSecondaryContainer, size: 18),
+                              label: Text(styleLabel),
+                              backgroundColor: cs.secondaryContainer,
+                              side: BorderSide.none,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+
+                  title('Spotify & Cloud Streaming'),
+                  hint('Login with your Spotify credentials or paste any Spotify playlist link to sync.'),
+                  group([
+                    ListTile(
+                      leading: const Icon(Icons.album_rounded,
+                          color: Color(0xFF1DB954)),
+                      title: Text(app.spotifyConnected
+                          ? 'Spotify Connected (${app.spDisplayName.isNotEmpty ? app.spDisplayName : (app.spUserId.isNotEmpty ? app.spUserId : "Active")})'
+                          : 'Spotify Client Login & Playlist Sync'),
+                      subtitle: const Text(
+                          'Sync account playlists, Liked Songs, or paste playlist URLs'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => showSpotifyClientDialog(context),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.travel_explore_rounded),
+                      title: const Text('Search Songs Online'),
+                      subtitle: const Text(
+                          'Stream and save tracks from Spotify & cloud CDNs'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => showCloudSearchDialog(context),
+                    ),
+                  ]),
+                  const SizedBox(height: 28),
+
+                  title('Interface style'),
+                  hint('Switches the whole app look instantly.'),
+                  seg<UiStyle>(
+                    {
+                      UiStyle.material: 'Material',
+                      UiStyle.ios: 'iOS',
+                      UiStyle.oneui: 'One UI',
+                      UiStyle.spotify: 'Spotify',
+                    },
+                    app.uiStyle,
+                    app.setUiStyle,
+                  ),
+                  const SizedBox(height: 28),
+
+                  if (isIos) ...[
+                    title('iOS look'),
+                    hint(
+                        'AMOLED Black is pure black. Liquid Glass is a frosted translucent blur.'),
+                    seg<IosVariant>(
+                      {
+                        IosVariant.amoled: 'AMOLED Black',
+                        IosVariant.glass: 'Liquid Glass',
+                      },
+                      app.iosVariant,
+                      app.setIosVariant,
+                    ),
+                    const SizedBox(height: 28),
+                  ],
+
+                  if (app.uiStyle == UiStyle.material) ...[
+                    title('Material You colors'),
+                    hint(
+                        'Uses your wallpaper colors. Pick a Pixel 10 color to override.'),
+                    group([
+                      sw(Icons.wallpaper, 'Dynamic color (wallpaper)',
+                          'Follow your Android wallpaper', app.dynamicColor,
+                          app.setDynamic),
+                    ]),
+                    const SizedBox(height: 16),
+                    Opacity(
+                      opacity: app.dynamicColor ? 0.55 : 1.0,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 16,
+                        children: [
+                          for (int i = 0; i < seedOptions.length; i++)
+                            _Swatch(
+                                index: i,
+                                selected:
+                                    !app.dynamicColor && app.seedIndex == i),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                  ] else ...[
+                    title('Accent color'),
+                    hint(isIos
+                        ? 'iOS uses system blue. Pixel 10 colors apply in Material style.'
+                        : (isOneUi
+                            ? 'One UI uses its own blue accent. Pixel 10 colors apply in Material style.'
+                            : 'Spotify green is fixed. Pixel 10 colors apply in Material style.')),
+                    const SizedBox(height: 16),
+                  ],
+
+                  title('Appearance'),
+                  if (forcedDark)
+                    hint('This style is always dark.')
+                  else
+                    const SizedBox(height: 8),
+                  if (!forcedDark)
+                    seg<ThemeMode>(
+                      {
+                        ThemeMode.system: 'System',
+                        ThemeMode.light: 'Light',
+                        ThemeMode.dark: 'Dark',
+                      },
+                      app.themeMode,
+                      app.setThemeMode,
+                    ),
+                  if (app.uiStyle == UiStyle.material || isOneUi) ...[
+                    const SizedBox(height: 8),
+                    group([
+                      sw(Icons.contrast, 'Pure AMOLED Black',
+                          'True #000000 background in dark mode', app.amoled,
+                          app.setAmoled),
+                    ]),
+                  ],
+                  const SizedBox(height: 28),
+
+                  title('Player style'),
+                  hint(
+                      'Pick how the full-screen player looks. Swipe left or right to change songs.'),
+                  group([
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 6),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<PlayerStyle>(
+                          value: app.playerStyle,
+                          isExpanded: true,
+                          borderRadius: BorderRadius.circular(18),
+                          dropdownColor: cs.surfaceContainerHigh,
+                          icon: Icon(Icons.keyboard_arrow_down_rounded,
+                              color: cs.onSurface),
+                          items: [
+                            for (final ps in PlayerStyle.values)
+                              DropdownMenuItem<PlayerStyle>(
+                                value: ps,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      ps == app.playerStyle
+                                          ? Icons.radio_button_checked_rounded
+                                          : Icons.radio_button_off_rounded,
+                                      size: 20,
+                                      color: ps == app.playerStyle
+                                          ? cs.primary
+                                          : cs.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      playerLabels[ps] ?? '',
+                                      style: TextStyle(
+                                        fontWeight: ps == app.playerStyle
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                          onChanged: (ps) {
+                            if (ps != null) app.setPlayerStyle(ps);
+                          },
+                        ),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(playerDescs[app.playerStyle] ?? '',
+                        style: TextStyle(
+                            color: cs.onSurfaceVariant, fontSize: 12)),
+                  ),
+                  const SizedBox(height: 28),
+
+                  title('Playback'),
+                  const SizedBox(height: 8),
+                  group([
+                    sw(Icons.volume_up_outlined, 'Volume slider in player',
+                        'Show a volume slider in the playback window',
+                        app.showVolume, app.setShowVolume),
+                    sw(Icons.power_settings_new, 'Stop playback on task clear',
+                        'Stops the music when you swipe the app away from recents',
+                        app.stopOnTaskClear, app.setStopOnTaskClear),
+                  ]),
+                  const SizedBox(height: 28),
+
+                  title('Library'),
+                  const SizedBox(height: 8),
+                  group([
+                    ListTile(
+                      leading: Icon(outputIcon(app.outputKind)),
+                      title: const Text('Playing on'),
+                      subtitle: Text(app.outputName),
+                      onTap: () async {
+                        await app.requestPermissions();
+                        app.refreshOutput();
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.refresh),
+                      title: const Text('Rescan Music & Download'),
+                      subtitle: Text('${app.tracks.length} songs in library'),
+                      onTap: app.scan,
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.audio_file),
+                      title: const Text('Add songs'),
+                      onTap: app.pickFiles,
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.folder_open),
+                      title: const Text('Scan folder'),
+                      onTap: app.pickFolder,
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.security),
+                      title: const Text(
+                          'Grant audio, notification & Bluetooth permission'),
+                      onTap: () async {
+                        await app.requestPermissions();
+                        app.scan();
+                      },
+                    ),
+                  ]),
+                  const SizedBox(height: 28),
+                  Center(
+                    child: Text('Pixel Audio Player 2.0.0',
+                        style: TextStyle(color: cs.outline)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _Swatch extends StatelessWidget {
   final int index;
   final bool selected;
@@ -13902,7 +14676,3 @@ class _Swatch extends StatelessWidget {
     );
   }
 }
-
-        Widget hint(String s) => Padding(
-
-              padding: const EdgeInsets.only(bottom:
