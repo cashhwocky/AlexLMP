@@ -3392,10 +3392,10 @@ class _HomePageState extends State<HomePage> {
           padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
           child: Row(
             children: [
-              CircleAvatar(
+              const CircleAvatar(
                 radius: 17,
-                backgroundColor: const Color(0xFF1DB954),
-                child: const Text(
+                backgroundColor: Color(0xFF1DB954),
+                child: Text(
                   'A',
                   style: TextStyle(
                     color: Colors.black,
