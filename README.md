@@ -1,4 +1,6 @@
 # LoocalMusic
+<img width="1024" height="1024" alt="L" src="https://github.com/user-attachments/assets/dc7d37ae-812a-4677-bdee-4778706bb229" />
+
 <img width="1080" height="2424" alt="Screenshot_20261025-221443_Loocal Music" src="https://github.com/user-attachments/assets/b5f3b1df-f89d-4249-ad72-64a21035d285" />
 
 <img width="1080" height="2424" alt="Screenshot_20261025-221455_Loocal Music" src="https://github.com/user-attachments/assets/a04d1a93-d8d3-4f9a-a2c8-ae79925cbdc8" />
