@@ -4717,7 +4717,8 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
         final mq = MediaQuery.of(context);
         final sleepEnd = app.sleepEnd;
 
-        final topR = mq.padding.top + 56;
+        // FIXED: Increased top padding for the header/stage to sit safely below the status bar notch/cutout
+        final topR = mq.padding.top + 68;
         final overlayH = 72.0 +
             92 +
             48 +
@@ -4820,8 +4821,9 @@ class _NowPlayingSheetState extends State<NowPlayingSheet> {
                 ),
               ),
             ),
+            // FIXED: Positioned the top header below the system status bar using mq.padding.top
             Positioned(
-              top: mq.padding.top,
+              top: mq.padding.top + 6,
               left: 8,
               right: 8,
               height: 56,
