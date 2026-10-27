@@ -95,8 +95,8 @@ class MainActivity : AudioServiceActivity() {
             conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 doOutput = true
-                connectTimeout = 10000
-                readTimeout = 10000
+                connectTimeout = 12000
+                readTimeout = 12000
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("Accept", "application/json")
                 for ((k, v) in headers) setRequestProperty(k, v)
@@ -290,55 +290,16 @@ class MainActivity : AudioServiceActivity() {
         return null
     }
 
-    // Multi-client InnerTube + Piped fallback
+    // maxrave-dev InnerTube stream resolver with multi-client fallback + Piped
     private fun resolveYtStream(videoId: String): HashMap<String, Any?>? {
         val vd = ensureVisitorData()
 
-        data class ClientSpec(
-            val name: String,
-            val version: String,
-            val id: String,
-            val ua: String,
-            val extra: Map<String, Any>
-        )
+        data class ClientSpec(val name: String, val version: String, val id: String, val ua: String, val extra: Map<String, Any>)
 
         val clients = listOf(
-            ClientSpec(
-                name = "ANDROID_VR",
-                version = "1.61.48",
-                id = "28",
-                ua = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-                extra = mapOf(
-                    "deviceMake" to "Oculus",
-                    "deviceModel" to "Quest 3",
-                    "androidSdkVersion" to 32,
-                    "osName" to "Android",
-                    "osVersion" to "12L"
-                )
-            ),
-            ClientSpec(
-                name = "IOS",
-                version = "20.03.02",
-                id = "5",
-                ua = "com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)",
-                extra = mapOf(
-                    "deviceMake" to "Apple",
-                    "deviceModel" to "iPhone16,2",
-                    "osName" to "iPhone",
-                    "osVersion" to "18.2.1.22C161"
-                )
-            ),
-            ClientSpec(
-                name = "ANDROID_TESTSUITE",
-                version = "1.9",
-                id = "30",
-                ua = "com.google.android.youtube/1.9 (Linux; U; Android 14; en_US) gzip",
-                extra = mapOf(
-                    "androidSdkVersion" to 34,
-                    "osName" to "Android",
-                    "osVersion" to "14"
-                )
-            )
+            ClientSpec("ANDROID_VR", "1.61.48", "28", "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip", mapOf("deviceMake" to "Oculus", "deviceModel" to "Quest 3", "androidSdkVersion" to 32, "osName" to "Android", "osVersion" to "12L")),
+            ClientSpec("IOS", "20.03.02", "5", "com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)", mapOf("deviceMake" to "Apple", "deviceModel" to "iPhone16,2", "osName" to "iPhone", "osVersion" to "18.2.1.22C161")),
+            ClientSpec("WEB_REMIX", "1.20250310.01.00", "67", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0", emptyMap())
         )
 
         for (c in clients) {
@@ -401,13 +362,8 @@ class MainActivity : AudioServiceActivity() {
             } catch (_: Exception) {}
         }
 
-        // Fallback to Piped instances if InnerTube requires JS signatureCipher
-        val pipedInstances = listOf(
-            "https://pipedapi.kavin.rocks",
-            "https://pipedapi.tokhmi.xyz",
-            "https://pipedapi.syncpundit.io"
-        )
-        for (host in pipedInstances) {
+        // Fallback to Piped
+        for (host in listOf("https://pipedapi.kavin.rocks", "https://pipedapi.tokhmi.xyz", "https://pipedapi.syncpundit.io")) {
             try {
                 val pJson = getJson("$host/streams/$videoId") ?: continue
                 val streams = pJson.optJSONArray("audioStreams") ?: continue
