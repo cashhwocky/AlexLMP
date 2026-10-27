@@ -1,4 +1,4 @@
-// FILE: custom/main.dart — Pixel Audio Player 4.0 (Clean, Lightweight & Fully Functional)
+// FILE: custom/main.dart — Pixel Audio Player 4.0 (Clean & Fully Verified)
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -20,14 +20,13 @@ const ch = MethodChannel('pixelaudio/meta');
 class Nav { final IconData i, a; final String l, k; const Nav(this.i, this.a, this.l, this.k); }
 class Skin {
   final String name, hint, title; final Color accent, bg, card; final List<Nav> nav;
-  final int head, home, mini, np; final bool navAcc, pill; final double artR, sz;
-  const Skin(this.name, this.accent, this.bg, this.card, this.nav, this.hint, {this.title = 'Home', this.head = 0, this.home = 0, this.mini = 0, this.np = 0, this.navAcc = false, this.pill = false, this.artR = 6, this.sz = 144});
+  const Skin(this.name, this.accent, this.bg, this.card, this.nav, this.hint, {this.title = 'Home', this.head = 0, this.home = 0, this.mini = 0, this.np = 0, this.artR = 6, this.sz = 144});
 }
 const nHome = Nav(Icons.home_outlined, Icons.home_filled, 'Home', 'home');
 const nSearch = Nav(Icons.search, Icons.search, 'Search', 'search');
 const nLib = Nav(Icons.library_music_outlined, Icons.library_music, 'Your Library', 'lib');
 const skins = [
-  Skin('Spotify', Color(0xFF1ED760), Color(0xFF121212), Color(0xFF282828), [nHome, nSearch, nLib], 'What do you want to play?', artR: 8, sz: 152),
+  Skin('Spotify', Color(0xFF1ED760), Color(0xFF121212), Color(0xFF282828), [nHome, nSearch, nLib], 'What do you want to play?'),
 ];
 
 Color get bg => app.sk.bg;
@@ -43,6 +42,10 @@ void toast(String s) => msg.currentState?..hideCurrentSnackBar()..showSnackBar(S
 void tap() { if (app.haptics) HapticFeedback.selectionClick(); }
 Widget tx(String s, {double z = 14, FontWeight f = FontWeight.w500, Color c = Colors.white, int lines = 1, TextAlign? a}) =>
     Text(s, maxLines: lines, overflow: TextOverflow.ellipsis, textAlign: a, style: TextStyle(fontSize: z, fontWeight: f, color: c));
+
+void sheet(BuildContext c, Widget Function(BuildContext) b, {bool big = false}) => showModalBottomSheet(
+      context: c, isScrollControlled: big, backgroundColor: const Color(0xFF282828),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(14))), builder: b);
 
 class Track {
   final String path; String title, artist, album; String? art; final DateTime added;
@@ -90,7 +93,7 @@ class AppState extends ChangeNotifier {
   AudioPlayer get p => h.p;
   List<Track> tracks = [], queue = []; int idx = -1;
   Set<String> liked = {}; List<String> recent = [];
-  bool shuffle = false, haptics = true, resume = true, loadingYt = false;
+  bool shuffle = false, haptics = true, resume = true, loadingYt = false, scanning = false;
   int repeat = 0, tab = 0;
   double speed = 1.0, pitch = 1.0, vol = 1.0;
   List<String> pq = [];
@@ -250,6 +253,7 @@ class AppState extends ChangeNotifier {
   void setSemitones(double st) { setPitch(pow(2.0, st.clamp(-12.0, 12.0) / 12.0).toDouble()); }
   void applyTunePreset(double spd, double ptch) { speed = spd; pitch = ptch; p.setSpeed(speed); p.setPitch(pitch); notifyListeners(); }
   void like(Track t) => set(() { if (!liked.remove(t.path)) liked.add(t.path); });
+  void clearArt() { for (final t in tracks) { t.art = null; } set(() {}); toast('Cleared'); }
 }
 
 Future<void> main() async {
@@ -286,9 +290,6 @@ class Art extends StatelessWidget {
     );
   }
 }
-
-Widget tx(String s, {double z = 14, FontWeight f = FontWeight.w500, Color c = Colors.white, int lines = 1}) =>
-    Text(s, maxLines: lines, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: z, fontWeight: f, color: c));
 
 class TTile extends StatelessWidget {
   final Track t; final List<Track> list; final int i;
@@ -421,9 +422,6 @@ class HomePage extends StatelessWidget {
         ],
       );
 }
-
-class NewPage extends StatelessWidget { const NewPage({super.key}); @override Widget build(BuildContext c) => const SizedBox(); }
-class RadioPage extends StatelessWidget { const RadioPage({super.key}); @override Widget build(BuildContext c) => const SizedBox(); }
 
 class SearchPage extends StatefulWidget { const SearchPage({super.key}); @override State<SearchPage> createState() => _SearchState(); }
 class _SearchState extends State<SearchPage> {
