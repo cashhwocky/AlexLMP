@@ -1,88 +1,97 @@
-# FILE: .github/workflows/build.yml
-name: Build Release APK
+name: Build Archive Tune APK
 
 on:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: 'temurin'
           java-version: '17'
 
-      - uses: subosito/flutter-action@v2
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
         with:
-          channel: stable
-          cache: true
+          flutter-version: '3.24.3'
+          channel: 'stable'
 
-      - name: Generate Flutter Android project
-        run: flutter create . --org com.alexdesrosier --project-name audio_player --platforms android
-
-      - name: Overwrite with custom files
+      - name: Create clean Flutter project scaffold
         run: |
-          cp custom/pubspec.yaml pubspec.yaml
-          cp custom/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
-          cp custom/main.dart lib/main.dart
-          rm -rf test analysis_options.yaml
-          find android/app/src/main -name 'MainActivity.*' -delete
-          mkdir -p android/app/src/main/kotlin/com/alexdesrosier/audio_player
-          cp custom/MainActivity.kt android/app/src/main/kotlin/com/alexdesrosier/audio_player/MainActivity.kt
+          flutter create --org com.archivetune.app --project-name archive_tune app_build
 
-      - name: Force compileSdk 36 on app and all plugins
+      - name: Copy custom files into Flutter project
         run: |
-          if [ -f android/build.gradle.kts ]; then
-            cat > /tmp/patch.kts <<'EOF'
-          subprojects {
-              if (!state.executed) {
-                  afterEvaluate {
-                      val androidExt = extensions.findByName("android")
-                      if (androidExt != null) {
-                          androidExt.withGroovyBuilder {
-                              "compileSdkVersion"(36)
-                          }
-                      }
+          cp custom/pubspec.yaml app_build/pubspec.yaml
+          cp custom/main.dart app_build/lib/main.dart
+          cp custom/AndroidManifest.xml app_build/android/app/src/main/AndroidManifest.xml
+          mkdir -p app_build/android/app/src/main/kotlin/com/archivetune/app
+          cp custom/MainActivity.kt app_build/android/app/src/main/kotlin/com/archivetune/app/MainActivity.kt
+
+      - name: Configure Gradle for Android SDK 35
+        run: |
+          cat << 'EOF' > app_build/android/app/build.gradle
+          plugins {
+              id "com.android.application"
+              id "kotlin-android"
+              id "dev.flutter.flutter-gradle-plugin"
+          }
+
+          android {
+              namespace = "com.archivetune.app"
+              compileSdk = 35
+              ndkVersion = flutter.ndkVersion
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+
+              defaultConfig {
+                  applicationId = "com.archivetune.app"
+                  minSdk = 24
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0.0"
+              }
+
+              buildTypes {
+                  release {
+                      signingConfig = signingConfigs.debug
+                      minifyEnabled = false
+                      shrinkResources = false
                   }
               }
           }
 
-          EOF
-            cat /tmp/patch.kts android/build.gradle.kts > /tmp/root.kts
-            mv /tmp/root.kts android/build.gradle.kts
-          else
-            cat > /tmp/patch.gradle <<'EOF'
-          subprojects {
-              afterEvaluate { p ->
-                  if (p.hasProperty('android')) {
-                      p.android.compileSdkVersion 36
-                  }
-              }
+          flutter {
+              source = "../.."
           }
-
           EOF
-            cat /tmp/patch.gradle android/build.gradle > /tmp/root.gradle
-            mv /tmp/root.gradle android/build.gradle
-          fi
-          for f in android/app/build.gradle.kts android/app/build.gradle; do
-            if [ -f "$f" ]; then
-              sed -i -E 's/compileSdk(Version)?\s*=?\s*flutter\.compileSdkVersion/compileSdk = 36/' "$f"
-              sed -i -E 's/targetSdk(Version)?\s*=?\s*flutter\.targetSdkVersion/targetSdk = 35/' "$f"
-            fi
-          done
 
-      - name: Get packages
-        run: flutter pub get
+      - name: Install dependencies and build release APK
+        working-directory: app_build
+        run: |
+          flutter pub get
+          flutter build apk --release
 
-      - name: Build release APK
-        run: flutter build apk --release
-
-      - uses: actions/upload-artifact@v4
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: audio-player-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: ArchiveTune-Release-APK
+          path: app_build/build/app/outputs/flutter-apk/app-release.apk
