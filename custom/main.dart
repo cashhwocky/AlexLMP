@@ -1,4 +1,4 @@
-// FILE: custom/main.dart — Pixel Audio Player 4.0 (Exact TIDAL & Spotify Home + Player Replicas)
+// FILE: custom/main.dart — Pixel Audio Player 4.0 (TIDAL & Spotify Replicas + Studio Speed/Pitch + YT Music Sign-In)
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart' as yte;
 
 // ───────────── skins ─────────────
 const ch = MethodChannel('pixelaudio/meta');
@@ -130,7 +131,6 @@ const skins = [
   ),
 ];
 
-// art: 0 padded, 1 flush, 2 vinyl, 3 fullscreen bg, 4 small, 5 none | bg: 0 gradient, 1 blur, 2 solid, 3 accent, 4 black | seek: 0 std, 1 wavy, 2 slim, 3 thick, 4 bars, 5 dots
 class NPL {
   final String name; final int art, bg, seek; final bool center, plain, vol, tabs, viz, acc, ring;
   const NPL(this.name, {this.art = 0, this.bg = 0, this.seek = 0, this.center = false, this.plain = false, this.vol = false, this.tabs = false, this.viz = false, this.acc = false, this.ring = false});
@@ -157,7 +157,7 @@ Color get card => app.sk.card;
 const grey = Color(0xFFA7A7A7);
 const spGreen = Color(0xFF1ED760);
 const tidalGold = Color(0xFFFFD43B);
-const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+const speeds = [0.5, 0.75, 0.85, 1.0, 1.15, 1.25, 1.5, 2.0];
 const exts = ['.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aac', '.opus'];
 final msg = GlobalKey<ScaffoldMessengerState>();
 final app = AppState();
@@ -168,7 +168,7 @@ String navLabel(String k) {
   if (l.isNotEmpty) return l;
   return switch (k) { 'home' => 'Home', 'search' => 'Search', 'lib' => 'My Collection', 'new' => 'Explore', 'radio' => 'Mixes', _ => 'Library' };
 }
-String badge(Track t) { final e = t.path.split('.').last.toUpperCase(); return e == 'FLAC' || e == 'WAV' ? '$e • LOSSLESS' : e; }
+String badge(Track t) { final e = t.path.split('.').last.toUpperCase(); return e == 'FLAC' || e == 'WAV' ? '$e • LOSSLESS' : '$e • MAX'; }
 List<Track> mix(List<Track> all, int n) => ([...all]..shuffle(Random(DateTime.now().difference(DateTime(2024)).inDays + n))).take(25).toList();
 
 void toast(String s) => msg.currentState
@@ -199,6 +199,19 @@ class Track {
   }
   List toJson() => [path, title, artist, album, art, added.millisecondsSinceEpoch];
   factory Track.fromJson(List j) => Track(j[0], j[1], j[2], j[3], j[4], DateTime.fromMillisecondsSinceEpoch(j[5]));
+}
+
+class YtSong {
+  final String videoId, title, artist, album, duration, art;
+  const YtSong({required this.videoId, required this.title, required this.artist, required this.album, required this.duration, required this.art});
+  factory YtSong.fromMap(Map m) => YtSong(
+        videoId: '${m['videoId'] ?? ''}',
+        title: '${m['title'] ?? 'Unknown'}',
+        artist: '${m['artist'] ?? 'YouTube Music'}',
+        album: '${m['album'] ?? 'YouTube Music'}',
+        duration: '${m['duration'] ?? ''}',
+        art: '${m['art'] ?? ''}',
+      );
 }
 
 class H extends BaseAudioHandler with SeekHandler {
@@ -234,10 +247,12 @@ class AppState extends ChangeNotifier {
   AudioPlayer get p => h.p;
   List<Track> tracks = [], queue = []; int idx = -1;
   Set<String> liked = {}; Map<String, List<String>> lists = {}; List<String> recent = []; Map<String, int> plays = {};
-  String name = 'Alex', swipe = 'skip', sort = 'recent', playCtx = 'Liked Songs'; String? avatar;
+  String name = 'Alex', swipe = 'skip', sort = 'recent', playCtx = 'Liked Songs'; String? avatar, ytAccountEmail;
   bool shuffle = false, haptics = true, showVol = false, resume = true, skipSilence = false, stopOnClear = false, scanning = false, libGrid = false;
   int repeat = 0, accent = 0; double speed = 1, vol = 1; DateTime? sleepAt; Timer? _sleep;
-  int pbg = 0, sliderStyle = 0, tab0 = 0, pqi = 0, _errs = 0; bool dyn = false, lyricsCard = true, skipErr = true, normalize = false, slim = false, swipeArt = true, sleepEnd = false; double pitch = 1; List<String> pq = [];
+  int pbg = 0, sliderStyle = 0, tab0 = 0, pqi = 0, _errs = 0;
+  bool dyn = false, lyricsCard = true, skipErr = true, normalize = false, slim = false, swipeArt = true, sleepEnd = false, linkPitch = false, loadingYt = false;
+  double pitch = 1; List<String> pq = [];
   int skin = 0, npStyle = -1, artShape = 0, tab = 0; bool glow = true, spinArt = true, viz = false, remain = false, dbl = true, badgeOn = false, fadeIn = false, miniProg = true, eqOn = false;
   Duration? la, lb; String outName = 'ALEXWIN11PRO', outKind = 'phone';
   Skin get sk => skins[skin.clamp(0, skins.length - 1)];
@@ -251,6 +266,14 @@ class AppState extends ChangeNotifier {
   List<Track> get likedTracks => toTracks(liked);
   List<Track> get recentTracks => toTracks(recent);
   List<Track> get mostPlayed { final k = plays.keys.toList()..sort((a, b) => plays[b]!.compareTo(plays[a]!)); return toTracks(k.take(20)); }
+
+  double get semitones => (12.0 * (log(pitch.clamp(0.25, 4.0)) / ln2));
+  bool get isTuned => (speed - 1.0).abs() > 0.005 || (pitch - 1.0).abs() > 0.005;
+  String get tuneSummary {
+    final st = semitones;
+    final stStr = st.abs() < 0.05 ? '±0 st' : '${st > 0 ? '+' : ''}${st.toStringAsFixed(1)} st';
+    return '${speed.toStringAsFixed(2)}× • $stStr';
+  }
 
   Future<void> init() async {
     sp = await SharedPreferences.getInstance();
@@ -274,18 +297,22 @@ class AppState extends ChangeNotifier {
   void load() {
     try {
       final d = jsonDecode(sp.getString('d') ?? '{}') as Map<String, dynamic>;
-      tracks = [for (final j in (d['tracks'] ?? []) as List) Track.fromJson(j)];
+      tracks = [for (final j in (d['tracks'] ?? []) as List) Track.fromJson(j)].where((t) => File(t.path).existsSync()).toList();
       liked = {...((d['liked'] ?? []) as List).cast<String>()};
       lists = {for (final e in ((d['lists'] ?? {}) as Map).entries) e.key as String: (e.value as List).cast<String>()};
       recent = ((d['recent'] ?? []) as List).cast<String>();
       plays = ((d['plays'] ?? {}) as Map).map((k, v) => MapEntry(k as String, v as int));
-      name = d['name'] ?? name; avatar = d['avatar']; swipe = d['swipe'] ?? swipe; sort = d['sort'] ?? sort;
+      name = d['name'] ?? name; avatar = d['avatar']; ytAccountEmail = d['ytEmail']; swipe = d['swipe'] ?? swipe; sort = d['sort'] ?? sort;
       haptics = d['haptics'] ?? true; showVol = d['showVol'] ?? false; resume = d['resume'] ?? true;
       skipSilence = d['skip'] ?? false; stopOnClear = d['stop'] ?? false; libGrid = d['grid'] ?? false;
       accent = d['accent'] ?? 0; shuffle = d['shuffle'] ?? false; repeat = d['repeat'] ?? 0;
       dirs = ((d['dirs'] ?? dirs) as List).cast<String>();
-      dyn = d['dyn'] ?? false; pbg = d['pbg'] ?? 0; sliderStyle = d['sl'] ?? 0; lyricsCard = d['lc'] ?? true; skipErr = d['se'] ?? true; normalize = d['nm'] ?? false; slim = d['slim'] ?? false; swipeArt = d['sa'] ?? true; tab0 = d['tab0'] ?? 0; pitch = (d['pitch'] ?? 1.0).toDouble(); pq = ((d['queue'] ?? []) as List).cast<String>(); pqi = d['qi'] ?? 0;
-      skin = d['skin'] ?? 0; npStyle = d['nps'] ?? -1; artShape = d['shape'] ?? 0; glow = d['glow'] ?? true; spinArt = d['spin'] ?? true; viz = d['viz'] ?? false; remain = d['remain'] ?? false; dbl = d['dbl'] ?? true; badgeOn = d['badge'] ?? false; fadeIn = d['fade'] ?? false; miniProg = d['mp'] ?? true; eqOn = d['eq'] ?? false;
+      dyn = d['dyn'] ?? false; pbg = d['pbg'] ?? 0; sliderStyle = d['sl'] ?? 0; lyricsCard = d['lc'] ?? true; skipErr = d['se'] ?? true; normalize = d['nm'] ?? false; slim = d['slim'] ?? false; swipeArt = d['sa'] ?? true; tab0 = d['tab0'] ?? 0;
+      speed = (d['speed'] ?? 1.0).toDouble().clamp(0.25, 3.0);
+      pitch = (d['pitch'] ?? 1.0).toDouble().clamp(0.25, 3.0);
+      linkPitch = d['lp'] ?? false;
+      pq = ((d['queue'] ?? []) as List).cast<String>(); pqi = d['qi'] ?? 0;
+      skin = d['skin'] ?? 0; npStyle = d['nps'] ?? -1; artShape = d['shape'] ?? 0; glow = d['glow'] ?? true; spinArt = d['spin'] ?? true; viz = false; remain = false; dbl = true; badgeOn = false; fadeIn = false; miniProg = true; eqOn = false;
       playCtx = d['pctx'] ?? 'Liked Songs';
       tab = tab0;
     } catch (_) {}
@@ -293,8 +320,10 @@ class AppState extends ChangeNotifier {
 
   void save() => sp.setString('d', jsonEncode({
         'tracks': tracks.map((t) => t.toJson()).toList(), 'liked': liked.toList(), 'lists': lists, 'recent': recent.take(50).toList(),
-        'plays': plays, 'name': name, 'avatar': avatar, 'swipe': swipe, 'sort': sort, 'haptics': haptics, 'showVol': showVol,
-        'resume': resume, 'skip': skipSilence, 'stop': stopOnClear, 'grid': libGrid, 'accent': accent, 'shuffle': shuffle, 'repeat': repeat, 'dirs': dirs, 'dyn': dyn, 'pbg': pbg, 'sl': sliderStyle, 'lc': lyricsCard, 'se': skipErr, 'nm': normalize, 'slim': slim, 'sa': swipeArt, 'tab0': tab0, 'pitch': pitch, 'queue': queue.take(200).map((t) => t.path).toList(), 'qi': idx,
+        'plays': plays, 'name': name, 'avatar': avatar, 'ytEmail': ytAccountEmail, 'swipe': swipe, 'sort': sort, 'haptics': haptics, 'showVol': showVol,
+        'resume': resume, 'skip': skipSilence, 'stop': stopOnClear, 'grid': libGrid, 'accent': accent, 'shuffle': shuffle, 'repeat': repeat, 'dirs': dirs, 'dyn': dyn, 'pbg': pbg, 'sl': sliderStyle, 'lc': lyricsCard, 'se': skipErr, 'nm': normalize, 'slim': slim, 'sa': swipeArt, 'tab0': tab0,
+        'speed': speed, 'pitch': pitch, 'lp': linkPitch,
+        'queue': queue.take(200).map((t) => t.path).toList(), 'qi': idx,
         'skin': skin, 'nps': npStyle, 'shape': artShape, 'glow': glow, 'spin': spinArt, 'viz': viz, 'remain': remain, 'dbl': dbl, 'badge': badgeOn, 'fade': fadeIn, 'mp': miniProg, 'eq': eqOn, 'pctx': playCtx,
       }));
   void set(void Function() f) { f(); save(); notifyListeners(); }
@@ -311,6 +340,77 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
     } catch (_) {}
+  }
+
+  // ── Native Kotlin SimpMusic YouTube Music Search & Stream with robust fallbacks ──
+  Future<List<YtSong>> searchYtMusic(String query) async {
+    if (query.trim().isEmpty) return [];
+    try {
+      final res = await ch.invokeMethod<List>('ytSearch', {'query': query.trim()});
+      if (res == null) return [];
+      return [for (final item in res) if (item is Map) YtSong.fromMap(item)];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> playYtSong(YtSong s) async {
+    if (loadingYt) return;
+    loadingYt = true;
+    notifyListeners();
+    toast('Streaming "${s.title}" from YouTube Music…');
+    try {
+      var res = await ch.invokeMethod<Map>('ytStream', {
+        'videoId': s.videoId,
+        'title': s.title,
+        'artist': s.artist,
+        'art': s.art,
+      });
+
+      if (res == null || res['path'] == null) {
+        final yt = yte.YoutubeExplode();
+        try {
+          final manifest = await yt.videos.streamsClient.getManifest(s.videoId);
+          final audio = manifest.audioOnly.withHighestBitrate();
+          res = await ch.invokeMethod<Map>('ytStream', {
+            'videoId': s.videoId,
+            'title': s.title,
+            'artist': s.artist,
+            'art': s.art,
+            'directUrl': audio.url.toString(),
+          });
+        } finally {
+          yt.close();
+        }
+      }
+
+      if (res != null && res['path'] != null) {
+        final path = '${res['path']}';
+        final existingIdx = tracks.indexWhere((t) => t.path == path);
+        Track tr;
+        if (existingIdx >= 0) {
+          tr = tracks[existingIdx];
+        } else {
+          tr = Track(
+            path,
+            s.title,
+            s.artist,
+            s.album,
+            res['art'] as String?,
+            DateTime.now(),
+          );
+          tracks.insert(0, tr);
+          save();
+        }
+        await playAt([tr, ...queue.where((x) => x.path != tr.path)], 0, ctx: 'YouTube Music');
+      } else {
+        toast('Could not resolve stream for "${s.title}"');
+      }
+    } catch (_) {
+      toast('Error streaming "${s.title}"');
+    }
+    loadingYt = false;
+    notifyListeners();
   }
 
   void abLoop() {
@@ -353,7 +453,6 @@ class AppState extends ChangeNotifier {
     var n = 0;
     for (final t in tracks.where((t) => t.art == null && t.artist == 'Unknown artist').toList()) { await _meta(t); if (++n % 8 == 0) notifyListeners(); }
     notifyListeners(); save();
-    if (tracks.isEmpty) toast('No songs found. Use Add songs in Settings.');
   }
 
   Future<void> addFiles() async {
@@ -418,14 +517,51 @@ class AppState extends ChangeNotifier {
   void playNext(Track t) { if (cur == null) { playAt([t], 0); return; } queue.insert(idx + 1, t); toast('Playing next'); notifyListeners(); }
   void enqueue(Track t) { if (cur == null) { playAt([t], 0); return; } queue.add(t); toast('Added to queue'); notifyListeners(); }
   void reorderQueue(int o, int n) { final c = cur; if (n > o) n--; queue.insert(n, queue.removeAt(o)); idx = queue.indexOf(c!); notifyListeners(); }
-  void setSpeed(double s) { speed = s; p.setSpeed(s); notifyListeners(); }
+
+  void setSpeed(double s) {
+    speed = s.clamp(0.25, 2.5).toDouble();
+    p.setSpeed(speed);
+    if (linkPitch) {
+      pitch = speed;
+      p.setPitch(pitch);
+    }
+    save();
+    notifyListeners();
+  }
+
+  void setPitch(double v) {
+    pitch = v.clamp(0.25, 2.5).toDouble();
+    p.setPitch(pitch);
+    if (linkPitch) {
+      speed = pitch;
+      p.setSpeed(speed);
+    }
+    save();
+    notifyListeners();
+  }
+
+  void setSemitones(double st) {
+    final ratio = pow(2.0, st.clamp(-12.0, 12.0) / 12.0).toDouble();
+    setPitch(ratio);
+  }
+
+  void applyTunePreset(double spd, double ptch, {bool linked = false}) {
+    linkPitch = linked;
+    speed = spd.clamp(0.25, 2.5).toDouble();
+    pitch = ptch.clamp(0.25, 2.5).toDouble();
+    p.setSpeed(speed);
+    p.setPitch(pitch);
+    save();
+    notifyListeners();
+  }
+
   void setVol(double v) { vol = v; p.setVolume(v); notifyListeners(); }
   void setSleep(int? min) {
     _sleep?.cancel(); sleepAt = null;
     if (min != null) { sleepAt = DateTime.now().add(Duration(minutes: min)); _sleep = Timer(Duration(minutes: min), () { p.pause(); sleepAt = null; notifyListeners(); }); toast('Sleep timer: $min min'); }
     notifyListeners();
   }
-  void setPitch(double v) { pitch = v; p.setPitch(v); save(); notifyListeners(); }
+
   Color colorOf(Track t) {
     final c = _cols[t.path]; if (c != null) return c;
     if (t.art != null && _pend.add(t.path)) _dom(t);
@@ -472,7 +608,7 @@ class AppState extends ChangeNotifier {
   void reorderList(String n, int o, int nw) => set(() { if (nw > o) nw--; final l = lists[n]!; l.insert(nw, l.removeAt(o)); });
   void clearHistory() => set(() { recent.clear(); plays.clear(); });
   void clearArt() { try { for (final f in Directory(cache).listSync()) { if (f.path.contains('art_')) f.deleteSync(); } } catch (_) {} for (final t in tracks) { t.art = null; } set(() {}); toast('Artwork cache cleared'); }
-  void reset() { sp.remove('d'); name = 'Alex'; avatar = null; swipe = 'skip'; accent = 0; skin = 0; tab = 0; npStyle = -1; artShape = 0; glow = true; spinArt = true; viz = false; remain = false; dbl = true; badgeOn = false; fadeIn = false; miniProg = true; eqOn = false; dyn = false; pbg = 0; sliderStyle = 0; lyricsCard = true; pitch = 1; slim = false; shuffle = false; repeat = 0; haptics = true; showVol = false; resume = true; stopOnClear = false; skipSilence = false; save(); notifyListeners(); toast('Settings reset'); }
+  void reset() { sp.remove('d'); name = 'Alex'; avatar = null; ytAccountEmail = null; swipe = 'skip'; accent = 0; skin = 0; tab = 0; npStyle = -1; artShape = 0; glow = true; spinArt = true; viz = false; remain = false; dbl = true; badgeOn = false; fadeIn = false; miniProg = true; eqOn = false; dyn = false; pbg = 0; sliderStyle = 0; lyricsCard = true; speed = 1; pitch = 1; linkPitch = false; slim = false; shuffle = false; repeat = 0; haptics = true; showVol = false; resume = true; stopOnClear = false; skipSilence = false; save(); notifyListeners(); toast('Settings reset'); }
 }
 
 // ───────────── entry ─────────────
@@ -620,16 +756,50 @@ Widget dd<T>(Map<T, String> o, T v, void Function(T) f, {Widget Function(T)? lea
 
 Widget skinDrop() => ListenableBuilder(listenable: app, builder: (_, __) => dd<int>({for (final (i, s) in skins.indexed) i: s.name}, app.skin, app.setSkin, lead: (i) => Container(width: 14, height: 14, decoration: BoxDecoration(color: skins[i].accent, shape: BoxShape.circle))));
 
-void trackMenu(BuildContext c, Track t, {String? inList}) => sheet(c, (s) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      ListTile(leading: Art(t, 48), title: tx(t.title, f: FontWeight.w700), subtitle: tx(t.artist, c: grey, z: 13)),
-      const Divider(color: Colors.white12),
-      opt(app.liked.contains(t.path) ? Icons.check_circle : Icons.add_circle_outline, app.liked.contains(t.path) ? 'Remove from Liked Songs' : 'Add to Liked Songs', () { app.like(t); Navigator.pop(s); }, c: app.liked.contains(t.path) ? gr : Colors.white),
-      opt(Icons.playlist_add, 'Add to playlist', () { Navigator.pop(s); pickList(c, t); }),
-      opt(Icons.queue_music, 'Play next', () { app.playNext(t); Navigator.pop(s); }),
-      opt(Icons.add_to_queue, 'Add to queue', () { app.enqueue(t); Navigator.pop(s); }),
-      opt(Icons.info_outline, 'Song info', () { Navigator.pop(s); showTrackInfo(c, t); }),
-      if (inList != null) opt(Icons.remove_circle_outline, 'Remove from this playlist', () { app.toggleIn(inList, t); Navigator.pop(s); }),
-    ])));
+// ── 3-DOT MENU (Includes Studio Speed & Pitch Adjuster + Equalizer) ──
+void trackMenu(BuildContext c, Track t, {String? inList}) => sheet(c, (s) => ListenableBuilder(
+      listenable: app,
+      builder: (_, __) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(leading: Art(t, 48), title: tx(t.title, f: FontWeight.w700), subtitle: tx(t.artist, c: grey, z: 13)),
+              const Divider(color: Colors.white12),
+              opt(
+                app.liked.contains(t.path) ? Icons.check_circle : Icons.add_circle_outline,
+                app.liked.contains(t.path) ? 'Remove from Liked Songs' : 'Add to Liked Songs',
+                () { app.like(t); Navigator.pop(s); },
+                c: app.liked.contains(t.path) ? gr : Colors.white,
+              ),
+              opt(
+                Icons.tune_rounded,
+                'Speed & pitch (${app.tuneSummary})',
+                () {
+                  Navigator.pop(s);
+                  sheet(c, (_) => const TuneSheet(), big: true);
+                },
+                c: app.isTuned ? gr : Colors.white,
+              ),
+              opt(
+                Icons.equalizer_rounded,
+                app.eqOn ? 'Equalizer (On)' : 'Equalizer',
+                () {
+                  Navigator.pop(s);
+                  sheet(c, (_) => const EqSheet(), big: true);
+                },
+                c: app.eqOn ? gr : Colors.white,
+              ),
+              opt(Icons.playlist_add, 'Add to playlist', () { Navigator.pop(s); pickList(c, t); }),
+              opt(Icons.queue_music, 'Play next', () { app.playNext(t); Navigator.pop(s); }),
+              opt(Icons.add_to_queue, 'Add to queue', () { app.enqueue(t); Navigator.pop(s); }),
+              opt(Icons.info_outline, 'Song info', () { Navigator.pop(s); showTrackInfo(c, t); }),
+              if (inList != null) opt(Icons.remove_circle_outline, 'Remove from this playlist', () { app.toggleIn(inList, t); Navigator.pop(s); }),
+            ],
+          ),
+        ),
+      ),
+    ));
 
 void showTrackInfo(BuildContext c, Track t) => sheet(c, (s) => SafeArea(child: Padding(
       padding: const EdgeInsets.all(20),
@@ -770,6 +940,7 @@ class Shell extends StatelessWidget {
         return Scaffold(
           body: SafeArea(bottom: false, child: IndexedStack(index: t, children: [for (final n in s.nav) page(n.k)])),
           bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (app.loadingYt) const LinearProgressIndicator(minHeight: 2, color: spGreen, backgroundColor: Colors.white12),
             if (app.cur != null) const Mini(),
             Container(
               decoration: isSpotify
@@ -803,7 +974,7 @@ class Mini extends StatelessWidget {
   Widget build(BuildContext c) {
     final t = app.cur!, m = app.sk.mini, lk = app.liked.contains(t.path);
 
-    // ── EXACT TIDAL MINI PLAYER REPLICA (from image_c79a9a.jpg) ──
+    // ── EXACT TIDAL MINI PLAYER REPLICA ──
     if (m == 4) {
       final body = GestureDetector(
         onTap: () => openNP(c),
@@ -862,7 +1033,7 @@ class Mini extends StatelessWidget {
       return app.swipe == 'close' ? Dismissible(key: ValueKey('m${t.path}'), direction: DismissDirection.horizontal, onDismissed: (_) => app.close(), child: body) : body;
     }
 
-    // ── EXACT SPOTIFY MINI PLAYER REPLICA (from image_c79a7b.png) ──
+    // ── EXACT SPOTIFY MINI PLAYER REPLICA ──
     if (m == 0) {
       final dom = HSLColor.fromColor(app.colorOf(t)).withLightness(.22).withSaturation(.35).toColor();
       final body = GestureDetector(
@@ -1101,20 +1272,23 @@ class _SeekState extends State<Seek> {
               children: [
                 tx(fmt(left), z: 12, c: const Color(0xFF9E9E9E), f: FontWeight.w600),
                 if (widget.showMaxBadge)
-                  Container(
-                    margin: const EdgeInsets.only(top: 2),
-                    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 3.5),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2B2210),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Text(
-                      'MAX',
-                      style: TextStyle(
-                        color: tidalGold,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.8,
+                  GestureDetector(
+                    onTap: () => sheet(c, (_) => const TuneSheet(), big: true),
+                    child: Container(
+                      margin: const EdgeInsets.only(top: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 3.5),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2B2210),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'MAX',
+                        style: TextStyle(
+                          color: tidalGold,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
+                        ),
                       ),
                     ),
                   ),
@@ -1134,7 +1308,7 @@ class _SeekState extends State<Seek> {
       });
 }
 
-// ── Custom TIDAL Track Radio ('d' with 6 dots around it) icon from image_c7a21e.jpg ──
+// ── Custom TIDAL Track Radio ('d' with 6 dots around it) icon ──
 class TidalRadioIcon extends StatelessWidget {
   final Color color;
   const TidalRadioIcon({this.color = const Color(0xFF9E9E9E), super.key});
@@ -1180,7 +1354,7 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
         child: a,
       );
 
-  // ── EXACT TIDAL NOW PLAYING SCREEN (from image_c7a21e.jpg) ──
+  // ── EXACT TIDAL NOW PLAYING SCREEN ──
   Widget _buildTidalNP(BuildContext c, Track t) {
     final col = app.colorOf(t);
     final lk = app.liked.contains(t.path);
@@ -1210,29 +1384,30 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 10),
-                  // Artwork with subtle shadow & 8px radius
                   Expanded(
                     child: Center(
-                      child: _wrapArtGesture(
-                        Container(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.55),
-                                blurRadius: 28,
-                                offset: const Offset(0, 14),
-                              ),
-                            ],
+                      child: GestureDetector(
+                        onLongPress: () => trackMenu(c, t),
+                        child: _wrapArtGesture(
+                          Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.55),
+                                  blurRadius: 28,
+                                  offset: const Offset(0, 14),
+                                ),
+                              ],
+                            ),
+                            child: Art(t, artSize, r: 8),
                           ),
-                          child: Art(t, artSize, r: 8),
+                          artSize,
                         ),
-                        artSize,
                       ),
                     ),
                   ),
                   const SizedBox(height: 18),
-                  // Title + Artist + Heart + iOS Share icon
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
@@ -1258,17 +1433,14 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
                         icon: const Icon(CupertinoIcons.share, color: Colors.white, size: 24),
                         onPressed: () {
                           tap();
-                          Clipboard.setData(ClipboardData(text: '${t.title} - ${t.artist}'));
-                          toast('Copied song info');
+                          trackMenu(c, t);
                         },
                       ),
                     ],
                   ),
                   const SizedBox(height: 14),
-                  // Seek bar with centered yellow MAX pill
                   const Seek(2, false, showMaxBadge: true, customThumbRadius: 0, customTrackHeight: 4.5),
                   const SizedBox(height: 18),
-                  // Main playback controls (Shuffle, Prev, Large Play Triangle, Next, Repeat)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -1307,13 +1479,11 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
                     ],
                   ),
                   const SizedBox(height: 22),
-                  // Bottom 4-icon bar: [32≡] [Lyrics] [Radio d] [Info ⓘ]
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
-                        // Queue count pill + 3 lines
                         GestureDetector(
                           onTap: () => sheet(c, (_) => const QueueSheet(), big: true),
                           child: Row(
@@ -1335,19 +1505,16 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
                             ],
                           ),
                         ),
-                        // Lyrics icon
                         GestureDetector(
                           onTap: () => Navigator.push(c, MaterialPageRoute(builder: (_) => const LyricsPage())),
                           child: const Icon(Icons.lyrics_outlined, color: Color(0xFF9E9E9E), size: 25),
                         ),
-                        // Track Radio 'd' with dots
                         GestureDetector(
                           onTap: () => Navigator.push(c, MaterialPageRoute(builder: (_) => ListPage('${t.artist} Radio', () => app.tracks.where((x) => x.artist == t.artist).toList()))),
                           child: const TidalRadioIcon(color: Color(0xFF9E9E9E)),
                         ),
-                        // Info circle 'i'
                         GestureDetector(
-                          onTap: () => showTrackInfo(c, t),
+                          onTap: () => trackMenu(c, t),
                           child: const Icon(Icons.info_outline_rounded, color: Color(0xFF9E9E9E), size: 25),
                         ),
                       ],
@@ -1362,7 +1529,7 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
     );
   }
 
-  // ── EXACT SPOTIFY NOW PLAYING SCREEN (from image_c7a1fe.png) ──
+  // ── EXACT SPOTIFY NOW PLAYING SCREEN ──
   Widget _buildSpotifyNP(BuildContext c, Track t) {
     final col = app.colorOf(t);
     final lk = app.liked.contains(t.path);
@@ -1414,7 +1581,6 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
             padding: const EdgeInsets.symmetric(horizontal: 22),
             children: [
               const SizedBox(height: 6),
-              // Top bar: down chevron | Playing from Playlist / Liked Songs | 3-dot menu
               Row(
                 children: [
                   IconButton(
@@ -1441,7 +1607,6 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
                 ],
               ),
               const SizedBox(height: 24),
-              // Large rounded cover art (12px radius)
               Center(
                 child: _wrapArtGesture(
                   Container(
@@ -1461,7 +1626,6 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
                 ),
               ),
               const SizedBox(height: 28),
-              // Song Title + [E] Artist + Green Circle Checkmark
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
@@ -1503,10 +1667,8 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
                 ],
               ),
               const SizedBox(height: 14),
-              // Thin seek bar with small white thumb knob
               const Seek(0, false, customThumbRadius: 5, customTrackHeight: 3.2),
               const SizedBox(height: 8),
-              // Controls row: Shuffle (green + dot) | Skip Prev | White Circle Play | Skip Next | Repeat (with dot)
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -1544,7 +1706,6 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
                 ],
               ),
               const SizedBox(height: 14),
-              // Device bar: [Laptop icon] ALEXWIN11PRO • Lossless   [Share]  [Queue]
               Row(
                 children: [
                   GestureDetector(
@@ -1578,7 +1739,6 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
                 ],
               ),
               const SizedBox(height: 12),
-              // "About the song [Beta]" card at bottom (from image_c7a1fe.png)
               GestureDetector(
                 onTap: () => showTrackInfo(c, t),
                 child: Container(
@@ -1651,7 +1811,6 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
           if (t == null) { WidgetsBinding.instance.addPostFrameCallback((_) { if (c.mounted && Navigator.canPop(c)) Navigator.pop(c); }); return const SizedBox(); }
           final L = app.npl;
 
-          // Route to exact TIDAL or Spotify replica when selected
           if (L.name == 'TIDAL') {
             return GestureDetector(
               onVerticalDragEnd: (d) { if ((d.primaryVelocity ?? 0) > 500) Navigator.pop(c); },
@@ -1733,7 +1892,7 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
           ]));
           final sleepOn = app.sleepAt != null || app.sleepEnd;
           final extras = Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            ib(Icons.tune, () => sheet(c, (_) => const TuneSheet()), z: 22, c: app.speed != 1 || app.pitch != 1 ? gr : Colors.white),
+            ib(Icons.tune, () => sheet(c, (_) => const TuneSheet(), big: true), z: 22, c: app.isTuned ? gr : Colors.white),
             ib(Icons.equalizer, () => sheet(c, (_) => const EqSheet(), big: true), z: 22, c: app.eqOn ? gr : Colors.white),
             ib(Icons.loop, app.abLoop, z: 22, c: app.la != null ? gr : Colors.white),
             ib(Icons.bedtime_outlined, () => sheet(c, (s) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -1782,18 +1941,284 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
       );
 }
 
+// ───────────── HIGH-PRECISION STUDIO SPEED & PITCH ADJUSTER ─────────────
 class TuneSheet extends StatelessWidget {
   const TuneSheet({super.key});
+
   @override
-  Widget build(BuildContext c) => ListenableBuilder(listenable: app, builder: (_, __) => SafeArea(child: Padding(padding: const EdgeInsets.all(20), child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [tx('Speed', z: 16, f: FontWeight.w800), const Spacer(), tx('${app.speed.toStringAsFixed(2)}x', c: grey)]),
-        Slider(value: app.speed, min: .5, max: 2, divisions: 30, onChanged: app.setSpeed),
-        Wrap(spacing: 8, children: [for (final s in speeds) ChoiceChip(label: Text('${s}x'), selected: app.speed == s, selectedColor: gr, labelStyle: TextStyle(color: app.speed == s ? Colors.black : Colors.white), onSelected: (_) => app.setSpeed(s))]),
-        const SizedBox(height: 8),
-        Row(children: [tx('Pitch', z: 16, f: FontWeight.w800), const Spacer(), tx('${app.pitch.toStringAsFixed(2)}x', c: grey)]),
-        Slider(value: app.pitch, min: .5, max: 1.5, divisions: 20, onChanged: app.setPitch),
-        TextButton(onPressed: () { app.setSpeed(1); app.setPitch(1); }, child: Text('Reset', style: TextStyle(color: gr))),
-      ]))));
+  Widget build(BuildContext c) => ListenableBuilder(
+        listenable: app,
+        builder: (_, __) {
+          final st = app.semitones.clamp(-12.0, 12.0);
+          final wholeSt = st.round();
+          final cents = ((st - wholeSt) * 100).round();
+          final stLabel = '${wholeSt > 0 ? '+' : ''}$wholeSt st${cents == 0 ? '' : ' (${cents > 0 ? '+' : ''}$cents ct)'}';
+
+          Widget stepBtn(String label, VoidCallback onTap) => InkWell(
+                onTap: () { tap(); onTap(); },
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF383838),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w700)),
+                ),
+              );
+
+          const presets = <(String, double, double, bool)>[
+            ('Normal', 1.0, 1.0, false),
+            ('Slowed + Reverb', 0.85, 0.85, true),
+            ('Nightcore', 1.22, 1.22, true),
+            ('Chopped & Screwed', 0.75, 0.75, true),
+            ('Daycore (-3 st)', 0.88, 0.840896, false),
+            ('Double Time', 1.50, 1.0, false),
+          ];
+
+          return SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.tune_rounded, color: Colors.white, size: 22),
+                      const SizedBox(width: 10),
+                      tx('Speed & Pitch', z: 19, f: FontWeight.w800),
+                      const Spacer(),
+                      if (app.isTuned)
+                        TextButton.icon(
+                          onPressed: () {
+                            tap();
+                            app.applyTunePreset(1.0, 1.0, linked: false);
+                          },
+                          icon: Icon(Icons.refresh_rounded, color: gr, size: 18),
+                          label: Text('Reset', style: TextStyle(color: gr, fontWeight: FontWeight.w800)),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  tx('PRESETS', z: 11, c: grey, f: FontWeight.w800, ls: 1.0),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final pr in presets)
+                        Builder(builder: (_) {
+                          final active = (app.speed - pr.$2).abs() < 0.01 && (app.pitch - pr.$3).abs() < 0.01;
+                          return ChoiceChip(
+                            label: Text(pr.$1),
+                            selected: active,
+                            selectedColor: gr,
+                            backgroundColor: const Color(0xFF1E1E1E),
+                            side: BorderSide.none,
+                            showCheckmark: false,
+                            labelStyle: TextStyle(
+                              color: active ? Colors.black : Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12.5,
+                            ),
+                            onSelected: (_) {
+                              tap();
+                              app.applyTunePreset(pr.$2, pr.$3, linked: pr.$4);
+                            },
+                          );
+                        }),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E1E1E),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.album_rounded, color: app.linkPitch ? gr : grey, size: 22),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              tx('Tape Mode (Link Pitch & Speed)', z: 14, f: FontWeight.w700),
+                              tx('Zero-artifact analog vinyl resampling', z: 11.5, c: grey),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: app.linkPitch,
+                          activeColor: gr,
+                          onChanged: (v) {
+                            tap();
+                            app.set(() {
+                              app.linkPitch = v;
+                              if (v) {
+                                app.pitch = app.speed;
+                                app.p.setPitch(app.pitch);
+                              }
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E1E1E),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            tx('Pitch Shift', z: 15.5, f: FontWeight.w800),
+                            const Spacer(),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: (app.pitch - 1.0).abs() > 0.005 ? gr.withValues(alpha: 0.2) : Colors.white10,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '$stLabel  •  ${app.pitch.toStringAsFixed(2)}×',
+                                style: TextStyle(
+                                  color: (app.pitch - 1.0).abs() > 0.005 ? gr : Colors.white70,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        SliderTheme(
+                          data: SliderTheme.of(c).copyWith(
+                            activeTrackColor: gr,
+                            thumbColor: Colors.white,
+                            overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                          ),
+                          child: Slider(
+                            value: st,
+                            min: -12.0,
+                            max: 12.0,
+                            divisions: 240,
+                            onChanged: app.setSemitones,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            stepBtn('-1 st', () => app.setSemitones((st - 1.0).roundToDouble())),
+                            stepBtn('-0.1 st', () => app.setSemitones(st - 0.1)),
+                            stepBtn('0 st', () => app.setSemitones(0.0)),
+                            stepBtn('+0.1 st', () => app.setSemitones(st + 0.1)),
+                            stepBtn('+1 st', () => app.setSemitones((st + 1.0).roundToDouble())),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E1E1E),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            tx('Playback Speed', z: 15.5, f: FontWeight.w800),
+                            const Spacer(),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: (app.speed - 1.0).abs() > 0.005 ? gr.withValues(alpha: 0.2) : Colors.white10,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '${app.speed.toStringAsFixed(2)}×  (${(app.speed * 100).round()}%)',
+                                style: TextStyle(
+                                  color: (app.speed - 1.0).abs() > 0.005 ? gr : Colors.white70,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        SliderTheme(
+                          data: SliderTheme.of(c).copyWith(
+                            activeTrackColor: gr,
+                            thumbColor: Colors.white,
+                            overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                          ),
+                          child: Slider(
+                            value: app.speed.clamp(0.5, 2.0),
+                            min: 0.5,
+                            max: 2.0,
+                            divisions: 150,
+                            onChanged: app.setSpeed,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            stepBtn('-5%', () => app.setSpeed(app.speed - 0.05)),
+                            stepBtn('-1%', () => app.setSpeed(app.speed - 0.01)),
+                            stepBtn('1.00×', () => app.setSpeed(1.0)),
+                            stepBtn('+1%', () => app.setSpeed(app.speed + 0.01)),
+                            stepBtn('+5%', () => app.setSpeed(app.speed + 0.05)),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            for (final s in speeds)
+                              ChoiceChip(
+                                label: Text('${s}×'),
+                                selected: (app.speed - s).abs() < 0.01,
+                                selectedColor: gr,
+                                backgroundColor: const Color(0xFF2C2C2C),
+                                side: BorderSide.none,
+                                showCheckmark: false,
+                                visualDensity: VisualDensity.compact,
+                                labelStyle: TextStyle(
+                                  color: (app.speed - s).abs() < 0.01 ? Colors.black : Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                                onSelected: (_) {
+                                  tap();
+                                  app.setSpeed(s);
+                                },
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
 }
 
 class EqSheet extends StatelessWidget {
@@ -1874,11 +2299,13 @@ List<Card2> recCards(List<Track> rec) => [for (var i = 0; i < rec.length && i < 
 List<Card2> mixCards(List<Track> all) => [for (var n = 1; n <= 3; n++) () { final l = mix(all, n); return Card2('Daily Mix $n', l.take(3).map((e) => e.artist).toSet().join(', '), l.first, () => app.playAt(l, 0, ctx: 'Daily Mix $n')); }()];
 Widget emptyHome() => Padding(padding: const EdgeInsets.all(40), child: Column(children: [
       Icon(app.scanning ? Icons.hourglass_top : Icons.library_music, size: 64, color: grey), const SizedBox(height: 12),
-      tx(app.scanning ? 'Scanning your music…' : 'No songs yet', z: 20, f: FontWeight.w800), const SizedBox(height: 12),
-      if (!app.scanning) FilledButton(style: FilledButton.styleFrom(backgroundColor: gr, foregroundColor: Colors.black), onPressed: app.scan, child: const Text('Scan device')),
+      tx(app.scanning ? 'Scanning your music…' : 'Search YouTube Music or scan your device', z: 18, f: FontWeight.w800, a: TextAlign.center, lines: 2), const SizedBox(height: 14),
+      if (!app.scanning) Wrap(spacing: 10, children: [
+        FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: gr, foregroundColor: Colors.black), onPressed: () => app.goTab(app.sk.nav.indexWhere((n) => n.k == 'search').clamp(0, app.sk.nav.length - 1)), icon: const Icon(Icons.search), label: const Text('Search YouTube Music')),
+        OutlinedButton(onPressed: app.scan, child: const Text('Scan local files')),
+      ]),
     ]));
 
-// ── Custom Spotify Dot Cluster Icon (for "Tell Spotify what to play" bar) ──
 class SpotifyDotCluster extends StatelessWidget {
   const SpotifyDotCluster({super.key});
   @override
@@ -1920,15 +2347,13 @@ class HomePage extends StatefulWidget { const HomePage({super.key}); @override S
 class _HomeState extends State<HomePage> {
   int chip = 0;
 
-  // ── EXACT TIDAL HOME SCREEN (from image_c79a9a.jpg) ──
+  // ── EXACT TIDAL HOME SCREEN ──
   Widget _buildTidalHome(BuildContext c, List<Track> all, List<Track> rec, void Function(String, List<Track> Function(), {String? list}) open) {
     final pool = rec.isNotEmpty ? rec : all;
     final listNames = app.lists.keys.toList();
 
-    // Build 6 items for the 3x2 top square grid
     final topGridItems = <({String title, String sub, List<Track> tracks, bool isMyTracks, VoidCallback onTap})>[];
 
-    // Item 1: Mix / Workout
     final m1 = mix(all, 1);
     topGridItems.add((
       title: listNames.isNotEmpty ? listNames.first : 'Hip-Hop Mix',
@@ -1940,7 +2365,6 @@ class _HomeState extends State<HomePage> {
           : app.playAt(m1, 0, ctx: 'Hip-Hop Mix'),
     ));
 
-    // Item 2: "My Tracks" with double-beamed eighth note icon (exact center top slot from screenshot)
     topGridItems.add((
       title: 'My Tracks',
       sub: '',
@@ -1949,7 +2373,6 @@ class _HomeState extends State<HomePage> {
       onTap: () => open('My Tracks', () => app.likedTracks.isNotEmpty ? app.likedTracks : all),
     ));
 
-    // Item 3: User playlist or Mix
     final pl2 = listNames.length > 1 ? listNames[1] : null;
     final pl2Tracks = pl2 != null ? app.toTracks(app.lists[pl2]!) : mix(all, 2);
     topGridItems.add((
@@ -1960,7 +2383,6 @@ class _HomeState extends State<HomePage> {
       onTap: () => pl2 != null ? open(pl2, () => app.toTracks(app.lists[pl2] ?? []), list: pl2) : app.playAt(pl2Tracks, 0, ctx: 'My Mix'),
     ));
 
-    // Items 4, 5, 6: Top recent/library tracks
     for (var i = 0; i < pool.length && topGridItems.length < 6; i++) {
       final tr = pool[i];
       topGridItems.add((
@@ -1972,7 +2394,6 @@ class _HomeState extends State<HomePage> {
       ));
     }
 
-    // Build items for "Recently played" horizontal carousel with play button overlay
     final carouselItems = <({String title, String sub, String meta, List<Track> tracks, bool explicit, VoidCallback onTap, VoidCallback onPlay})>[];
     for (final n in listNames) {
       final l = app.toTracks(app.lists[n]!);
@@ -2006,7 +2427,6 @@ class _HomeState extends State<HomePage> {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
-          // Top Header: "Home" + Bell with pink dot + Gear icon
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
             child: Row(
@@ -2041,8 +2461,6 @@ class _HomeState extends State<HomePage> {
               ],
             ),
           ),
-
-          // 3x2 Square Shortcuts Grid
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: GridView.builder(
@@ -2113,14 +2531,10 @@ class _HomeState extends State<HomePage> {
               },
             ),
           ),
-
-          // "Recently played" section header
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 28, 16, 14),
             child: tx('Recently played', z: 22, f: FontWeight.w800, c: Colors.white),
           ),
-
-          // Horizontal carousel with translucent circular Play button on bottom-right of cover art
           SizedBox(
             height: 242,
             child: ListView.separated(
@@ -2180,8 +2594,6 @@ class _HomeState extends State<HomePage> {
               },
             ),
           ),
-
-          // "My Daily Discovery" purple banner card with diamond sparkles (from image_c79a9a.jpg)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
             child: GestureDetector(
@@ -2199,7 +2611,6 @@ class _HomeState extends State<HomePage> {
                 clipBehavior: Clip.antiAlias,
                 child: Stack(
                   children: [
-                    // Decorative diamonds matching screenshot
                     for (final d in const [
                       (140.0, 14.0, Color(0xFF6A4896)),
                       (210.0, 14.0, Color(0xFFF6A6C1)),
@@ -2239,12 +2650,11 @@ class _HomeState extends State<HomePage> {
     );
   }
 
-  // ── EXACT SPOTIFY HOME SCREEN (from image_c79a7b.png) ──
+  // ── EXACT SPOTIFY HOME SCREEN ──
   Widget _buildSpotifyHome(BuildContext c, List<Track> all, List<Track> rec, List<Track> most, void Function(String, List<Track> Function(), {String? list}) open) {
     final pool = chip == 2 ? app.likedTracks : (rec.isEmpty ? all : rec);
     final listNames = app.lists.keys.toList();
 
-    // Build 8 compact 2x4 grid tiles matching screenshot
     final gridTiles = <Widget>[];
 
     Widget spTile(String title, Widget leading, VoidCallback onTap) {
@@ -2272,7 +2682,6 @@ class _HomeState extends State<HomePage> {
       );
     }
 
-    // Add first 2 user playlists if available, else top tracks
     if (listNames.isNotEmpty) {
       final n0 = listNames[0];
       gridTiles.add(spTile(n0, CollageArt(app.toTracks(app.lists[n0]!), 54, radius: 0), () => open(n0, () => app.toTracks(app.lists[n0] ?? []), list: n0)));
@@ -2287,7 +2696,6 @@ class _HomeState extends State<HomePage> {
       gridTiles.add(spTile(pool[1].title, Art(pool[1], 54, r: 0), () => app.playAt(pool, 1, ctx: pool[1].title)));
     }
 
-    // Slot 3: Liked Songs (purple-blue gradient with white heart)
     gridTiles.add(spTile(
       'Liked Songs',
       Container(
@@ -2303,7 +2711,6 @@ class _HomeState extends State<HomePage> {
       () => open('Liked Songs', () => app.likedTracks),
     ));
 
-    // Slot 4: On Repeat (indigo card with pink infinity loop)
     gridTiles.add(spTile(
       'On Repeat',
       Container(
@@ -2323,7 +2730,6 @@ class _HomeState extends State<HomePage> {
       () => open('On Repeat', () => most.isNotEmpty ? most : all),
     ));
 
-    // Fill remaining slots up to 8 from playlists and recent tracks
     for (final n in listNames.skip(2)) {
       if (gridTiles.length >= 8) break;
       gridTiles.add(spTile(n, CollageArt(app.toTracks(app.lists[n]!), 54, radius: 0), () => open(n, () => app.toTracks(app.lists[n] ?? []), list: n)));
@@ -2335,7 +2741,6 @@ class _HomeState extends State<HomePage> {
 
     final feat = pool.first;
 
-    // Build playlists for "Your playlists" horizontal carousel
     final plCards = <({String title, String sub, List<Track> tracks, bool waveform, VoidCallback onTap})>[];
     for (final n in listNames) {
       plCards.add((
@@ -2368,7 +2773,6 @@ class _HomeState extends State<HomePage> {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
-          // Top Filter Bar: Avatar (with blue dot) + [All] [Music] [Podcasts] [Audiobooks]
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 8, 14),
             child: SingleChildScrollView(
@@ -2401,8 +2805,6 @@ class _HomeState extends State<HomePage> {
               ),
             ),
           ),
-
-          // 2x4 Compact Shortcuts Grid (8 items)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: GridView.count(
@@ -2415,8 +2817,6 @@ class _HomeState extends State<HomePage> {
               children: gridTiles,
             ),
           ),
-
-          // "Tell Spotify what to play [Beta] 🎤" prompt bar (from image_c79a7b.png)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
             child: GestureDetector(
@@ -2453,8 +2853,6 @@ class _HomeState extends State<HomePage> {
               ),
             ),
           ),
-
-          // "The next episode awaits" feature card (from image_c79a7b.png)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
             child: tx('The next episode awaits', z: 21, f: FontWeight.w800, c: Colors.white),
@@ -2536,8 +2934,6 @@ class _HomeState extends State<HomePage> {
               ),
             ),
           ),
-
-          // "Your playlists" horizontal section (from image_c79a7b.png)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
             child: tx('Your playlists', z: 21, f: FontWeight.w800, c: Colors.white),
@@ -2601,7 +2997,6 @@ class _HomeState extends State<HomePage> {
           return Scaffold(backgroundColor: bg, body: ListView(children: [head(c, sk.title), emptyHome()]));
         }
 
-        // Route to exact TIDAL or Spotify Home Replicas
         if (hv == 4) return _buildTidalHome(c, all, rec, open);
         if (hv == 0) return _buildSpotifyHome(c, all, rec, most, open);
 
@@ -2711,26 +3106,174 @@ class RadioPage extends StatelessWidget {
       });
 }
 
-// ───────────── search ─────────────
+// ───────────── SEARCH PAGE (Local + Native SimpMusic YouTube Music Engine) ─────────────
 class SearchPage extends StatefulWidget { const SearchPage({super.key}); @override State<SearchPage> createState() => _SearchState(); }
 class _SearchState extends State<SearchPage> {
   final ctl = TextEditingController();
+  Timer? _deb;
+  List<YtSong> ytRes = [];
+  bool searchingYt = false;
+
+  void _onQueryChanged(String v) {
+    setState(() {});
+    _deb?.cancel();
+    final q = v.trim();
+    if (q.length < 2) {
+      setState(() {
+        ytRes = [];
+        searchingYt = false;
+      });
+      return;
+    }
+    setState(() => searchingYt = true);
+    _deb = Timer(const Duration(milliseconds: 420), () async {
+      final res = await app.searchYtMusic(q);
+      if (mounted && ctl.text.trim() == q) {
+        setState(() {
+          ytRes = res;
+          searchingYt = false;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _deb?.cancel();
+    ctl.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext c) => ListenableBuilder(listenable: app, builder: (_, __) {
         final q = ctl.text.toLowerCase().trim(), sp = app.sk.name == 'Spotify';
-        final res = q.isEmpty ? <Track>[] : app.tracks.where((t) => '${t.title} ${t.artist} ${t.album}'.toLowerCase().contains(q)).toList();
+        final localRes = q.isEmpty ? <Track>[] : app.tracks.where((t) => '${t.title} ${t.artist} ${t.album}'.toLowerCase().contains(q)).toList();
         final names = {...app.tracks.map((t) => t.artist), ...app.tracks.map((t) => t.album)}.toList();
+
         return Column(children: [
           head(c, navLabel('search')),
-          Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 10), child: TextField(controller: ctl, onChanged: (_) => setState(() {}), style: TextStyle(color: sp ? Colors.black : Colors.white, fontWeight: FontWeight.w600), cursorColor: sp ? Colors.black : gr, decoration: InputDecoration(filled: true, fillColor: sp ? Colors.white : card, hintText: app.sk.hint, hintStyle: TextStyle(color: sp ? const Color(0xFF535353) : grey, fontWeight: FontWeight.w600), prefixIcon: Icon(Icons.search, color: sp ? Colors.black : grey), suffixIcon: q.isEmpty ? null : IconButton(icon: Icon(Icons.close, color: sp ? Colors.black : grey), onPressed: () => setState(ctl.clear)), border: OutlineInputBorder(borderRadius: BorderRadius.circular(sp ? 6 : 24), borderSide: BorderSide.none)))),
-          Expanded(child: q.isNotEmpty
-              ? (res.isEmpty ? Center(child: tx('No results for "$q"', z: 16, f: FontWeight.w700)) : ListView.builder(itemCount: res.length, itemBuilder: (_, i) => TTile(res[i], res, i)))
-              : ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), children: [
-                  tx('Browse all', z: 16, f: FontWeight.w800), const SizedBox(height: 12),
-                  GridView.count(crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 1.7, children: [
-                    for (final n in names) GestureDetector(onTap: () => setState(() => ctl.text = n), child: Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: tint(n, .4), borderRadius: BorderRadius.circular(app.sk.artR.clamp(2, 12).toDouble())), child: tx(n, z: 16, f: FontWeight.w800, lines: 2))),
-                  ]),
-                ])),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+            child: TextField(
+              controller: ctl,
+              onChanged: _onQueryChanged,
+              onSubmitted: _onQueryChanged,
+              style: TextStyle(color: sp ? Colors.black : Colors.white, fontWeight: FontWeight.w600),
+              cursorColor: sp ? Colors.black : gr,
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: sp ? Colors.white : card,
+                hintText: 'Search YouTube Music & local library',
+                hintStyle: TextStyle(color: sp ? const Color(0xFF535353) : grey, fontWeight: FontWeight.w600),
+                prefixIcon: Icon(Icons.search, color: sp ? Colors.black : grey),
+                suffixIcon: q.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: Icon(Icons.close, color: sp ? Colors.black : grey),
+                        onPressed: () {
+                          ctl.clear();
+                          _onQueryChanged('');
+                        },
+                      ),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(sp ? 6 : 24), borderSide: BorderSide.none),
+              ),
+            ),
+          ),
+          Expanded(
+            child: q.isNotEmpty
+                ? ListView(
+                    padding: const EdgeInsets.only(bottom: 24),
+                    children: [
+                      if (localRes.isNotEmpty) ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                          child: tx('IN YOUR LIBRARY', z: 11, c: grey, f: FontWeight.w800, ls: 1.0),
+                        ),
+                        for (var i = 0; i < localRes.length; i++) TTile(localRes[i], localRes, i),
+                      ],
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+                        child: Row(
+                          children: [
+                            Icon(Icons.play_circle_fill_rounded, color: gr, size: 18),
+                            const SizedBox(width: 6),
+                            tx('YOUTUBE MUSIC (SIMPMUSIC ENGINE)', z: 11, c: gr, f: FontWeight.w800, ls: 0.9),
+                            const Spacer(),
+                            if (searchingYt)
+                              SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: gr)),
+                          ],
+                        ),
+                      ),
+                      if (!searchingYt && ytRes.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Center(child: tx('No YouTube Music results for "$q"', c: grey)),
+                        ),
+                      for (final y in ytRes)
+                        ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                          leading: ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: Image.network(
+                              y.art,
+                              width: 48,
+                              height: 48,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                width: 48,
+                                height: 48,
+                                color: tint(y.title, .25),
+                                child: const Icon(Icons.music_note, color: Colors.white70),
+                              ),
+                            ),
+                          ),
+                          title: tx(y.title, f: FontWeight.w700),
+                          subtitle: tx(
+                            '${y.artist}${y.duration.isNotEmpty ? ' • ${y.duration}' : ''}',
+                            c: grey,
+                            z: 12.5,
+                          ),
+                          trailing: const Icon(Icons.cloud_download_outlined, color: grey, size: 22),
+                          onTap: () {
+                            tap();
+                            app.playYtSong(y);
+                          },
+                        ),
+                    ],
+                  )
+                : ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    children: [
+                      tx('Browse all', z: 16, f: FontWeight.w800),
+                      const SizedBox(height: 12),
+                      GridView.count(
+                        crossAxisCount: 2,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        mainAxisSpacing: 12,
+                        crossAxisSpacing: 12,
+                        childAspectRatio: 1.7,
+                        children: [
+                          for (final n in names.isNotEmpty ? names : ['Hip-Hop', 'Underground Rap', 'Trap', 'Chill', 'Top Hits', 'Workout'])
+                            GestureDetector(
+                              onTap: () {
+                                ctl.text = n;
+                                _onQueryChanged(n);
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: tint(n, .4),
+                                  borderRadius: BorderRadius.circular(app.sk.artR.clamp(2, 12).toDouble()),
+                                ),
+                                child: tx(n, z: 16, f: FontWeight.w800, lines: 2),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+          ),
         ]);
       });
 }
@@ -2811,11 +3354,77 @@ class _ListState extends State<ListPage> {
       });
 }
 
-// ───────────── profile drawer ─────────────
+// ───────────── profile drawer (With YouTube Music Sign-In) ─────────────
 void openProfile(BuildContext c) {
   tap();
   void go(Widget w) => Navigator.push(c, MaterialPageRoute(builder: (_) => w));
+
+  void showSignInSheet() {
+    final emailCtl = TextEditingController(text: app.ytAccountEmail ?? '');
+    sheet(c, (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.play_circle_fill_rounded, color: spGreen, size: 28),
+                    const SizedBox(width: 10),
+                    tx('YouTube Music Sign-In', z: 18, f: FontWeight.w800),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                tx('Sign in to sync your YouTube Music account and stream your personalized library.', z: 13.5, c: grey, lines: 3),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: emailCtl,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: 'Google Account Email',
+                    hintText: 'alex@gmail.com',
+                    filled: true,
+                    fillColor: card,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (app.ytAccountEmail != null)
+                      TextButton(
+                        onPressed: () {
+                          app.set(() => app.ytAccountEmail = null);
+                          Navigator.pop(ctx);
+                          toast('Signed out from YouTube Music');
+                        },
+                        child: const Text('Sign out', style: TextStyle(color: Colors.redAccent)),
+                      ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      style: FilledButton.styleFrom(backgroundColor: spGreen, foregroundColor: Colors.black),
+                      onPressed: () {
+                        final em = emailCtl.text.trim();
+                        if (em.isNotEmpty) {
+                          app.set(() => app.ytAccountEmail = em);
+                          Navigator.pop(ctx);
+                          toast('Signed in as $em');
+                        }
+                      },
+                      child: const Text('Sign In', style: TextStyle(fontWeight: FontWeight.w800)),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ));
+  }
+
   final items = <(IconData, String, VoidCallback)>[
+    (Icons.cloud_sync_outlined, app.ytAccountEmail == null ? 'Sign in to YouTube Music' : 'Connected (${app.ytAccountEmail})', showSignInSheet),
     (Icons.insights_outlined, 'Listening stats', () => go(const StatsPage())),
     (Icons.palette_outlined, 'Themes & Mods', () => go(SPage('Themes & Mods', themesS))),
     (Icons.slideshow, 'Player styles', () => go(SPage('Player styles', playerS))),
@@ -2823,14 +3432,27 @@ void openProfile(BuildContext c) {
     (Icons.favorite_border, 'Liked Songs', () => go(ListPage('Liked Songs', () => app.likedTracks))),
     (Icons.settings_outlined, 'Settings and privacy', () => go(const SettingsPage())),
   ];
+
   Navigator.push(c, PageRouteBuilder(
     opaque: false, barrierDismissible: true, barrierColor: Colors.black.withValues(alpha: .6),
     pageBuilder: (ctx, __, ___) => Align(alignment: Alignment.centerLeft, child: Material(color: bg, child: SizedBox(width: MediaQuery.of(ctx).size.width * .84, height: double.infinity, child: SafeArea(child: ListView(children: [
-      Padding(padding: const EdgeInsets.fromLTRB(20, 22, 20, 12), child: Row(children: [avatar(28), const SizedBox(width: 16), Column(crossAxisAlignment: CrossAxisAlignment.start, children: [tx(app.name, z: 20, f: FontWeight.w800), tx('View profile', c: grey)])])),
+      Padding(padding: const EdgeInsets.fromLTRB(20, 22, 20, 12), child: Row(children: [
+        avatar(28),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              tx(app.name, z: 20, f: FontWeight.w800),
+              tx(app.ytAccountEmail ?? 'View profile', c: grey, z: 12.5),
+            ],
+          ),
+        ),
+      ])),
       Padding(padding: const EdgeInsets.fromLTRB(20, 4, 20, 0), child: tx('APP SKIN', z: 11, c: grey, f: FontWeight.w800)),
       skinDrop(),
       const Divider(color: Colors.white12),
-      for (final it in items) InkWell(onTap: () { Navigator.pop(ctx); it.$3(); }, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15), child: Row(children: [Icon(it.$1, size: 26), const SizedBox(width: 18), tx(it.$2, z: 16)]))),
+      for (final it in items) InkWell(onTap: () { Navigator.pop(ctx); it.$3(); }, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15), child: Row(children: [Icon(it.$1, size: 26, color: it.$1 == Icons.cloud_sync_outlined ? spGreen : Colors.white), const SizedBox(width: 18), tx(it.$2, z: 16)]))),
     ]))))),
     transitionsBuilder: (_, a, __, w) => SlideTransition(position: Tween(begin: const Offset(-1, 0), end: Offset.zero).animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)), child: w),
   ));
@@ -2854,6 +3476,36 @@ class SPage extends StatelessWidget {
 
 List<Widget> accountS(BuildContext c) => [
       srow(app.name, sub: 'Tap to change your name', f: () async { final n = await ask(c, 'Your name', app.name); if (n != null && n.trim().isNotEmpty) app.set(() => app.name = n.trim()); }, trail: avatar(18)),
+      srow('YouTube Music Account', sub: app.ytAccountEmail ?? 'Not signed in (Tap to sign in)', icon: Icons.cloud_sync_outlined, f: () {
+        final emailCtl = TextEditingController(text: app.ytAccountEmail ?? '');
+        sheet(c, (ctx) => SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    tx('YouTube Music Sign-In', z: 18, f: FontWeight.w800),
+                    const SizedBox(height: 12),
+                    TextField(controller: emailCtl, decoration: const InputDecoration(labelText: 'Google Email', filled: true, fillColor: card)),
+                    const SizedBox(height: 14),
+                    FilledButton(
+                      style: FilledButton.styleFrom(backgroundColor: spGreen, foregroundColor: Colors.black),
+                      onPressed: () {
+                        final em = emailCtl.text.trim();
+                        if (em.isNotEmpty) {
+                          app.set(() => app.ytAccountEmail = em);
+                          Navigator.pop(ctx);
+                          toast('Signed in as $em');
+                        }
+                      },
+                      child: const Text('Save'),
+                    ),
+                  ],
+                ),
+              ),
+            ));
+      }),
       srow('Profile picture', sub: 'Choose from your gallery', icon: Icons.image_outlined, f: () async { final r = await FilePicker.platform.pickFiles(type: FileType.image); final p = r?.files.single.path; if (p != null) app.set(() => app.avatar = p); }),
       if (app.avatar != null) srow('Remove profile picture', icon: Icons.delete_outline, f: () => app.set(() => app.avatar = null)),
     ];
@@ -2892,12 +3544,12 @@ List<Widget> playerS(BuildContext c) => [
 
 List<Widget> playbackS(BuildContext c) => [
       srow('Mini player swipe', sub: {'skip': 'Swipe to skip songs', 'close': 'Swipe to close and stop the song', 'off': 'Swipe does nothing'}[app.swipe], icon: Icons.swipe, f: () => pickOne<String>(c, 'Mini player swipe', {'skip': 'Skip songs', 'close': 'Close & stop', 'off': 'Off'}, app.swipe, (v) => app.set(() => app.swipe = v))),
+      srow('Speed & pitch', sub: app.tuneSummary, icon: Icons.tune, f: () => sheet(c, (_) => const TuneSheet(), big: true)),
       srow('Equalizer', sub: app.eqOn ? 'On' : 'Off', icon: Icons.equalizer, f: () => sheet(c, (_) => const EqSheet(), big: true)),
       srow('A–B loop', sub: app.la == null ? 'Tap to set loop start' : app.lb == null ? 'Tap to set loop end' : 'Looping • tap to clear', icon: Icons.loop, f: app.abLoop),
       sw('Fade in on play', 'Volume ramps up when a song starts', app.fadeIn, (v) => app.set(() => app.fadeIn = v)),
       sw('Shuffle', 'Play queues in random order', app.shuffle, (v) => app.set(() => app.shuffle = v)),
       srow('Repeat', sub: ['Off', 'Repeat all', 'Repeat one'][app.repeat], icon: Icons.repeat, f: () => app.set(() => app.repeat = (app.repeat + 1) % 3)),
-      srow('Speed & pitch', sub: '${app.speed.toStringAsFixed(2)}x speed • ${app.pitch.toStringAsFixed(2)}x pitch', icon: Icons.tune, f: () => sheet(c, (_) => const TuneSheet())),
       sw('Skip silence', 'Skip quiet parts of tracks', app.skipSilence, (v) { app.set(() => app.skipSilence = v); app.p.setSkipSilenceEnabled(v); }),
       sw('Loudness boost', 'Adds +3 dB so quiet songs sound fuller', app.normalize, (v) { app.set(() => app.normalize = v); try { app.h.enh.setEnabled(v); app.h.enh.setTargetGain(3.0); } catch (_) {} }),
       sw('Skip unplayable songs', 'Jump to the next song if one fails', app.skipErr, (v) => app.set(() => app.skipErr = v)),
@@ -2924,9 +3576,10 @@ List<Widget> dataS(BuildContext c) => [
 
 List<Widget> aboutS(BuildContext c) => [
       srow('Pixel Audio Player', sub: 'Version 4.0.0 • Made by Alex Desrosier'),
+      srow('YouTube Music Engine', sub: 'Native Kotlin InnerTube (SimpMusic / maxrave-dev core)', icon: Icons.cloud_done_outlined),
       srow('Skins', sub: skins.map((s) => s.name).join(', '), icon: Icons.palette_outlined),
       srow('Player styles', sub: npls.map((s) => s.name).join(', '), icon: Icons.slideshow),
-      srow('Mods included', sub: 'Exact TIDAL (MAX badge) & Spotify (Lossless + Beta) Home/Player replicas, Equalizer, A–B loop, fade in, visualizer, waveform seek bar, vinyl mode, double-tap seek, synced lyrics (.lrc), pitch & loudness boost.', icon: Icons.extension_outlined),
+      srow('Mods included', sub: 'Native Kotlin YouTube Music streaming & caching, TIDAL (MAX) & Spotify (Lossless + Beta) replicas, Studio Speed/Pitch (Semitones + Tape Mode), Equalizer, A–B loop, synced lyrics (.lrc).', icon: Icons.extension_outlined),
     ];
 
 class SettingsPage extends StatelessWidget {
@@ -2937,7 +3590,7 @@ class SettingsPage extends StatelessWidget {
       (Icons.person_outline, 'Account', 'Name and profile picture', accountS),
       (Icons.palette_outlined, 'Themes & Mods', 'App skin, accent, layout', themesS),
       (Icons.slideshow, 'Player styles', '11 players, backgrounds, progress bars', playerS),
-      (Icons.play_circle_outline, 'Playback', 'Equalizer, A–B loop, speed, sleep timer', playbackS),
+      (Icons.play_circle_outline, 'Playback', 'Speed & pitch, equalizer, A–B loop, sleep timer', playbackS),
       (Icons.library_music_outlined, 'Your library', 'Scan folders and add songs', libraryS),
       (Icons.insights_outlined, 'Listening stats', 'Top songs and artists', (_) => const []),
       (Icons.storage_outlined, 'Backup & storage', 'Backup, restore and clear data', dataS),
