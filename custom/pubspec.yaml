@@ -1,22 +1,25 @@
-# FILE: custom/pubspec.yaml
-name: audio_player
-description: Local audio player that transforms into popular music apps.
+name: archive_tune
+description: Material You Archive Tune Music Player
 publish_to: 'none'
-version: 4.0.0+7
+version: 1.0.0+1
 
 environment:
-  sdk: '>=3.4.0 <4.0.0'
+  sdk: '>=3.2.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.8
-  audio_service: ^0.18.15
   just_audio: ^0.9.40
+  audio_session: ^0.1.21
   file_picker: ^8.1.2
-  shared_preferences: ^2.3.2
   permission_handler: ^11.3.1
-  youtube_explode_dart: ^2.3.6
+  shared_preferences: ^2.3.2
+  path: ^1.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
 
 flutter:
   uses-material-design: true
