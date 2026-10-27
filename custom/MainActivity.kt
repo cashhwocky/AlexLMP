@@ -290,7 +290,6 @@ class MainActivity : AudioServiceActivity() {
         return null
     }
 
-    // maxrave-dev InnerTube stream resolver with multi-client fallback + Piped
     private fun resolveYtStream(videoId: String): HashMap<String, Any?>? {
         val vd = ensureVisitorData()
 
@@ -403,56 +402,12 @@ class MainActivity : AudioServiceActivity() {
 
         val streamUrl = streamInfo["url"] as? String ?: return null
         val ua = streamInfo["userAgent"] as? String ?: "Mozilla/5.0"
-        val mime = streamInfo["mime"] as? String ?: "audio/mp4"
-        val ext = if (mime.contains("webm") || mime.contains("opus")) "ogg" else "m4a"
-
-        try {
-            val ytDir = File(filesDir, "yt_cache").apply { mkdirs() }
-            val safeName = "${title}_${artist}".replace(Regex("[^a-zA-Z0-9._-]"), "_").take(60)
-            val audioFile = File(ytDir, "${safeName}_$videoId.$ext")
-
-            if (!audioFile.exists() || audioFile.length() < 1024) {
-                val conn = (URL(streamUrl).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15000
-                    readTimeout = 30000
-                    setRequestProperty("User-Agent", ua)
-                    setRequestProperty("Range", "bytes=0-")
-                }
-                conn.inputStream.use { input ->
-                    FileOutputStream(audioFile).use { output ->
-                        input.copyTo(output, 64 * 1024)
-                    }
-                }
-                conn.disconnect()
-            }
-
-            var localArtPath: String? = null
-            if (!artUrl.isNullOrBlank()) {
-                try {
-                    val artFile = File(cacheDir, "yt_art_$videoId.jpg")
-                    if (!artFile.exists()) {
-                        val aConn = (URL(artUrl).openConnection() as HttpURLConnection).apply {
-                            connectTimeout = 8000
-                            readTimeout = 8000
-                        }
-                        aConn.inputStream.use { input ->
-                            FileOutputStream(artFile).use { output -> input.copyTo(output) }
-                        }
-                        aConn.disconnect()
-                    }
-                    if (artFile.exists()) localArtPath = artFile.absolutePath
-                } catch (_: Exception) {}
-            }
-
-            val out = HashMap<String, Any?>()
-            out["path"] = audioFile.absolutePath
-            out["art"] = localArtPath
-            out["title"] = title
-            out["artist"] = artist
-            return out
-        } catch (e: Exception) {
-            return null
-        }
+        val out = HashMap<String, Any?>()
+        out["path"] = streamUrl
+        out["art"] = artUrl
+        out["title"] = title
+        out["artist"] = artist
+        return out
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
