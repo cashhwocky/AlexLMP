@@ -1,4 +1,4 @@
-// FILE: custom/main.dart — Pixel Audio Player 4.0 (Complete & Error-Free)
+// FILE: custom/main.dart — Pixel Audio Player 4.0 (Bulletproof YouTube Music Streaming via Explode + Speed/Pitch + Replicas)
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -204,14 +204,6 @@ class Track {
 class YtSong {
   final String videoId, title, artist, album, duration, art;
   const YtSong({required this.videoId, required this.title, required this.artist, required this.album, required this.duration, required this.art});
-  factory YtSong.fromMap(Map m) => YtSong(
-        videoId: '${m['videoId'] ?? ''}',
-        title: '${m['title'] ?? 'Unknown'}',
-        artist: '${m['artist'] ?? 'YouTube Music'}',
-        album: '${m['album'] ?? 'YouTube Music'}',
-        duration: '${m['duration'] ?? ''}',
-        art: '${m['art'] ?? ''}',
-      );
 }
 
 class H extends BaseAudioHandler with SeekHandler {
@@ -290,14 +282,14 @@ class AppState extends ChangeNotifier {
     if (tracks.isEmpty) scan();
     if (resume && pq.isNotEmpty) {
       queue = toTracks(pq);
-      if (queue.isEmpty) { idx = -1; } else { idx = pqi.clamp(0, queue.length - 1); try { await p.setFilePath(cur!.path); } catch (_) {} }
+      if (queue.isEmpty) { idx = -1; } else { idx = pqi.clamp(0, queue.length - 1); try { await _loadPath(cur!.path); } catch (_) {} }
     }
   }
 
   void load() {
     try {
       final d = jsonDecode(sp.getString('d') ?? '{}') as Map<String, dynamic>;
-      tracks = [for (final j in (d['tracks'] ?? []) as List) Track.fromJson(j)].where((t) => File(t.path).existsSync()).toList();
+      tracks = [for (final j in (d['tracks'] ?? []) as List) Track.fromJson(j)].where((t) => t.path.startsWith('http') || File(t.path).existsSync()).toList();
       liked = {...((d['liked'] ?? []) as List).cast<String>()};
       lists = {for (final e in ((d['lists'] ?? {}) as Map).entries) e.key as String: (e.value as List).cast<String>()};
       recent = ((d['recent'] ?? []) as List).cast<String>();
@@ -342,14 +334,28 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
+  // ── Bulletproof YouTube Music Search & Streaming via youtube_explode_dart ──
   Future<List<YtSong>> searchYtMusic(String query) async {
     if (query.trim().isEmpty) return [];
+    final yt = yte.YoutubeExplode();
     try {
-      final res = await ch.invokeMethod<List>('ytSearch', {'query': query.trim()});
-      if (res == null) return [];
-      return [for (final item in res) if (item is Map) YtSong.fromMap(item)];
+      final results = await yt.search.search(query);
+      final list = <YtSong>[];
+      for (final vid in results.whereType<yte.Video>()) {
+        list.add(YtSong(
+          videoId: vid.id.value,
+          title: vid.title,
+          artist: vid.author,
+          album: 'YouTube Music',
+          duration: vid.duration != null ? fmt(vid.duration!) : '',
+          art: vid.thumbnails.highResUrl,
+        ));
+      }
+      return list;
     } catch (_) {
       return [];
+    } finally {
+      yt.close();
     }
   }
 
@@ -359,54 +365,36 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     toast('Streaming "${s.title}" from YouTube Music…');
     try {
-      var res = await ch.invokeMethod<Map>('ytStream', {
-        'videoId': s.videoId,
-        'title': s.title,
-        'artist': s.artist,
-        'art': s.art,
-      });
-
-      if (res == null || res['path'] == null) {
-        final yt = yte.YoutubeExplode();
-        try {
-          final manifest = await yt.videos.streamsClient.getManifest(s.videoId);
-          final audio = manifest.audioOnly.withHighestBitrate();
-          res = await ch.invokeMethod<Map>('ytStream', {
-            'videoId': s.videoId,
-            'title': s.title,
-            'artist': s.artist,
-            'art': s.art,
-            'directUrl': audio.url.toString(),
-          });
-        } finally {
-          yt.close();
-        }
+      final yt = yte.YoutubeExplode();
+      String? streamUrl;
+      try {
+        final manifest = await yt.videos.streamsClient.getManifest(s.videoId);
+        final audio = manifest.audioOnly.withHighestBitrate();
+        streamUrl = audio.url.toString();
+      } finally {
+        yt.close();
       }
 
-      if (res != null && res['path'] != null) {
-        final path = '${res['path']}';
-        final existingIdx = tracks.indexWhere((t) => t.path == path);
-        Track tr;
-        if (existingIdx >= 0) {
-          tr = tracks[existingIdx];
-        } else {
-          tr = Track(
-            path,
-            s.title,
-            s.artist,
-            s.album,
-            res['art'] as String?,
-            DateTime.now(),
-          );
+      if (streamUrl != null && streamUrl.isNotEmpty) {
+        final tr = Track(
+          streamUrl,
+          s.title,
+          s.artist,
+          s.album,
+          s.art.isEmpty ? null : s.art,
+          DateTime.now(),
+        );
+        final existingIdx = tracks.indexWhere((t) => t.path == streamUrl);
+        if (existingIdx < 0) {
           tracks.insert(0, tr);
           save();
         }
-        await playAt([tr, ...queue.where((x) => x.path != tr.path)], 0, ctx: 'YouTube Music');
+        await playAt([tr, ...queue.where((x) => x.path != streamUrl)], 0, ctx: 'YouTube Music');
       } else {
         toast('Could not resolve stream for "${s.title}"');
       }
-    } catch (_) {
-      toast('Error streaming "${s.title}"');
+    } catch (e) {
+      toast('Error streaming "${s.title}": $e');
     }
     loadingYt = false;
     notifyListeners();
@@ -420,6 +408,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _meta(Track t) async {
+    if (t.path.startsWith('http')) return;
     try {
       final m = await ch.invokeMethod<Map>('read', {'path': t.path});
       if (m == null) return;
@@ -438,7 +427,7 @@ class AppState extends ChangeNotifier {
   Future<void> scan() async {
     await [Permission.audio, Permission.storage, Permission.notification, Permission.bluetoothConnect].request();
     scanning = true; notifyListeners();
-    final found = <String>{...tracks.where((t) => !dirs.any((d) => t.path.startsWith(d)) && File(t.path).existsSync()).map((t) => t.path)};
+    final found = <String>{...tracks.where((t) => !t.path.startsWith('http') && !dirs.any((d) => t.path.startsWith(d)) && File(t.path).existsSync()).map((t) => t.path)};
     for (final d in dirs) {
       try {
         for (final e in Directory(d).listSync(recursive: true, followLinks: false)) {
@@ -447,10 +436,10 @@ class AppState extends ChangeNotifier {
       } catch (_) {}
     }
     final old = byPath;
-    tracks = [for (final x in found) old[x] ?? Track.from(x)];
+    tracks = [for (final x in found) old[x] ?? Track.from(x), ...tracks.where((t) => t.path.startsWith('http'))];
     scanning = false; notifyListeners(); save();
     var n = 0;
-    for (final t in tracks.where((t) => t.art == null && t.artist == 'Unknown artist').toList()) { await _meta(t); if (++n % 8 == 0) notifyListeners(); }
+    for (final t in tracks.where((t) => !t.path.startsWith('http') && t.art == null && t.artist == 'Unknown artist').toList()) { await _meta(t); if (++n % 8 == 0) notifyListeners(); }
     notifyListeners(); save();
   }
 
@@ -484,12 +473,21 @@ class AppState extends ChangeNotifier {
   }
 
   void _fade() { var k = 0; Timer.periodic(const Duration(milliseconds: 60), (t) { k++; p.setVolume(vol * k / 10); if (k >= 10) t.cancel(); }); }
+
+  Future<void> _loadPath(String path) async {
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      await p.setUrl(path);
+    } else {
+      await p.setFilePath(path);
+    }
+  }
+
   Future<void> _load() async {
     final t = cur; if (t == null) return;
     la = null; lb = null; notifyListeners();
     try {
-      await p.setFilePath(t.path);
-      h.mediaItem.add(MediaItem(id: t.path, title: t.title, artist: t.artist, album: t.album, artUri: t.art != null ? Uri.file(t.art!) : null));
+      await _loadPath(t.path);
+      h.mediaItem.add(MediaItem(id: t.path, title: t.title, artist: t.artist, album: t.album, artUri: t.art != null && !t.art!.startsWith('http') ? Uri.file(t.art!) : (t.art != null ? Uri.parse(t.art!) : null)));
       await p.setSpeed(speed); await p.setPitch(pitch); await p.setVolume(fadeIn ? 0 : vol); await p.setSkipSilenceEnabled(skipSilence);
       try { await h.enh.setEnabled(normalize); await h.enh.setTargetGain(3.0); await h.eq.setEnabled(eqOn); } catch (_) {}
       _errs = 0; p.play(); if (fadeIn) _fade();
@@ -563,7 +561,7 @@ class AppState extends ChangeNotifier {
 
   Color colorOf(Track t) {
     final c = _cols[t.path]; if (c != null) return c;
-    if (t.art != null && _pend.add(t.path)) _dom(t);
+    if (t.art != null && !t.art!.startsWith('http') && _pend.add(t.path)) _dom(t);
     return tint(t.title, .32);
   }
   Future<void> _dom(Track t) async {
@@ -640,7 +638,7 @@ class Art extends StatelessWidget {
   const Art(this.t, this.s, {this.r, super.key});
   @override
   Widget build(BuildContext context) {
-    final f = t?.art, ok = f != null && File(f).existsSync(), rr = r ?? (s > 100 ? app.sk.artR : min(app.sk.artR, 6.0));
+    final f = t?.art, ok = f != null && (f.startsWith('http') || File(f).existsSync()), rr = r ?? (s > 100 ? app.sk.artR : min(app.sk.artR, 6.0));
     final col = t != null ? app.colorOf(t!) : tint('music', .25);
     return ClipRRect(
       borderRadius: BorderRadius.circular(rr),
@@ -654,7 +652,9 @@ class Art extends StatelessWidget {
           ),
         ),
         child: ok
-            ? Image.file(File(f), fit: BoxFit.cover, gaplessPlayback: true, cacheWidth: s.isFinite ? (s * 3).toInt().clamp(120, 900) : 600)
+            ? (f.startsWith('http')
+                ? Image.network(f, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Icon(Icons.music_note_rounded, color: Colors.white70, size: s * .42))
+                : Image.file(File(f), fit: BoxFit.cover, gaplessPlayback: true, cacheWidth: s.isFinite ? (s * 3).toInt().clamp(120, 900) : 600))
             : Icon(Icons.music_note_rounded, color: Colors.white70, size: s * .42),
       ),
     );
@@ -669,7 +669,7 @@ class CollageArt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final withArt = tracks.where((t) => t.art != null && File(t.art!).existsSync()).take(4).toList();
+    final withArt = tracks.where((t) => t.art != null && (t.art!.startsWith('http') || File(t.art!).existsSync())).take(4).toList();
     if (withArt.length < 4) {
       return Art(tracks.firstOrNull, size, r: radius);
     }
@@ -755,7 +755,7 @@ Widget dd<T>(Map<T, String> o, T v, void Function(T) f, {Widget Function(T)? lea
 
 Widget skinDrop() => ListenableBuilder(listenable: app, builder: (_, __) => dd<int>({for (final (i, s) in skins.indexed) i: s.name}, app.skin, app.setSkin, lead: (i) => Container(width: 14, height: 14, decoration: BoxDecoration(color: skins[i].accent, shape: BoxShape.circle))));
 
-// ── 3-DOT MENU (Includes Studio Speed & Pitch Adjuster + Equalizer) ──
+// ── 3-DOT MENU ──
 void trackMenu(BuildContext c, Track t, {String? inList}) => sheet(c, (s) => ListenableBuilder(
       listenable: app,
       builder: (_, __) => SafeArea(
