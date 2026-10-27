@@ -1338,7 +1338,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 185),
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.between,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
               'Library',
@@ -2025,7 +2025,7 @@ class _ArtworkScenePainter extends CustomPainter {
     canvas.drawRect(rect, bgPaint);
 
     final linePaint = Paint()
-      .color = Colors.white.withOpacity(0.08)
+      ..color = Colors.white.withOpacity(0.08)
       ..strokeWidth = 1.5;
     for (double i = 0; i < size.width; i += 16) {
       canvas.drawLine(Offset(i, 0), Offset(i, size.height), linePaint);
