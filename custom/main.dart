@@ -1,4 +1,4 @@
-// FILE: custom/main.dart — Pixel Audio Player 4.0 (TIDAL & Spotify Replicas + Studio Speed/Pitch + YT Music Sign-In)
+// FILE: custom/main.dart — Pixel Audio Player 4.0 (Complete & Error-Free)
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -342,7 +342,6 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  // ── Native Kotlin SimpMusic YouTube Music Search & Stream with robust fallbacks ──
   Future<List<YtSong>> searchYtMusic(String query) async {
     if (query.trim().isEmpty) return [];
     try {
@@ -974,7 +973,6 @@ class Mini extends StatelessWidget {
   Widget build(BuildContext c) {
     final t = app.cur!, m = app.sk.mini, lk = app.liked.contains(t.path);
 
-    // ── EXACT TIDAL MINI PLAYER REPLICA ──
     if (m == 4) {
       final body = GestureDetector(
         onTap: () => openNP(c),
@@ -1033,7 +1031,6 @@ class Mini extends StatelessWidget {
       return app.swipe == 'close' ? Dismissible(key: ValueKey('m${t.path}'), direction: DismissDirection.horizontal, onDismissed: (_) => app.close(), child: body) : body;
     }
 
-    // ── EXACT SPOTIFY MINI PLAYER REPLICA ──
     if (m == 0) {
       final dom = HSLColor.fromColor(app.colorOf(t)).withLightness(.22).withSaturation(.35).toColor();
       final body = GestureDetector(
@@ -1138,7 +1135,6 @@ class Mini extends StatelessWidget {
       return app.swipe == 'close' ? Dismissible(key: ValueKey('m${t.path}'), direction: DismissDirection.horizontal, onDismissed: (_) => app.close(), child: body) : body;
     }
 
-    // ── OTHER SKINS MINI PLAYER ──
     final fl = m == 1 || m == 6, top = m == 3;
     final bgc = m == 1 ? const Color(0xFF2C2C2E) : card;
     final showLike = m == 3 || m == 6, showNext = m == 1 || m == 2 || m == 5;
@@ -1308,7 +1304,6 @@ class _SeekState extends State<Seek> {
       });
 }
 
-// ── Custom TIDAL Track Radio ('d' with 6 dots around it) icon ──
 class TidalRadioIcon extends StatelessWidget {
   final Color color;
   const TidalRadioIcon({this.color = const Color(0xFF9E9E9E), super.key});
@@ -1354,7 +1349,6 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
         child: a,
       );
 
-  // ── EXACT TIDAL NOW PLAYING SCREEN ──
   Widget _buildTidalNP(BuildContext c, Track t) {
     final col = app.colorOf(t);
     final lk = app.liked.contains(t.path);
@@ -1529,7 +1523,6 @@ class _NPState extends State<NowPlaying> with SingleTickerProviderStateMixin {
     );
   }
 
-  // ── EXACT SPOTIFY NOW PLAYING SCREEN ──
   Widget _buildSpotifyNP(BuildContext c, Track t) {
     final col = app.colorOf(t);
     final lk = app.liked.contains(t.path);
@@ -2347,7 +2340,6 @@ class HomePage extends StatefulWidget { const HomePage({super.key}); @override S
 class _HomeState extends State<HomePage> {
   int chip = 0;
 
-  // ── EXACT TIDAL HOME SCREEN ──
   Widget _buildTidalHome(BuildContext c, List<Track> all, List<Track> rec, void Function(String, List<Track> Function(), {String? list}) open) {
     final pool = rec.isNotEmpty ? rec : all;
     final listNames = app.lists.keys.toList();
@@ -2650,7 +2642,6 @@ class _HomeState extends State<HomePage> {
     );
   }
 
-  // ── EXACT SPOTIFY HOME SCREEN ──
   Widget _buildSpotifyHome(BuildContext c, List<Track> all, List<Track> rec, List<Track> most, void Function(String, List<Track> Function(), {String? list}) open) {
     final pool = chip == 2 ? app.likedTracks : (rec.isEmpty ? all : rec);
     final listNames = app.lists.keys.toList();
@@ -3487,7 +3478,7 @@ List<Widget> accountS(BuildContext c) => [
                   children: [
                     tx('YouTube Music Sign-In', z: 18, f: FontWeight.w800),
                     const SizedBox(height: 12),
-                    TextField(controller: emailCtl, decoration: const InputDecoration(labelText: 'Google Email', filled: true, fillColor: card)),
+                    TextField(controller: emailCtl, decoration: InputDecoration(labelText: 'Google Email', filled: true, fillColor: card)),
                     const SizedBox(height: 14),
                     FilledButton(
                       style: FilledButton.styleFrom(backgroundColor: spGreen, foregroundColor: Colors.black),
