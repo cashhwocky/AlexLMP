@@ -1,4 +1,4 @@
-// FILE: custom/main.dart — Pixel Audio Player 4.0 (Clean & Fully Verified)
+// FILE: custom/main.dart — Pixel Audio Player 4.0 (Fully Corrected Skin Fields & Search Syntax)
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -20,7 +20,8 @@ const ch = MethodChannel('pixelaudio/meta');
 class Nav { final IconData i, a; final String l, k; const Nav(this.i, this.a, this.l, this.k); }
 class Skin {
   final String name, hint, title; final Color accent, bg, card; final List<Nav> nav;
-  const Skin(this.name, this.accent, this.bg, this.card, this.nav, this.hint, {this.title = 'Home', this.head = 0, this.home = 0, this.mini = 0, this.np = 0, this.artR = 6, this.sz = 144});
+  final int head, home, mini, np; final bool navAcc, pill; final double artR, sz;
+  const Skin(this.name, this.accent, this.bg, this.card, this.nav, this.hint, {this.title = 'Home', this.head = 0, this.home = 0, this.mini = 0, this.np = 0, this.navAcc = false, this.pill = false, this.artR = 6, this.sz = 144});
 }
 const nHome = Nav(Icons.home_outlined, Icons.home_filled, 'Home', 'home');
 const nSearch = Nav(Icons.search, Icons.search, 'Search', 'search');
@@ -441,7 +442,20 @@ class _SearchState extends State<SearchPage> {
   @override
   Widget build(BuildContext c) => Column(children: [
         Padding(padding: const EdgeInsets.all(16), child: TextField(controller: ctl, onChanged: search, decoration: const InputDecoration(hintText: 'Search YouTube Music', filled: true))),
-        Expanded(child: ListView(children: [if (searching) const Center(child: CircularProgressIndicator()), for (final y in ytRes) ListTile(title: Text(y.title), subtitle: Text(y.artist), trailing: const Icon(Icons.play_arrow), onTap: () => app.playYtSong(y)])),
+        Expanded(
+          child: ListView(
+            children: [
+              if (searching) const Center(child: CircularProgressIndicator()),
+              for (final y in ytRes)
+                ListTile(
+                  title: Text(y.title),
+                  subtitle: Text(y.artist),
+                  trailing: const Icon(Icons.play_arrow),
+                  onTap: () => app.playYtSong(y),
+                ),
+            ],
+          ),
+        ),
       ]);
 }
 
