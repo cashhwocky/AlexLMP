@@ -1,4 +1,4 @@
-// FILE: custom/main.dart — Pixel Audio Player 4.0 (Fully Corrected Skin Fields & Search Syntax)
+// FILE: custom/main.dart — Pixel Audio Player 4.0 (Full UI Restored + Local & Stream Engine)
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -21,23 +21,25 @@ class Nav { final IconData i, a; final String l, k; const Nav(this.i, this.a, th
 class Skin {
   final String name, hint, title; final Color accent, bg, card; final List<Nav> nav;
   final int head, home, mini, np; final bool navAcc, pill; final double artR, sz;
-  const Skin(this.name, this.accent, this.bg, this.card, this.nav, this.hint, {this.title = 'Home', this.head = 0, this.home = 0, this.mini = 0, this.np = 0, this.navAcc = false, this.pill = false, this.artR = 6, this.sz = 144});
+  const Skin(this.name, this.accent, this.bg, this.card, this.nav, this.hint, {this.title = 'Home', this.head = 0, this.home = 0, this.mini = 0, this.np = 0, this.navAcc = false, this.pill = false, this.artR = 8, this.sz = 152});
 }
 const nHome = Nav(Icons.home_outlined, Icons.home_filled, 'Home', 'home');
 const nSearch = Nav(Icons.search, Icons.search, 'Search', 'search');
 const nLib = Nav(Icons.library_music_outlined, Icons.library_music, 'Your Library', 'lib');
 const skins = [
-  Skin('Spotify', Color(0xFF1ED760), Color(0xFF121212), Color(0xFF282828), [nHome, nSearch, nLib], 'What do you want to play?'),
+  Skin('Spotify', Color(0xFF1ED760), Color(0xFF121212), Color(0xFF282828), [nHome, nSearch, nLib], 'What do you want to play?', np: 0),
+  Skin('TIDAL', Color(0xFFFFD43B), Color(0xFF000000), Color(0xFF18181A), [nHome, Nav(Icons.smart_display_outlined, Icons.smart_display, '', 'new'), Nav(Icons.search, Icons.search, '', 'search'), Nav(Icons.equalizer, Icons.equalizer, '', 'radio'), Nav(Icons.account_circle_outlined, Icons.account_circle, '', 'lib')], 'Search artists, songs, albums', home: 4, mini: 4, np: 4, artR: 8, sz: 156),
 ];
 
 Color get bg => app.sk.bg;
 Color get card => app.sk.card;
 const grey = Color(0xFFA7A7A7);
 const spGreen = Color(0xFF1ED760);
+const tidalGold = Color(0xFFFFD43B);
 const exts = ['.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aac', '.opus'];
 final msg = GlobalKey<ScaffoldMessengerState>();
 final app = AppState();
-Color get gr => spGreen;
+Color get gr => app.sk.accent;
 
 void toast(String s) => msg.currentState?..hideCurrentSnackBar()..showSnackBar(SnackBar(content: Text(s), behavior: SnackBarBehavior.floating, duration: const Duration(seconds: 2)));
 void tap() { if (app.haptics) HapticFeedback.selectionClick(); }
@@ -95,11 +97,11 @@ class AppState extends ChangeNotifier {
   List<Track> tracks = [], queue = []; int idx = -1;
   Set<String> liked = {}; List<String> recent = [];
   bool shuffle = false, haptics = true, resume = true, loadingYt = false, scanning = false;
-  int repeat = 0, tab = 0;
+  int repeat = 0, tab = 0, skin = 0;
   double speed = 1.0, pitch = 1.0, vol = 1.0;
   List<String> pq = [];
 
-  Skin get sk => skins[0];
+  Skin get sk => skins[skin.clamp(0, skins.length - 1)];
   Track? get cur => idx >= 0 && idx < queue.length ? queue[idx] : null;
   Map<String, Track> get byPath => {for (final t in tracks) t.path: t};
   List<Track> get sorted => [...tracks];
@@ -119,6 +121,7 @@ class AppState extends ChangeNotifier {
   }
 
   void set(void Function() f) { f(); notifyListeners(); }
+  void setSkin(int i) => set(() => skin = i);
   void goTab(int i) { tab = i; notifyListeners(); }
 
   Future<List<YtSong>> searchYtMusic(String query) async {
@@ -149,7 +152,7 @@ class AppState extends ChangeNotifier {
     if (loadingYt) return;
     loadingYt = true;
     notifyListeners();
-    toast('Streaming "${s.title}"…');
+    toast('Resolving stream for "${s.title}"…');
     try {
       final yt = yte.YoutubeExplode();
       String? streamUrl;
@@ -180,7 +183,9 @@ class AppState extends ChangeNotifier {
         AudioSource.uri(
           Uri.parse(path),
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
             'Range': 'bytes=0-',
           },
         ),
@@ -198,7 +203,7 @@ class AppState extends ChangeNotifier {
       await p.setSpeed(speed);
       await p.setPitch(pitch);
       p.play();
-    } catch (_) {
+    } catch (e) {
       toast('Cannot play ${t.title}');
     }
     notifyListeners();
@@ -252,9 +257,7 @@ class AppState extends ChangeNotifier {
   void setSpeed(double s) { speed = s.clamp(0.25, 2.5); p.setSpeed(speed); notifyListeners(); }
   void setPitch(double v) { pitch = v.clamp(0.25, 2.5); p.setPitch(pitch); notifyListeners(); }
   void setSemitones(double st) { setPitch(pow(2.0, st.clamp(-12.0, 12.0) / 12.0).toDouble()); }
-  void applyTunePreset(double spd, double ptch) { speed = spd; pitch = ptch; p.setSpeed(speed); p.setPitch(pitch); notifyListeners(); }
   void like(Track t) => set(() { if (!liked.remove(t.path)) liked.add(t.path); });
-  void clearArt() { for (final t in tracks) { t.art = null; } set(() {}); toast('Cleared'); }
 }
 
 Future<void> main() async {
@@ -283,7 +286,7 @@ class Art extends StatelessWidget {
   Widget build(BuildContext context) {
     final f = t?.art, ok = f != null && (f.startsWith('http') || File(f).existsSync());
     return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: BorderRadius.circular(8),
       child: Container(
         width: s, height: s, color: const Color(0xFF282828),
         child: ok ? (f.startsWith('http') ? Image.network(f, fit: BoxFit.cover) : Image.file(File(f), fit: BoxFit.cover)) : const Icon(Icons.music_note, color: grey),
@@ -297,7 +300,7 @@ class TTile extends StatelessWidget {
   const TTile(this.t, this.list, this.i, {super.key});
   @override
   Widget build(BuildContext c) => ListTile(
-        leading: Art(t, 48), title: tx(t.title), subtitle: tx(t.artist, c: grey, z: 12),
+        leading: Art(t, 48), title: tx(t.title, f: FontWeight.w600), subtitle: tx(t.artist, c: grey, z: 12),
         trailing: IconButton(icon: const Icon(Icons.more_vert, color: grey), onPressed: () => sheet(c, (_) => SafeArea(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             ListTile(leading: const Icon(Icons.tune), title: const Text('Speed & Pitch'), onTap: () { Navigator.pop(c); sheet(c, (_) => const TuneSheet(), big: true); }),
@@ -317,7 +320,7 @@ class Shell extends StatelessWidget {
           bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
             if (app.cur != null) const Mini(),
             BottomNavigationBar(
-              currentIndex: t, backgroundColor: bg, selectedItemColor: spGreen, unselectedItemColor: grey,
+              currentIndex: t, backgroundColor: bg, selectedItemColor: gr, unselectedItemColor: grey,
               onTap: app.goTab,
               items: const [
                 BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
@@ -405,12 +408,6 @@ class TuneSheet extends StatelessWidget {
       ));
 }
 
-class EqSheet extends StatelessWidget {
-  const EqSheet({super.key});
-  @override
-  Widget build(BuildContext c) => const SafeArea(child: Padding(padding: EdgeInsets.all(20), child: Text('Equalizer')));
-}
-
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
   @override
@@ -448,8 +445,9 @@ class _SearchState extends State<SearchPage> {
               if (searching) const Center(child: CircularProgressIndicator()),
               for (final y in ytRes)
                 ListTile(
-                  title: Text(y.title),
-                  subtitle: Text(y.artist),
+                  leading: Art(Track(y.art, y.title, y.artist, y.album, y.art, DateTime.now()), 48),
+                  title: tx(y.title, f: FontWeight.w600),
+                  subtitle: tx(y.artist, c: grey, z: 12),
                   trailing: const Icon(Icons.play_arrow),
                   onTap: () => app.playYtSong(y),
                 ),
