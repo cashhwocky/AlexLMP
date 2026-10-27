@@ -27,15 +27,15 @@ void main() {
 
 class TrackItem {
   final String id;
-  final String title;
-  final String artist;
+  String title;
+  String artist;
   final String album;
   final String radioName;
   final bool isExplicit;
   final bool hasParentalBadge;
   final int durationSeconds;
-  final List<Color> artColors;
-  final String artStyle;
+  List<Color> artColors;
+  String artStyle;
   final List<String> syncedLyrics;
   final Color playerBg;
   final Color playerSurface;
@@ -44,7 +44,7 @@ class TrackItem {
   final Color playerOnAccent;
   final String? filePath;
 
-  const TrackItem({
+  TrackItem({
     required this.id,
     required this.title,
     required this.artist,
@@ -54,7 +54,7 @@ class TrackItem {
     this.hasParentalBadge = false,
     required this.durationSeconds,
     required this.artColors,
-    this.artStyle = 'window_sunset',
+    this.artStyle = 'vinyl_record',
     required this.syncedLyrics,
     this.playerBg = const Color(0xFF20130E),
     this.playerSurface = const Color(0xFF362721),
@@ -62,6 +62,18 @@ class TrackItem {
     this.playerAccentPeach = const Color(0xFFFFB59C),
     this.playerOnAccent = const Color(0xFF4D1600),
     this.filePath,
+  });
+}
+
+class PlaylistInfo {
+  String name;
+  String artStyle;
+  List<Color> colors;
+
+  PlaylistInfo({
+    required this.name,
+    required this.artStyle,
+    required this.colors,
   });
 }
 
@@ -114,6 +126,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
   double _playbackSpeed = 1.0;
   double _playbackPitch = 1.0;
   bool _stopOnTaskClear = true;
+  String _currentThemeName = 'Classic Blue';
 
   Duration _position = Duration.zero;
   Duration _duration = const Duration(seconds: 180);
@@ -121,6 +134,12 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
 
   final Set<String> _likedIds = {};
   final Set<String> _savedIds = {};
+
+  final PlaylistInfo _primaryPlaylist = PlaylistInfo(
+    name: 'Your Archive Mixes',
+    artStyle: 'equalizer_bars',
+    colors: [const Color(0xFF243B4A), const Color(0xFF8CD0F0), const Color(0xFF111416)],
+  );
 
   TrackItem get _currentTrack {
     if (_tracks.isEmpty) {
@@ -131,6 +150,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
         album: 'Archive Tune',
         durationSeconds: 180,
         artColors: const [Color(0xFF1C2124), Color(0xFF2E373D)],
+        artStyle: 'vinyl_record',
         syncedLyrics: const ['Import local tracks or scan storage to begin'],
       );
     }
@@ -149,6 +169,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _stopOnTaskClear = prefs.getBool('stop_on_task_clear') ?? true;
+      _currentThemeName = prefs.getString('theme_name') ?? 'Classic Blue';
     });
   }
 
@@ -191,10 +212,20 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
       try {
         final List<dynamic>? raw = await _mediaChannel.invokeMethod('scanDeviceAudio');
         if (raw != null && raw.isNotEmpty && mounted) {
-          final scanned = raw.map((item) {
-            final map = Map<String, dynamic>.from(item);
+          final artStyles = ['vinyl_record', 'sound_wave', 'music_note_grid', 'equalizer_bars', 'neon_vinyl'];
+          final colorPalettes = [
+            [const Color(0xFF3E1C0C), const Color(0xFFD96B38), const Color(0xFF1A0F0A)],
+            [const Color(0xFF42173B), const Color(0xFFE0538A), const Color(0xFF28193D)],
+            [const Color(0xFF062A4E), const Color(0xFF1F7AE0), const Color(0xFF0A2416)],
+            [const Color(0xFF1A3A2A), const Color(0xFF9C27B0), const Color(0xFF00BCD4)],
+            [const Color(0xFF4A1E0D), const Color(0xFFE66833), const Color(0xFF1B110E)],
+          ];
+
+          final scanned = raw.asMap().entries.map((entry) {
+            final idx = entry.key;
+            final map = Map<String, dynamic>.from(entry.value);
             return TrackItem(
-              id: 'scan_${map['filePath']}',
+              id: 'scan_${map['filePath']}_$idx',
               title: map['title']?.toString() ?? 'Unknown Track',
               artist: map['artist']?.toString() ?? 'Local Artist',
               album: map['album']?.toString() ?? 'Local Album',
@@ -202,10 +233,12 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
               isExplicit: false,
               hasParentalBadge: false,
               durationSeconds: (map['durationSeconds'] as int?) ?? 180,
-              artColors: const [Color(0xFF1E2830), Color(0xFF111416), Color(0xFF2B3A45)],
-              syncedLyrics: const [
-                'Local device audio track',
-                'Indexed via Archive Tune storage engine',
+              artColors: colorPalettes[idx % colorPalettes.length],
+              artStyle: artStyles[idx % artStyles.length],
+              syncedLyrics: [
+                'Playing local lossless audio track',
+                'Indexed via Archive Tune engine',
+                'Custom procedurally generated visuals',
               ],
               filePath: map['filePath']?.toString(),
             );
@@ -352,12 +385,14 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                     );
                     if (result != null && result.files.isNotEmpty) {
                       final added = <TrackItem>[];
-                      for (final file in result.files) {
+                      final artStyles = ['vinyl_record', 'sound_wave', 'music_note_grid', 'equalizer_bars', 'neon_vinyl'];
+                      for (int i = 0; i < result.files.length; i++) {
+                        final file = result.files[i];
                         if (file.path == null) continue;
                         final name = p.basenameWithoutExtension(file.path!);
                         added.add(
                           TrackItem(
-                            id: 'local_${DateTime.now().microsecondsSinceEpoch}_${added.length}',
+                            id: 'local_${DateTime.now().microsecondsSinceEpoch}_$i',
                             title: name,
                             artist: 'Imported Artist',
                             album: 'Local Files',
@@ -365,11 +400,9 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                             isExplicit: false,
                             hasParentalBadge: false,
                             durationSeconds: 180,
-                            artColors: const [Color(0xFF3E1C0C), Color(0xFFD96B38), Color(0xFF1A0F0A)],
-                            syncedLyrics: const [
-                              'Playing custom imported local audio',
-                              'Stored directly on device storage',
-                            ],
+                            artColors: [const Color(0xFF3E1C0C), const Color(0xFFD96B38), const Color(0xFF1A0F0A)],
+                            artStyle: artStyles[i % artStyles.length],
+                            syncedLyrics: ['Custom imported local audio file'],
                             filePath: file.path,
                           ),
                         );
@@ -562,6 +595,44 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                       ),
                     ),
                     const SizedBox(height: 20),
+                    const Text(
+                      'Color Theme',
+                      style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: ['Classic Blue', 'Emerald', 'Sunset Peach', 'Cyberpunk'].map((theme) {
+                        final selected = _currentThemeName == theme;
+                        return Expanded(
+                          child: GestureDetector(
+                            onTap: () async {
+                              setSheetState(() => _currentThemeName = theme);
+                              setState(() => _currentThemeName = theme);
+                              final prefs = await SharedPreferences.getInstance();
+                              await prefs.setString('theme_name', theme);
+                            },
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 4),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: selected ? const Color(0xFF8CD0F0) : const Color(0xFF283740),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                theme.split(' ').first,
+                                style: TextStyle(
+                                  color: selected ? const Color(0xFF062938) : Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
                     SwitchListTile(
                       title: const Text('Stop music on task clear'),
                       subtitle: const Text('Stops playback when swiped away from recents'),
@@ -574,29 +645,145 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                         await prefs.setBool('stop_on_task_clear', val);
                       },
                     ),
-                    const Divider(color: Color(0xFF2E373D)),
-                    const SizedBox(height: 10),
-                    Text(
-                      'Playback Speed: ${_playbackSpeed.toStringAsFixed(2)}x',
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                    Slider(
-                      value: _playbackSpeed,
-                      min: 0.5,
-                      max: 2.0,
-                      divisions: 15,
-                      activeColor: const Color(0xFF8CD0F0),
-                      onChanged: (v) {
-                        setSheetState(() => _playbackSpeed = v);
-                        setState(() => _playbackSpeed = v);
-                        _audioPlayer.setSpeed(v);
-                      },
-                    ),
                   ],
                 ),
               ),
             );
           },
+        );
+      },
+    );
+  }
+
+  void _showEditTrackDialog(TrackItem track, StateSetter setModalState) {
+    final titleController = TextEditingController(text: track.title);
+    final artistController = TextEditingController(text: track.artist);
+    String selectedStyle = track.artStyle;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1C2124),
+          title: const Text('Edit Song Details & Artwork', style: TextStyle(color: Colors.white)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: titleController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(labelText: 'Song Title', labelStyle: TextStyle(color: Colors.white70)),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: artistController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(labelText: 'Artist Name', labelStyle: TextStyle(color: Colors.white70)),
+                ),
+                const SizedBox(height: 16),
+                const Text('Choose Album Art Symbol Style:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                const SizedBox(height: 8),
+                DropdownButton<String>(
+                  value: selectedStyle,
+                  dropdownColor: const Color(0xFF283740),
+                  style: const TextStyle(color: Colors.white),
+                  isExpanded: true,
+                  items: const [
+                    DropdownMenuItem(value: 'vinyl_record', child: Text('Vinyl Record')),
+                    DropdownMenuItem(value: 'sound_wave', child: Text('Sound Wave')),
+                    DropdownMenuItem(value: 'music_note_grid', child: Text('Music Notes')),
+                    DropdownMenuItem(value: 'equalizer_bars', child: Text('Equalizer Bars')),
+                    DropdownMenuItem(value: 'neon_vinyl', child: Text('Neon Vinyl')),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) {
+                      selectedStyle = val;
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            ),
+            FilledButton(
+              onPressed: () {
+                setState(() {
+                  track.title = titleController.text.trim();
+                  track.artist = artistController.text.trim();
+                  track.artStyle = selectedStyle;
+                });
+                setModalState(() {});
+                Navigator.pop(ctx);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showPlaylistEditDialog() {
+    final nameController = TextEditingController(text: _primaryPlaylist.name);
+    String selectedStyle = _primaryPlaylist.artStyle;
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1C2124),
+          title: const Text('Edit Playlist & Artwork', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: nameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'Playlist Title', labelStyle: TextStyle(color: Colors.white70)),
+              ),
+              const SizedBox(height: 16),
+              const Text('Choose Playlist Cover Style:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 8),
+              DropdownButton<String>(
+                value: selectedStyle,
+                dropdownColor: const Color(0xFF283740),
+                style: const TextStyle(color: Colors.white),
+                isExpanded: true,
+                items: const [
+                  DropdownMenuItem(value: 'equalizer_bars', child: Text('Equalizer Bars')),
+                  DropdownMenuItem(value: 'vinyl_record', child: Text('Vinyl Record')),
+                  DropdownMenuItem(value: 'sound_wave', child: Text('Sound Wave')),
+                  DropdownMenuItem(value: 'music_note_grid', child: Text('Music Notes')),
+                ],
+                onChanged: (val) {
+                  if (val != null) selectedStyle = val;
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            ),
+            FilledButton(
+              onPressed: () {
+                setState(() {
+                  _primaryPlaylist.name = nameController.text.trim();
+                  _primaryPlaylist.artStyle = selectedStyle;
+                });
+                Navigator.pop(ctx);
+              },
+              child: const Text('Save'),
+            ),
+          ],
         );
       },
     );
@@ -650,7 +837,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                     height: 66,
                     padding: const EdgeInsets.symmetric(horizontal: 10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1C2226).withOpacity(0.97),
+                      color: const Color(0xFF1C2124),
                       borderRadius: BorderRadius.circular(34),
                       boxShadow: [
                         BoxShadow(
@@ -747,7 +934,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                             width: 44,
                             height: 44,
                             decoration: const BoxDecoration(
-                              color: Color(0xFF2A3136),
+                              color: Color(0xFF283740),
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
@@ -788,7 +975,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                         height: 68,
                         padding: const EdgeInsets.all(6),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF1C2226).withOpacity(0.98),
+                          color: const Color(0xFF1C2124),
                           borderRadius: BorderRadius.circular(36),
                           boxShadow: [
                             BoxShadow(
@@ -814,7 +1001,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                         width: 64,
                         height: 64,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF1C2226).withOpacity(0.98),
+                          color: const Color(0xFF1C2124),
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
@@ -1238,14 +1425,23 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 185),
       children: [
-        const Text(
-          'CUSTOM STATIONS',
-          style: TextStyle(color: Color(0xFF9EA6AC), fontSize: 12, letterSpacing: 0.8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'CUSTOM STATIONS',
+              style: TextStyle(color: Color(0xFF9EA6AC), fontSize: 12, letterSpacing: 0.8),
+            ),
+            IconButton(
+              icon: const Icon(Icons.edit_rounded, color: Color(0xFF8CD0F0), size: 20),
+              onPressed: _showPlaylistEditDialog,
+            ),
+          ],
         ),
         const SizedBox(height: 4),
-        const Text(
-          'Your Archive Mixes',
-          style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w800),
+        Text(
+          _primaryPlaylist.name,
+          style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 16),
         if (_tracks.isEmpty)
@@ -1337,8 +1533,22 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
     final maxSeconds = max(track.durationSeconds, 1);
     final currentSeconds = _position.inSeconds.clamp(0, maxSeconds);
 
+    // Apply color theme dynamically
+    Color accentPeach = const Color(0xFFFFB59C);
+    Color playerBg = track.playerBg;
+    if (_currentThemeName == 'Emerald') {
+      accentPeach = const Color(0xFF9CF0C0);
+      playerBg = const Color(0xFF0E2014);
+    } else if (_currentThemeName == 'Sunset Peach') {
+      accentPeach = const Color(0xFFFFC09C);
+      playerBg = const Color(0xFF20130E);
+    } else if (_currentThemeName == 'Cyberpunk') {
+      accentPeach = const Color(0xFFF09CE2);
+      playerBg = const Color(0xFF200E20);
+    }
+
     return Scaffold(
-      backgroundColor: track.playerBg,
+      backgroundColor: playerBg,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 22),
@@ -1384,7 +1594,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                     ],
                   ),
                   GestureDetector(
-                    onTap: _openSettingsSheet,
+                    onTap: () => _showEditTrackDialog(track, setModalState),
                     child: Container(
                       width: 46,
                       height: 46,
@@ -1392,7 +1602,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                         color: track.playerSurface,
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      child: const Icon(Icons.more_vert_rounded, color: Colors.white, size: 24),
+                      child: const Icon(Icons.edit_rounded, color: Colors.white, size: 22),
                     ),
                   ),
                 ],
@@ -1537,9 +1747,9 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                   SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       trackHeight: 4.5,
-                      activeTrackColor: track.playerAccentPeach,
+                      activeTrackColor: accentPeach,
                       inactiveTrackColor: const Color(0xFF42312B),
-                      thumbColor: track.playerAccentPeach,
+                      thumbColor: accentPeach,
                       thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7.5),
                       overlayShape: SliderComponentShape.noOverlay,
                     ),
@@ -1562,7 +1772,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                           height: 4,
                           margin: const EdgeInsets.only(right: 2),
                           decoration: BoxDecoration(
-                            color: track.playerAccentPeach,
+                            color: accentPeach,
                             shape: BoxShape.circle,
                           ),
                         ),
@@ -1625,7 +1835,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                       child: Container(
                         height: 70,
                         decoration: BoxDecoration(
-                          color: track.playerAccentPeach,
+                          color: accentPeach,
                           borderRadius: BorderRadius.circular(35),
                         ),
                         child: Icon(
@@ -1793,34 +2003,59 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (ctx) {
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: _tracks.length,
-          itemBuilder: (_, idx) {
-            final t = _tracks[idx];
-            final active = idx == _currentIndex;
-            return ListTile(
-              leading: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: SizedBox(
-                  width: 46,
-                  height: 46,
-                  child: CustomAlbumArtwork(track: t, showParentalBadge: false),
-                ),
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  const Text('Reorder Queue', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ReorderableListView.builder(
+                      itemCount: _tracks.length,
+                      onReorder: (oldIndex, newIndex) {
+                        setState(() {
+                          if (newIndex > oldIndex) newIndex -= 1;
+                          final item = _tracks.removeAt(oldIndex);
+                          _tracks.insert(newIndex, item);
+                        });
+                        setSheetState(() {});
+                        setModalState(() {});
+                      },
+                      itemBuilder: (_, idx) {
+                        final t = _tracks[idx];
+                        final active = idx == _currentIndex;
+                        return ListTile(
+                          key: ValueKey(t.id),
+                          leading: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: SizedBox(
+                              width: 40,
+                              height: 40,
+                              child: CustomAlbumArtwork(track: t, showParentalBadge: false),
+                            ),
+                          ),
+                          title: Text(
+                            t.title,
+                            style: TextStyle(
+                              color: active ? const Color(0xFFFFB59C) : Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          subtitle: Text(t.artist, style: const TextStyle(color: Colors.white70)),
+                          trailing: const Icon(Icons.drag_handle_rounded, color: Colors.white54),
+                          onTap: () {
+                            _loadAndPlayTrack(idx, autoPlay: true);
+                            setSheetState(() {});
+                            setModalState(() {});
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
-              title: Text(
-                t.title,
-                style: TextStyle(
-                  color: active ? const Color(0xFFFFB59C) : Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              subtitle: Text(t.artist, style: const TextStyle(color: Colors.white70)),
-              onTap: () {
-                Navigator.pop(ctx);
-                _loadAndPlayTrack(idx, autoPlay: true);
-                setModalState(() {});
-              },
             );
           },
         );
@@ -1879,8 +2114,6 @@ class _ExplicitBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    customArtStyle() {}
-
     return Container(
       width: 15,
       height: 15,
@@ -1920,7 +2153,7 @@ class CustomAlbumArtwork extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         CustomPaint(
-          painter: _ArtworkScenePainter(
+          painter: _ArtworkSymbolPainter(
             style: track.artStyle,
             colors: track.artColors,
           ),
@@ -1972,11 +2205,11 @@ class CustomAlbumArtwork extends StatelessWidget {
   }
 }
 
-class _ArtworkScenePainter extends CustomPainter {
+class _ArtworkSymbolPainter extends CustomPainter {
   final String style;
   final List<Color> colors;
 
-  const _ArtworkScenePainter({required this.style, required this.colors});
+  const _ArtworkSymbolPainter({required this.style, required this.colors});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1989,11 +2222,68 @@ class _ArtworkScenePainter extends CustomPainter {
       ).createShader(rect);
     canvas.drawRect(rect, bgPaint);
 
-    final linePaint = Paint()
-      ..color = Colors.white.withOpacity(0.08)
-      ..strokeWidth = 1.5;
-    for (double i = 0; i < size.width; i += 16) {
-      canvas.drawLine(Offset(i, 0), Offset(i, size.height), linePaint);
+    final center = Offset(size.width / 2, size.height / 2);
+
+    if (style == 'vinyl_record') {
+      final groovePaint = Paint()
+        ..color = Colors.white.withOpacity(0.15)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.0;
+      for (double r = size.width * 0.15; r < size.width * 0.45; r += 10) {
+        canvas.drawCircle(center, r, groovePaint);
+      }
+      final labelPaint = Paint()..color = const Color(0xFFFFB59C);
+      canvas.drawCircle(center, size.width * 0.12, labelPaint);
+      final spindlePaint = Paint()..color = Colors.black;
+      canvas.drawCircle(center, size.width * 0.03, spindlePaint);
+    } else if (style == 'sound_wave') {
+      final wavePaint = Paint()
+        ..color = const Color(0xFF8CD0F0)
+        ..strokeWidth = 3.0
+        ..strokeCap = StrokeCap.round;
+      final bars = [12.0, 24.0, 36.0, 48.0, 30.0, 18.0, 42.0, 28.0, 15.0];
+      double startX = size.width * 0.15;
+      for (var h in bars) {
+        canvas.drawLine(
+          Offset(startX, center.dy - h),
+          Offset(startX, center.dy + h),
+          wavePaint,
+        );
+        startX += size.width * 0.08;
+      }
+    } else if (style == 'music_note_grid') {
+      final notePaint = Paint()..color = Colors.white;
+      canvas.drawCircle(Offset(center.dx - 15, center.dy + 10), 8, notePaint);
+      canvas.drawCircle(Offset(center.dx + 15, center.dy + 5), 8, notePaint);
+      final stemPaint = Paint()
+        ..color = Colors.white
+        ..strokeWidth = 3.0;
+      canvas.drawLine(Offset(center.dx - 7, center.dy + 10), Offset(center.dx - 7, center.dy - 15), stemPaint);
+      canvas.drawLine(Offset(center.dx + 23, center.dy + 5), Offset(center.dx + 23, center.dy - 20), stemPaint);
+      canvas.drawLine(Offset(center.dx - 7, center.dy - 15), Offset(center.dx + 23, center.dy - 20), stemPaint);
+    } else if (style == 'equalizer_bars') {
+      final barPaint = Paint()..strokeWidth = 6.0;
+      final heights = [0.3, 0.6, 0.9, 0.5, 0.7, 0.4];
+      double startX = size.width * 0.2;
+      for (int i = 0; i < heights.length; i++) {
+        barPaint.color = i % 2 == 0 ? const Color(0xFF8CD0F0) : const Color(0xFFFFB59C);
+        double h = size.height * 0.4 * heights[i];
+        canvas.drawLine(
+          Offset(startX, center.dy + h),
+          Offset(startX, center.dy - h),
+          barPaint,
+        );
+        startX += size.width * 0.12;
+      }
+    } else if (style == 'neon_vinyl') {
+      final neonPaint = Paint()
+        ..color = const Color(0xFFF09CE2)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3.5;
+      canvas.drawCircle(center, size.width * 0.35, neonPaint);
+      canvas.drawCircle(center, size.width * 0.22, neonPaint);
+      final dotPaint = Paint()..color = const Color(0xFF9CF0C0);
+      canvas.drawCircle(center, size.width * 0.08, dotPaint);
     }
   }
 
