@@ -1,13 +1,26 @@
 package com.archivetune.app
 
+import android.app.Service
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.provider.MediaStore
 import android.view.WindowManager
 import androidx.core.view.WindowCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+
+class TaskKillService : Service() {
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        stopSelf()
+        android.os.Process.killProcess(android.os.Process.myPid())
+    }
+}
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.archivetune.app/media"
@@ -19,6 +32,7 @@ class MainActivity : FlutterActivity() {
             window.attributes.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
+        startService(Intent(this, TaskKillService::class.java))
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -65,11 +79,11 @@ class MainActivity : FlutterActivity() {
                 while (cursor.moveToNext()) {
                     val path = cursor.getString(dataCol) ?: continue
                     val durationMs = cursor.getLong(durationCol)
-                    if (durationMs < 5000) continue
+                    if (durationMs < 3000) continue
                     songs.add(
                         mapOf(
-                            "title" to (cursor.getString(titleCol) ?: "Unknown Title"),
-                            "artist" to (cursor.getString(artistCol) ?: "Unknown Artist"),
+                            "title" to (cursor.getString(titleCol) ?: "Unknown Track"),
+                            "artist" to (cursor.getString(artistCol) ?: "Local Artist"),
                             "album" to (cursor.getString(albumCol) ?: "Local Audio"),
                             "durationSeconds" to (durationMs / 1000).toInt(),
                             "filePath" to path
