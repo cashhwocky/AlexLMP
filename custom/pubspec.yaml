@@ -1,8 +1,8 @@
 # FILE: custom/pubspec.yaml
 name: audio_player
-description: Local audio player with a Spotify-style interface.
+description: Local audio player that transforms into popular music apps.
 publish_to: 'none'
-version: 3.1.0+6
+version: 4.0.0+7
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
