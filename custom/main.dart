@@ -12,7 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-late MyAudioHandler _audioHandler;
+MyAudioHandler? _audioHandler;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,15 +26,17 @@ Future<void> main() async {
     ),
   );
 
-  _audioHandler = await AudioService.init(
-    builder: () => MyAudioHandler(),
-    config: const AudioServiceConfig(
-      androidNotificationChannelId: 'com.alexlmp.app.channel.audio',
-      androidNotificationChannelName: 'AlexLMP Music Playback',
-      androidNotificationOngoing: true,
-      androidStopForegroundOnPause: true,
-    ),
-  );
+  try {
+    _audioHandler = await AudioService.init(
+      builder: () => MyAudioHandler(),
+      config: const AudioServiceConfig(
+        androidNotificationChannelId: 'com.alexlmp.app.channel.audio',
+        androidNotificationChannelName: 'AlexLMP Music Playback',
+        androidNotificationOngoing: true,
+        androidStopForegroundOnPause: true,
+      ),
+    );
+  } catch (_) {}
 
   runApp(const AlexLmpApp());
 }
@@ -345,8 +347,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
           setState(() {
             _tracks = scanned;
-            if (_tracks.isNotEmpty) {
-              _audioHandler.setQueue(_tracks, 0);
+            if (_tracks.isNotEmpty && _audioHandler != null) {
+              _audioHandler!.setQueue(_tracks, 0);
             }
           });
         }
@@ -357,34 +359,36 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   void _loadAndPlayTrack(int index, {bool autoPlay = true}) {
     if (_tracks.isEmpty) return;
     setState(() => _currentIndex = index.clamp(0, _tracks.length - 1));
-    _audioHandler.setQueue(_tracks, _currentIndex);
-    if (!autoPlay) {
-      _audioHandler.pause();
+    if (_audioHandler != null) {
+      _audioHandler!.setQueue(_tracks, _currentIndex);
+      if (!autoPlay) {
+        _audioHandler!.pause();
+      }
     }
   }
 
   void _togglePlayPause(bool isPlaying) {
-    if (_tracks.isEmpty) return;
+    if (_tracks.isEmpty || _audioHandler == null) return;
     if (isPlaying) {
-      _audioHandler.pause();
+      _audioHandler!.pause();
     } else {
-      _audioHandler.play();
+      _audioHandler!.play();
     }
   }
 
   void _skipNext() {
-    if (_tracks.isEmpty) return;
+    if (_tracks.isEmpty || _audioHandler == null) return;
     if (_isShuffle && _tracks.length > 1) {
       final next = Random().nextInt(_tracks.length);
       _loadAndPlayTrack(next, autoPlay: true);
     } else {
-      _audioHandler.skipToNext();
+      _audioHandler!.skipToNext();
     }
   }
 
   void _skipPrevious() {
-    if (_tracks.isEmpty) return;
-    _audioHandler.skipToPrevious();
+    if (_tracks.isEmpty || _audioHandler == null) return;
+    _audioHandler!.skipToPrevious();
   }
 
   Future<void> _importOrScanMusic() async {
@@ -450,7 +454,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                       if (added.isNotEmpty && mounted) {
                         setState(() {
                           _tracks.insertAll(0, added);
-                          _audioHandler.setQueue(_tracks, 0);
+                          if (_audioHandler != null) {
+                            _audioHandler!.setQueue(_tracks, 0);
+                          }
                         });
                       }
                     }
@@ -835,8 +841,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   @override
   Widget build(BuildContext context) {
+    final stream = _audioHandler?.playbackState ?? Stream.value(PlaybackState(playing: false));
+
     return StreamBuilder<PlaybackState>(
-      stream: _audioHandler.playbackState,
+      stream: stream,
       builder: (context, snapshot) {
         final playbackState = snapshot.data;
         final bool isPlaying = playbackState?.playing ?? false;
@@ -1591,8 +1599,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       playerBg = const Color(0xFF200E20);
     }
 
+    final stream = _audioHandler?.playbackState ?? Stream.value(PlaybackState(playing: false));
+
     return StreamBuilder<PlaybackState>(
-      stream: _audioHandler.playbackState,
+      stream: stream,
       builder: (context, snapshot) {
         final playbackState = snapshot.data;
         final bool isPlaying = playbackState?.playing ?? false;
@@ -1802,7 +1812,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                               max: maxSeconds.toDouble(),
                               onChanged: (val) {
                                 final newPos = Duration(seconds: val.toInt());
-                                _audioHandler.seek(newPos);
+                                if (_audioHandler != null) {
+                                  _audioHandler!.seek(newPos);
+                                }
                                 setModalState(() {});
                               },
                             ),
@@ -1926,7 +1938,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                           onChanged: (v) {
                             setState(() => _playbackSpeed = v);
                             setModalState(() {});
-                            _audioHandler.setSpeed(v);
+                            if (_audioHandler != null) {
+                              _audioHandler!.setSpeed(v);
+                            }
                           },
                         ),
                       ),
@@ -1947,7 +1961,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                           onChanged: (v) {
                             setState(() => _playbackPitch = v);
                             setModalState(() {});
-                            _audioHandler.setPitch(v);
+                            if (_audioHandler != null) {
+                              _audioHandler!.setPitch(v);
+                            }
                           },
                         ),
                       ),
