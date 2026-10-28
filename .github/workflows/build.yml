@@ -1,4 +1,4 @@
-name: Build Archive Tune APK
+name: Build AlexLMP APK
 
 on:
   push:
@@ -29,15 +29,15 @@ jobs:
 
       - name: Create clean Flutter project scaffold
         run: |
-          flutter create --org com.archivetune.app --project-name archive_tune app_build
+          flutter create --org com.alexlmp.app --project-name alex_lmp app_build
 
       - name: Copy custom files into Flutter project
         run: |
           cp custom/pubspec.yaml app_build/pubspec.yaml
           cp custom/main.dart app_build/lib/main.dart
           cp custom/AndroidManifest.xml app_build/android/app/src/main/AndroidManifest.xml
-          mkdir -p app_build/android/app/src/main/kotlin/com/archivetune/app
-          cp custom/MainActivity.kt app_build/android/app/src/main/kotlin/com/archivetune/app/MainActivity.kt
+          mkdir -p app_build/android/app/src/main/kotlin/com/alexlmp/app
+          cp custom/MainActivity.kt app_build/android/app/src/main/kotlin/com/alexlmp/app/MainActivity.kt
 
       - name: Configure Gradle for Android SDK 35
         run: |
@@ -49,7 +49,7 @@ jobs:
           }
 
           android {
-              namespace = "com.archivetune.app"
+              namespace = "com.alexlmp.app"
               compileSdk = 35
               ndkVersion = flutter.ndkVersion
 
@@ -63,7 +63,7 @@ jobs:
               }
 
               defaultConfig {
-                  applicationId = "com.archivetune.app"
+                  applicationId = "com.alexlmp.app"
                   minSdk = 24
                   targetSdk = 35
                   versionCode = 1
@@ -93,5 +93,5 @@ jobs:
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ArchiveTune-Release-APK
+          name: AlexLMP-Release-APK
           path: app_build/build/app/outputs/flutter-apk/app-release.apk
