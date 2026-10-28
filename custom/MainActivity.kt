@@ -1,47 +1,28 @@
 package com.alexlmp.app
 
-import android.app.Service
-import android.content.Intent
+import android.content.ContentUris
 import android.os.Build
-import android.os.Bundle
-import android.os.IBinder
 import android.provider.MediaStore
-import android.view.WindowManager
-import androidx.core.view.WindowCompat
-import io.flutter.embedding.android.FlutterActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-class TaskKillService : Service() {
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
-        stopSelf()
-        android.os.Process.killProcess(android.os.Process.myPid())
-    }
-}
-
-class MainActivity : FlutterActivity() {
-    private val CHANNEL = "com.alexlmp.app/media"
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.attributes.layoutInDisplayCutoutMode =
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-        startService(Intent(this, TaskKillService::class.java))
-    }
+// IMPORTANT: this must extend AudioServiceActivity (not FlutterActivity),
+// otherwise audio_service can't attach to the Flutter engine and playback /
+// lock-screen controls silently fail.
+class MainActivity : AudioServiceActivity() {
+    private val channelName = "com.alexlmp.app/media"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "scanDeviceAudio" -> {
-                        result.success(scanLocalAudio())
+                        Thread {
+                            val songs = scanLocalAudio()
+                            runOnUiThread { result.success(songs) }
+                        }.start()
                     }
                     else -> result.notImplemented()
                 }
@@ -70,6 +51,7 @@ class MainActivity : FlutterActivity() {
 
         try {
             contentResolver.query(collection, projection, selection, null, sortOrder)?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
                 val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
                 val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
                 val albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
@@ -77,16 +59,20 @@ class MainActivity : FlutterActivity() {
                 val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
 
                 while (cursor.moveToNext()) {
-                    val path = cursor.getString(dataCol) ?: continue
                     val durationMs = cursor.getLong(durationCol)
                     if (durationMs < 3000) continue
+                    val id = cursor.getLong(idCol)
+                    // content:// URI works on every Android version (scoped storage safe)
+                    val uri = ContentUris.withAppendedId(collection, id).toString()
                     songs.add(
                         mapOf(
+                            "id" to id,
+                            "uri" to uri,
                             "title" to (cursor.getString(titleCol) ?: "Unknown Track"),
-                            "artist" to (cursor.getString(artistCol) ?: "Local Artist"),
+                            "artist" to (cursor.getString(artistCol) ?: "Unknown Artist"),
                             "album" to (cursor.getString(albumCol) ?: "Local Audio"),
                             "durationSeconds" to (durationMs / 1000).toInt(),
-                            "filePath" to path
+                            "filePath" to (cursor.getString(dataCol) ?: "")
                         )
                     )
                 }
