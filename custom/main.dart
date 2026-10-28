@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -11,7 +12,9 @@ import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+late MyAudioHandler _audioHandler;
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(
@@ -22,7 +25,18 @@ void main() {
       systemNavigationBarIconBrightness: Brightness.light,
     ),
   );
-  runApp(const ArchiveTuneApp());
+
+  _audioHandler = await AudioService.init(
+    builder: () => MyAudioHandler(),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.alexlmp.app.channel.audio',
+      androidNotificationChannelName: 'AlexLMP Music Playback',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: false,
+    ),
+  );
+
+  runApp(const AlexLmpApp());
 }
 
 class TrackItem {
@@ -36,7 +50,6 @@ class TrackItem {
   final int durationSeconds;
   List<Color> artColors;
   String artStyle;
-  final List<String> syncedLyrics;
   final Color playerBg;
   final Color playerSurface;
   final Color playerButtonBrown;
@@ -49,13 +62,12 @@ class TrackItem {
     required this.title,
     required this.artist,
     required this.album,
-    this.radioName = '"Archive" Radio',
+    this.radioName = '"AlexLMP" Radio',
     this.isExplicit = false,
     this.hasParentalBadge = false,
     required this.durationSeconds,
     required this.artColors,
     this.artStyle = 'vinyl_record',
-    required this.syncedLyrics,
     this.playerBg = const Color(0xFF20130E),
     this.playerSurface = const Color(0xFF362721),
     this.playerButtonBrown = const Color(0xFF5D3A28),
@@ -63,6 +75,17 @@ class TrackItem {
     this.playerOnAccent = const Color(0xFF4D1600),
     this.filePath,
   });
+
+  MediaItem toMediaItem() {
+    return MediaItem(
+      id: id,
+      title: title,
+      artist: artist,
+      album: album,
+      duration: Duration(seconds: durationSeconds),
+      artUri: Uri.parse('https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300'),
+    );
+  }
 }
 
 class PlaylistInfo {
@@ -77,13 +100,134 @@ class PlaylistInfo {
   });
 }
 
-class ArchiveTuneApp extends StatelessWidget {
-  const ArchiveTuneApp({super.key});
+class MyAudioHandler extends BaseAudioHandler with SeekHandler {
+  final AudioPlayer _player = AudioPlayer();
+  List<TrackItem> playlist = [];
+  int currentIndex = 0;
+
+  MyAudioHandler() {
+    _init();
+  }
+
+  Future<void> _init() async {
+    final session = await AudioSession.instance;
+    await session.configure(const AudioSessionConfiguration.music());
+
+    _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
+
+    _player.processingStateStream.listen((state) {
+      if (state == ProcessingState.completed) {
+        skipToNext();
+      }
+    });
+  }
+
+  PlaybackState _transformEvent(PlaybackEvent event) {
+    return PlaybackState(
+      controls: [
+        MediaControl.skipToPrevious,
+        if (_player.playing) MediaControl.pause else MediaControl.play,
+        MediaControl.skipToNext,
+        MediaControl.stop,
+      ],
+      systemActions: const {
+        MediaAction.seek,
+        MediaAction.seekForward,
+        MediaAction.seekBackward,
+      },
+      androidCompactActionIndices: const [0, 1, 2],
+      processingState: const {
+        ProcessingState.idle: AudioProcessingState.idle,
+        ProcessingState.loading: AudioProcessingState.loading,
+        ProcessingState.buffering: AudioProcessingState.buffering,
+        ProcessingState.ready: AudioProcessingState.ready,
+        ProcessingState.completed: AudioProcessingState.completed,
+      }[_player.processingState]!,
+      playing: _player.playing,
+      updatePosition: _player.position,
+      bufferedPosition: _player.bufferedPosition,
+      speed: _player.speed,
+      queueIndex: currentIndex,
+    );
+  }
+
+  void setQueue(List<TrackItem> items, int index) {
+    playlist = items;
+    currentIndex = index;
+    if (playlist.isNotEmpty) {
+      playTrack(currentIndex);
+    }
+  }
+
+  Future<void> playTrack(int index) async {
+    if (index < 0 || index >= playlist.length) return;
+    currentIndex = index;
+    final track = playlist[currentIndex];
+    mediaItem.add(track.toMediaItem());
+
+    try {
+      if (track.filePath != null && track.filePath!.isNotEmpty && File(track.filePath!).existsSync()) {
+        await _player.setFilePath(track.filePath!);
+      } else {
+        await _player.setUrl('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
+      }
+      play();
+    } catch (_) {
+      play();
+    }
+  }
+
+  @override
+  Future<void> play() async => _player.play();
+
+  @override
+  Future<void> pause() async => _player.pause();
+
+  @override
+  Future<void> seek(Duration position) => _player.seek(position);
+
+  @override
+  Future<void> skipToNext() async {
+    if (playlist.isEmpty) return;
+    currentIndex = (currentIndex + 1) % playlist.length;
+    await playTrack(currentIndex);
+  }
+
+  @override
+  Future<void> skipToPrevious() async {
+    if (playlist.isEmpty) return;
+    if (_player.position.inSeconds > 4) {
+      seek(Duration.zero);
+      return;
+    }
+    currentIndex = (currentIndex - 1 + playlist.length) % playlist.length;
+    await playTrack(currentIndex);
+  }
+
+  @override
+  Future<void> stop() async {
+    await _player.stop();
+    await super.stop();
+  }
+
+  Future<void> setSpeed(double speed) async {
+    await _player.setSpeed(speed);
+  }
+
+  Future<void> setPitch(double pitch) async {
+    try {
+      await _player.setPitch(pitch);
+    } catch (_) {}
+  }
+}
+
+class AlexLmpApp extends StatelessWidget {
+  const AlexLmpApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Archive Tune',
+      title: 'AlexLMP',
       debugShowCheckedModeBanner: false,
       themeMode: ThemeMode.dark,
       darkTheme: ThemeData(
@@ -99,28 +243,26 @@ class ArchiveTuneApp extends StatelessWidget {
         ),
         fontFamily: 'Roboto',
       ),
-      home: const ArchiveTuneRoot(),
+      home: const AlexLmpRoot(),
     );
   }
 }
 
-class ArchiveTuneRoot extends StatefulWidget {
-  const ArchiveTuneRoot({super.key});
+class AlexLmpRoot extends StatefulWidget {
+  const AlexLmpRoot({super.key});
 
   @override
-  State<ArchiveTuneRoot> createState() => _ArchiveTuneRootState();
+  State<AlexLmpRoot> createState() => _AlexLmpRootState();
 }
 
-class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
-  static const MethodChannel _mediaChannel = MethodChannel('com.archivetune.app/media');
-  final AudioPlayer _audioPlayer = AudioPlayer();
+class _AlexLmpRootState extends State<AlexLmpRoot> {
+  static const MethodChannel _mediaChannel = MethodChannel('com.alexlmp.app/media');
 
   List<TrackItem> _tracks = [];
   int _currentIndex = 0;
   int _selectedBottomTab = 0; // 0 = Home, 1 = Mix, 2 = Library
   String _selectedChip = 'All';
 
-  bool _isPlaying = false;
   bool _isShuffle = false;
   int _repeatMode = 0; // 0: off, 1: all, 2: one
   double _playbackSpeed = 1.0;
@@ -128,15 +270,11 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
   bool _stopOnTaskClear = true;
   String _currentThemeName = 'Classic Blue';
 
-  Duration _position = Duration.zero;
-  Duration _duration = const Duration(seconds: 180);
-  Timer? _uiProgressTimer;
-
   final Set<String> _likedIds = {};
   final Set<String> _savedIds = {};
 
   final PlaylistInfo _primaryPlaylist = PlaylistInfo(
-    name: 'Your Archive Mixes',
+    name: 'Your AlexLMP Mixes',
     artStyle: 'equalizer_bars',
     colors: [const Color(0xFF243B4A), const Color(0xFF8CD0F0), const Color(0xFF111416)],
   );
@@ -147,11 +285,10 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
         id: 'placeholder',
         title: 'No audio found',
         artist: 'Import or Scan local files',
-        album: 'Archive Tune',
+        album: 'AlexLMP',
         durationSeconds: 180,
         artColors: const [Color(0xFF1C2124), Color(0xFF2E373D)],
         artStyle: 'vinyl_record',
-        syncedLyrics: const ['Import local tracks or scan storage to begin'],
       );
     }
     return _tracks[_currentIndex.clamp(0, _tracks.length - 1)];
@@ -161,7 +298,6 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
   void initState() {
     super.initState();
     _loadPreferences();
-    _initAudio();
     _autoScanStorage();
   }
 
@@ -171,38 +307,6 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
       _stopOnTaskClear = prefs.getBool('stop_on_task_clear') ?? true;
       _currentThemeName = prefs.getString('theme_name') ?? 'Classic Blue';
     });
-  }
-
-  Future<void> _initAudio() async {
-    try {
-      final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration.music());
-    } catch (_) {}
-
-    _audioPlayer.positionStream.listen((pos) {
-      if (_isPlaying && mounted) {
-        setState(() => _position = pos);
-      }
-    });
-
-    _audioPlayer.durationStream.listen((dur) {
-      if (dur != null && mounted) {
-        setState(() => _duration = dur);
-      }
-    });
-
-    _audioPlayer.playerStateStream.listen((state) {
-      if (state.processingState == ProcessingState.completed) {
-        _skipNext();
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _uiProgressTimer?.cancel();
-    _audioPlayer.dispose();
-    super.dispose();
   }
 
   Future<void> _autoScanStorage() async {
@@ -235,11 +339,6 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
               durationSeconds: (map['durationSeconds'] as int?) ?? 180,
               artColors: colorPalettes[idx % colorPalettes.length],
               artStyle: artStyles[idx % artStyles.length],
-              syncedLyrics: [
-                'Playing local lossless audio track',
-                'Indexed via Archive Tune engine',
-                'Custom procedurally generated visuals',
-              ],
               filePath: map['filePath']?.toString(),
             );
           }).toList();
@@ -247,103 +346,13 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
           setState(() {
             _tracks = scanned;
             if (_tracks.isNotEmpty) {
-              _loadAndPlayTrack(0, autoPlay: false);
+              _audioHandler.setQueue(_tracks, 0);
+              _audioHandler.pause();
             }
           });
         }
       } catch (_) {}
     }
-  }
-
-  Future<void> _loadAndPlayTrack(int index, {bool autoPlay = true}) async {
-    if (_tracks.isEmpty) return;
-    final clampedIndex = index.clamp(0, _tracks.length - 1);
-    final track = _tracks[clampedIndex];
-
-    setState(() {
-      _currentIndex = clampedIndex;
-      _duration = Duration(seconds: track.durationSeconds > 0 ? track.durationSeconds : 180);
-      _position = Duration.zero;
-    });
-
-    try {
-      if (track.filePath != null && track.filePath!.isNotEmpty && File(track.filePath!).existsSync()) {
-        await _audioPlayer.setFilePath(track.filePath!);
-      } else {
-        await _audioPlayer.setUrl('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
-      }
-      await _audioPlayer.setSpeed(_playbackSpeed);
-      if (autoPlay) {
-        _startPlayback();
-      }
-    } catch (_) {
-      if (autoPlay) {
-        _startPlayback();
-      }
-    }
-  }
-
-  void _startPlayback() {
-    if (_tracks.isEmpty) return;
-    setState(() => _isPlaying = true);
-    _audioPlayer.play();
-    _uiProgressTimer?.cancel();
-    _uiProgressTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || !_isPlaying) return;
-      setState(() {
-        final nextSec = _position.inSeconds + 1;
-        if (nextSec >= _duration.inSeconds) {
-          if (_repeatMode == 2) {
-            _position = Duration.zero;
-          } else {
-            _skipNext();
-          }
-        } else {
-          _position = Duration(seconds: nextSec);
-        }
-      });
-    });
-  }
-
-  void _pausePlayback() {
-    setState(() => _isPlaying = false);
-    _audioPlayer.pause();
-    _uiProgressTimer?.cancel();
-  }
-
-  void _togglePlayPause() {
-    if (_tracks.isEmpty) return;
-    if (_isPlaying) {
-      _pausePlayback();
-    } else {
-      if (_audioPlayer.audioSource == null) {
-        _loadAndPlayTrack(_currentIndex, autoPlay: true);
-      } else {
-        _startPlayback();
-      }
-    }
-  }
-
-  void _skipNext() {
-    if (_tracks.isEmpty) return;
-    if (_isShuffle && _tracks.length > 1) {
-      final next = Random().nextInt(_tracks.length);
-      _loadAndPlayTrack(next, autoPlay: _isPlaying);
-    } else {
-      final next = (_currentIndex + 1) % _tracks.length;
-      _loadAndPlayTrack(next, autoPlay: _isPlaying);
-    }
-  }
-
-  void _skipPrevious() {
-    if (_tracks.isEmpty) return;
-    if (_position.inSeconds > 4) {
-      setState(() => _position = Duration.zero);
-      _audioPlayer.seek(Duration.zero);
-      return;
-    }
-    final prev = (_currentIndex - 1 + _tracks.length) % _tracks.length;
-    _loadAndPlayTrack(prev, autoPlay: _isPlaying);
   }
 
   Future<void> _importOrScanMusic() async {
@@ -362,7 +371,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Add Music to Archive Tune',
+                  'Add Music to AlexLMP',
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
@@ -402,7 +411,6 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                             durationSeconds: 180,
                             artColors: [const Color(0xFF3E1C0C), const Color(0xFFD96B38), const Color(0xFF1A0F0A)],
                             artStyle: artStyles[i % artStyles.length],
-                            syncedLyrics: ['Custom imported local audio file'],
                             filePath: file.path,
                           ),
                         );
@@ -410,8 +418,8 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                       if (added.isNotEmpty && mounted) {
                         setState(() {
                           _tracks.insertAll(0, added);
+                          _audioHandler.setQueue(_tracks, 0);
                         });
-                        _loadAndPlayTrack(0, autoPlay: true);
                       }
                     }
                   },
@@ -542,7 +550,8 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                                     ),
                                     onTap: () {
                                       Navigator.pop(ctx);
-                                      _loadAndPlayTrack(masterIndex, autoPlay: true);
+                                      setState(() => _currentIndex = masterIndex);
+                                      _audioHandler.setQueue(_tracks, masterIndex);
                                       _openFullScreenPlayer();
                                     },
                                   );
@@ -578,7 +587,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Archive Tune Settings',
+                      'AlexLMP Settings',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w700,
@@ -698,9 +707,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                     DropdownMenuItem(value: 'neon_vinyl', child: Text('Neon Vinyl')),
                   ],
                   onChanged: (val) {
-                    if (val != null) {
-                      selectedStyle = val;
-                    }
+                    if (val != null) selectedStyle = val;
                   },
                 ),
               ],
@@ -789,242 +796,255 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
     );
   }
 
-  String _formatDuration(Duration d) {
-    final mins = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final secs = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$mins:$secs';
-  }
-
   @override
   Widget build(BuildContext context) {
-    final currentTrack = _currentTrack;
-    final progress = _duration.inMilliseconds > 0
-        ? (_position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0)
-        : 0.0;
+    return StreamBuilder<PlaybackState>(
+      stream: _audioHandler.playbackState,
+      builder: (context, snapshot) {
+        final playbackState = snapshot.data;
+        final bool isPlaying = playbackState?.playing ?? false;
+        final Duration position = playbackState?.position ?? Duration.zero;
+        final int queueIndex = playbackState?.queueIndex ?? _currentIndex;
+        if (queueIndex >= 0 && queueIndex < _tracks.length && queueIndex != _currentIndex) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _currentIndex = queueIndex);
+          });
+        }
+        final currentTrack = _currentTrack;
+        final duration = Duration(seconds: currentTrack.durationSeconds > 0 ? currentTrack.durationSeconds : 180);
+        final progress = duration.inMilliseconds > 0
+            ? (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
+            : 0.0;
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF111416),
-      body: Stack(
-        children: [
-          SafeArea(
-            bottom: false,
-            child: IndexedStack(
-              index: _selectedBottomTab,
-              children: [
-                _buildHomeTab(),
-                _buildMixTab(),
-                _buildLibraryTab(),
-              ],
-            ),
-          ),
-          Positioned(
-            left: 12,
-            right: 12,
-            bottom: MediaQuery.of(context).padding.bottom + 8,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                GestureDetector(
-                  onTap: _openFullScreenPlayer,
-                  onHorizontalDragEnd: (details) {
-                    if ((details.primaryVelocity ?? 0) < -200) {
-                      _skipNext();
-                    } else if ((details.primaryVelocity ?? 0) > 200) {
-                      _skipPrevious();
-                    }
-                  },
-                  child: Container(
-                    height: 66,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1C2124),
-                      borderRadius: BorderRadius.circular(34),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.45),
-                          blurRadius: 16,
-                          offset: const Offset(0, 6),
+        return Scaffold(
+          backgroundColor: const Color(0xFF111416),
+          body: Stack(
+            children: [
+              SafeArea(
+                bottom: false,
+                child: IndexedStack(
+                  index: _selectedBottomTab,
+                  children: [
+                    _buildHomeTab(isPlaying),
+                    _buildMixTab(),
+                    _buildLibraryTab(),
+                  ],
+                ),
+              ),
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: MediaQuery.of(context).padding.bottom + 8,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SquishyGesture(
+                      onTap: _openFullScreenPlayer,
+                      child: Container(
+                        height: 66,
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1C2124),
+                          borderRadius: BorderRadius.circular(34),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.45),
+                              blurRadius: 16,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 46,
-                          height: 46,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              SizedBox(
-                                width: 46,
-                                height: 46,
-                                child: CircularProgressIndicator(
-                                  value: progress,
-                                  strokeWidth: 2.6,
-                                  backgroundColor: const Color(0xFF2E373D),
-                                  valueColor: const AlwaysStoppedAnimation<Color>(
-                                    Color(0xFF8AD0EE),
-                                  ),
-                                ),
-                              ),
-                              ClipOval(
-                                child: SizedBox(
-                                  width: 36,
-                                  height: 36,
-                                  child: CustomAlbumArtwork(
-                                    track: currentTrack,
-                                    showParentalBadge: false,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                currentTrack.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 3),
-                              Row(
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 46,
+                              height: 46,
+                              child: Stack(
+                                alignment: Alignment.center,
                                 children: [
-                                  if (currentTrack.isExplicit) ...[
-                                    const _ExplicitBadge(),
-                                    const SizedBox(width: 6),
-                                  ],
-                                  Expanded(
-                                    child: Text(
-                                      currentTrack.artist,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Color(0xFFB3B9BE),
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w500,
+                                  SizedBox(
+                                    width: 46,
+                                    height: 46,
+                                    child: CircularProgressIndicator(
+                                      value: progress,
+                                      strokeWidth: 2.6,
+                                      backgroundColor: const Color(0xFF2E373D),
+                                      valueColor: const AlwaysStoppedAnimation<Color>(
+                                        Color(0xFF8AD0EE),
+                                      ),
+                                    ),
+                                  ),
+                                  ClipOval(
+                                    child: SizedBox(
+                                      width: 36,
+                                      height: 36,
+                                      child: CustomAlbumArtwork(
+                                        track: currentTrack,
+                                        showParentalBadge: false,
                                       ),
                                     ),
                                   ),
                                 ],
                               ),
-                            ],
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    currentTrack.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Row(
+                                    children: [
+                                      if (currentTrack.isExplicit) ...[
+                                        const _ExplicitBadge(),
+                                        const SizedBox(width: 6),
+                                      ],
+                                      Expanded(
+                                        child: Text(
+                                          currentTrack.artist,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: Color(0xFFB3B9BE),
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            SquishyGesture(
+                              onTap: () {
+                                setState(() {
+                                  if (_likedIds.contains(currentTrack.id)) {
+                                    _likedIds.remove(currentTrack.id);
+                                  } else {
+                                    _likedIds.add(currentTrack.id);
+                                  }
+                                });
+                              },
+                              child: Container(
+                                width: 44,
+                                height: 44,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF283740),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  _likedIds.contains(currentTrack.id)
+                                      ? Icons.favorite_rounded
+                                      : Icons.favorite_border_rounded,
+                                  color: const Color(0xFFD5DCE0),
+                                  size: 21,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            SquishyGesture(
+                              onTap: () {
+                                if (_tracks.isEmpty) return;
+                                if (isPlaying) {
+                                  _audioHandler.pause();
+                                } else {
+                                  if (_audioHandler._player.audioSource == null) {
+                                    _audioHandler.setQueue(_tracks, _currentIndex);
+                                  } else {
+                                    _audioHandler.play();
+                                  }
+                                }
+                              },
+                              child: Container(
+                                width: 46,
+                                height: 46,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF8AD0EE),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                                  color: const Color(0xFF062938),
+                                  size: 26,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            height: 68,
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1C2124),
+                              borderRadius: BorderRadius.circular(36),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.45),
+                                  blurRadius: 14,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                _buildNavTab(index: 0, icon: Icons.home_rounded, label: 'Home'),
+                                _buildNavTab(index: 1, icon: Icons.sensors_rounded, label: 'Mix'),
+                                _buildNavTab(index: 2, icon: Icons.library_music_rounded, label: 'Library'),
+                              ],
+                            ),
                           ),
                         ),
-                        GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              if (_likedIds.contains(currentTrack.id)) {
-                                _likedIds.remove(currentTrack.id);
-                              } else {
-                                _likedIds.add(currentTrack.id);
-                              }
-                            });
-                          },
+                        const SizedBox(width: 10),
+                        SquishyGesture(
+                          onTap: _openSearchSheet,
                           child: Container(
-                            width: 44,
-                            height: 44,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF283740),
+                            width: 64,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1C2124),
                               shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.45),
+                                  blurRadius: 14,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
                             ),
-                            child: Icon(
-                              _likedIds.contains(currentTrack.id)
-                                  ? Icons.favorite_rounded
-                                  : Icons.favorite_border_rounded,
-                              color: const Color(0xFFD5DCE0),
-                              size: 21,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        GestureDetector(
-                          onTap: _togglePlayPause,
-                          child: Container(
-                            width: 46,
-                            height: 46,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF8AD0EE),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                              color: const Color(0xFF062938),
+                            child: const Icon(
+                              Icons.search_rounded,
+                              color: Color(0xFFD5DCE0),
                               size: 26,
                             ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        height: 68,
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1C2124),
-                          borderRadius: BorderRadius.circular(36),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.45),
-                              blurRadius: 14,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            _buildNavTab(index: 0, icon: Icons.home_rounded, label: 'Home'),
-                            _buildNavTab(index: 1, icon: Icons.sensors_rounded, label: 'Mix'),
-                            _buildNavTab(index: 2, icon: Icons.library_music_rounded, label: 'Library'),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    GestureDetector(
-                      onTap: _openSearchSheet,
-                      child: Container(
-                        width: 64,
-                        height: 64,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1C2124),
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.45),
-                              blurRadius: 14,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.search_rounded,
-                          color: Color(0xFFD5DCE0),
-                          size: 26,
-                        ),
-                      ),
-                    ),
                   ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -1064,7 +1084,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
     );
   }
 
-  Widget _buildHomeTab() {
+  Widget _buildHomeTab(bool isPlaying) {
     if (_tracks.isEmpty) {
       return Center(
         child: Padding(
@@ -1165,7 +1185,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                 ),
               ),
               const Spacer(),
-              GestureDetector(
+              SquishyGesture(
                 onTap: _importOrScanMusic,
                 child: Container(
                   width: 42,
@@ -1179,7 +1199,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                 ),
               ),
               const SizedBox(width: 12),
-              GestureDetector(
+              SquishyGesture(
                 onTap: _openSettingsSheet,
                 child: const Icon(Icons.settings_rounded, color: Colors.white, size: 26),
               ),
@@ -1220,7 +1240,8 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
               ),
               GestureDetector(
                 onTap: () {
-                  _loadAndPlayTrack(0, autoPlay: true);
+                  setState(() => _currentIndex = 0);
+                  _audioHandler.setQueue(_tracks, 0);
                   _openFullScreenPlayer();
                 },
                 child: const Padding(
@@ -1302,7 +1323,8 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
               final masterIdx = _tracks.indexOf(track);
               return GestureDetector(
                 onTap: () {
-                  _loadAndPlayTrack(masterIdx, autoPlay: true);
+                  setState(() => _currentIndex = masterIdx);
+                  _audioHandler.setQueue(_tracks, masterIdx);
                   _openFullScreenPlayer();
                 },
                 child: SizedBox(
@@ -1357,7 +1379,8 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
     final masterIdx = _tracks.indexOf(track);
     return InkWell(
       onTap: () {
-        _loadAndPlayTrack(masterIdx, autoPlay: true);
+        setState(() => _currentIndex = masterIdx);
+        _audioHandler.setQueue(_tracks, masterIdx);
         _openFullScreenPlayer();
       },
       borderRadius: BorderRadius.circular(10),
@@ -1481,7 +1504,8 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                 child: Icon(Icons.play_arrow_rounded, color: Color(0xFF062938)),
               ),
               onTap: () {
-                _loadAndPlayTrack(i, autoPlay: true);
+                setState(() => _currentIndex = i);
+                _audioHandler.setQueue(_tracks, i);
                 _openFullScreenPlayer();
               },
             ),
@@ -1533,7 +1557,6 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
     final maxSeconds = max(track.durationSeconds, 1);
     final currentSeconds = _position.inSeconds.clamp(0, maxSeconds);
 
-    // Apply color theme dynamically
     Color accentPeach = const Color(0xFFFFB59C);
     Color playerBg = track.playerBg;
     if (_currentThemeName == 'Emerald') {
@@ -1559,7 +1582,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  GestureDetector(
+                  SquishyGesture(
                     onTap: () => Navigator.of(context).pop(),
                     child: Container(
                       width: 46,
@@ -1593,7 +1616,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                       ),
                     ],
                   ),
-                  GestureDetector(
+                  SquishyGesture(
                     onTap: () => _showEditTrackDialog(track, setModalState),
                     child: Container(
                       width: 46,
@@ -1634,18 +1657,6 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                 ),
               ),
               const Spacer(flex: 2),
-              Text(
-                track.syncedLyrics.isNotEmpty ? track.syncedLyrics.first : track.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 17.5,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.2,
-                ),
-              ),
-              const SizedBox(height: 18),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
@@ -1688,7 +1699,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                       ],
                     ),
                   ),
-                  GestureDetector(
+                  SquishyGesture(
                     onTap: () {
                       setState(() {
                         if (_savedIds.contains(track.id)) {
@@ -1714,7 +1725,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  GestureDetector(
+                  SquishyGesture(
                     onTap: () {
                       setState(() {
                         if (_likedIds.contains(track.id)) {
@@ -1734,7 +1745,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                       ),
                       child: Icon(
                         _likedIds.contains(track.id) ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                        color: const Color(0xFFEAE0DC),
+                        color: Color(0xFFEAE0DC),
                         size: 23,
                       ),
                     ),
@@ -1764,7 +1775,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                             final newPos = Duration(seconds: val.toInt());
                             setState(() => _position = newPos);
                             setModalState(() {});
-                            _audioPlayer.seek(newPos);
+                            _audioHandler.seek(newPos);
                           },
                         ),
                         Container(
@@ -1806,7 +1817,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
               const SizedBox(height: 18),
               Row(
                 children: [
-                  GestureDetector(
+                  SquishyGesture(
                     onTap: () {
                       _skipPrevious();
                       setModalState(() {});
@@ -1827,7 +1838,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: GestureDetector(
+                    child: SquishyGesture(
                       onTap: () {
                         _togglePlayPause();
                         setModalState(() {});
@@ -1847,7 +1858,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  GestureDetector(
+                  SquishyGesture(
                     onTap: () {
                       _skipNext();
                       setModalState(() {});
@@ -1868,7 +1879,54 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                   ),
                 ],
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
+              // Speed & Pitch controls
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Speed: ${_playbackSpeed.toStringAsFixed(1)}x',
+                      style: const TextStyle(color: Color(0xFFC8BDB7), fontSize: 12),
+                    ),
+                  ),
+                  Expanded(
+                    child: Slider(
+                      value: _playbackSpeed,
+                      min: 0.5,
+                      max: 2.0,
+                      divisions: 15,
+                      activeColor: accentPeach,
+                      onChanged: (v) {
+                        setState(() => _playbackSpeed = v);
+                        setModalState(() {});
+                        _audioHandler.setSpeed(v);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Pitch: ${_playbackPitch.toStringAsFixed(1)}x',
+                      style: const TextStyle(color: Color(0xFFC8BDB7), fontSize: 12),
+                    ),
+                  ),
+                  Expanded(
+                    child: Slider(
+                      value: _playbackPitch,
+                      min: 0.5,
+                      max: 1.5,
+                      divisions: 10,
+                      activeColor: accentPeach,
+                      onChanged: (v) {
+                        setState(() => _playbackPitch = v);
+                        setModalState(() {});
+                        _audioHandler.setPitch(v);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
               ClipRRect(
                 borderRadius: BorderRadius.circular(26),
                 child: SizedBox(
@@ -1951,7 +2009,7 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
     bool isLast = false,
   }) {
     return Expanded(
-      child: GestureDetector(
+      child: SquishyGesture(
         onTap: onTap,
         child: Container(
           height: 52,
@@ -2085,26 +2143,70 @@ class _ArchiveTuneRootState extends State<ArchiveTuneRoot> {
                 ),
               ),
               const SizedBox(height: 16),
-              Expanded(
-                child: ListView.separated(
-                  itemCount: track.syncedLyrics.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 16),
-                  itemBuilder: (_, i) {
-                    return Text(
-                      track.syncedLyrics[i],
-                      style: TextStyle(
-                        color: i == 0 ? Colors.white : Colors.white60,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    );
-                  },
+              const Expanded(
+                child: Center(
+                  child: Text(
+                    'No lyrics available for this local file.',
+                    style: TextStyle(color: Colors.white60, fontSize: 16),
+                  ),
                 ),
               ),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+class SquishyGesture extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onTap;
+
+  const SquishyGesture({super.key, required this.child, required this.onTap});
+
+  @override
+  State<SquishyGesture> createState() => _SquishyGestureState();
+}
+
+class _SquishyGestureState extends State<SquishyGesture> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 100),
+      lowerBound: 0.0,
+      upperBound: 0.05,
+    );
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.95).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => _controller.forward(),
+      onTapUp: (_) {
+        _controller.reverse();
+        widget.onTap();
+      },
+      onTapCancel: () => _controller.reverse(),
+      child: ScaleTransition(
+        scale: _scaleAnimation,
+        child: widget.child,
+      ),
     );
   }
 }
