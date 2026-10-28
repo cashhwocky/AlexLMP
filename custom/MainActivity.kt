@@ -1,4 +1,4 @@
-package com.archivetune.app
+package com.alexlmp.app
 
 import android.app.Service
 import android.content.Intent
@@ -23,7 +23,7 @@ class TaskKillService : Service() {
 }
 
 class MainActivity : FlutterActivity() {
-    private val CHANNEL = "com.archivetune.app/media"
+    private val CHANNEL = "com.alexlmp.app/media"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
