@@ -347,12 +347,44 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             _tracks = scanned;
             if (_tracks.isNotEmpty) {
               _audioHandler.setQueue(_tracks, 0);
-              _audioHandler.pause();
             }
           });
         }
       } catch (_) {}
     }
+  }
+
+  void _loadAndPlayTrack(int index, {bool autoPlay = true}) {
+    if (_tracks.isEmpty) return;
+    setState(() => _currentIndex = index.clamp(0, _tracks.length - 1));
+    _audioHandler.setQueue(_tracks, _currentIndex);
+    if (!autoPlay) {
+      _audioHandler.pause();
+    }
+  }
+
+  void _togglePlayPause(bool isPlaying) {
+    if (_tracks.isEmpty) return;
+    if (isPlaying) {
+      _audioHandler.pause();
+    } else {
+      _audioHandler.play();
+    }
+  }
+
+  void _skipNext() {
+    if (_tracks.isEmpty) return;
+    if (_isShuffle && _tracks.length > 1) {
+      final next = Random().nextInt(_tracks.length);
+      _loadAndPlayTrack(next, autoPlay: true);
+    } else {
+      _audioHandler.skipToNext();
+    }
+  }
+
+  void _skipPrevious() {
+    if (_tracks.isEmpty) return;
+    _audioHandler.skipToPrevious();
   }
 
   Future<void> _importOrScanMusic() async {
@@ -550,8 +582,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                                     ),
                                     onTap: () {
                                       Navigator.pop(ctx);
-                                      setState(() => _currentIndex = masterIndex);
-                                      _audioHandler.setQueue(_tracks, masterIndex);
+                                      _loadAndPlayTrack(masterIndex, autoPlay: true);
                                       _openFullScreenPlayer();
                                     },
                                   );
@@ -796,6 +827,12 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
+  String _formatDuration(Duration d) {
+    final mins = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final secs = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$mins:$secs';
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<PlaybackState>(
@@ -955,18 +992,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                             ),
                             const SizedBox(width: 8),
                             SquishyGesture(
-                              onTap: () {
-                                if (_tracks.isEmpty) return;
-                                if (isPlaying) {
-                                  _audioHandler.pause();
-                                } else {
-                                  if (_audioHandler._player.audioSource == null) {
-                                    _audioHandler.setQueue(_tracks, _currentIndex);
-                                  } else {
-                                    _audioHandler.play();
-                                  }
-                                }
-                              },
+                              onTap: () => _togglePlayPause(isPlaying),
                               child: Container(
                                 width: 46,
                                 height: 46,
@@ -1240,8 +1266,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               ),
               GestureDetector(
                 onTap: () {
-                  setState(() => _currentIndex = 0);
-                  _audioHandler.setQueue(_tracks, 0);
+                  _loadAndPlayTrack(0, autoPlay: true);
                   _openFullScreenPlayer();
                 },
                 child: const Padding(
@@ -1323,8 +1348,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               final masterIdx = _tracks.indexOf(track);
               return GestureDetector(
                 onTap: () {
-                  setState(() => _currentIndex = masterIdx);
-                  _audioHandler.setQueue(_tracks, masterIdx);
+                  _loadAndPlayTrack(masterIdx, autoPlay: true);
                   _openFullScreenPlayer();
                 },
                 child: SizedBox(
@@ -1379,8 +1403,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     final masterIdx = _tracks.indexOf(track);
     return InkWell(
       onTap: () {
-        setState(() => _currentIndex = masterIdx);
-        _audioHandler.setQueue(_tracks, masterIdx);
+        _loadAndPlayTrack(masterIdx, autoPlay: true);
         _openFullScreenPlayer();
       },
       borderRadius: BorderRadius.circular(10),
@@ -1504,8 +1527,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 child: Icon(Icons.play_arrow_rounded, color: Color(0xFF062938)),
               ),
               onTap: () {
-                setState(() => _currentIndex = i);
-                _audioHandler.setQueue(_tracks, i);
+                _loadAndPlayTrack(i, autoPlay: true);
                 _openFullScreenPlayer();
               },
             ),
@@ -1555,7 +1577,6 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   Widget _buildNowPlayingScreen(StateSetter setModalState) {
     final track = _currentTrack;
     final maxSeconds = max(track.durationSeconds, 1);
-    final currentSeconds = _position.inSeconds.clamp(0, maxSeconds);
 
     Color accentPeach = const Color(0xFFFFB59C);
     Color playerBg = track.playerBg;
@@ -1570,434 +1591,442 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       playerBg = const Color(0xFF200E20);
     }
 
-    return Scaffold(
-      backgroundColor: playerBg,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 22),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return StreamBuilder<PlaybackState>(
+      stream: _audioHandler.playbackState,
+      builder: (context, snapshot) {
+        final playbackState = snapshot.data;
+        final bool isPlaying = playbackState?.playing ?? false;
+        final Duration position = playbackState?.position ?? Duration.zero;
+        final currentSeconds = position.inSeconds.clamp(0, maxSeconds);
+
+        return Scaffold(
+          backgroundColor: playerBg,
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 22),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SquishyGesture(
-                    onTap: () => Navigator.of(context).pop(),
-                    child: Container(
-                      width: 46,
-                      height: 46,
-                      decoration: BoxDecoration(
-                        color: track.playerSurface,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white, size: 28),
-                    ),
-                  ),
-                  Column(
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        'NOW PLAYING',
-                        style: TextStyle(
-                          color: Color(0xFFE5DDD9),
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.8,
+                      SquishyGesture(
+                        onTap: () => Navigator.of(context).pop(),
+                        child: Container(
+                          width: 46,
+                          height: 46,
+                          decoration: BoxDecoration(
+                            color: track.playerSurface,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white, size: 28),
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        track.radioName,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16.5,
-                          fontWeight: FontWeight.w800,
+                      Column(
+                        children: [
+                          const Text(
+                            'NOW PLAYING',
+                            style: TextStyle(
+                              color: Color(0xFFE5DDD9),
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.8,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            track.radioName,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SquishyGesture(
+                        onTap: () => _showEditTrackDialog(track, setModalState),
+                        child: Container(
+                          width: 46,
+                          height: 46,
+                          decoration: BoxDecoration(
+                            color: track.playerSurface,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: const Icon(Icons.edit_rounded, color: Colors.white, size: 22),
                         ),
                       ),
                     ],
                   ),
-                  SquishyGesture(
-                    onTap: () => _showEditTrackDialog(track, setModalState),
-                    child: Container(
-                      width: 46,
-                      height: 46,
-                      decoration: BoxDecoration(
-                        color: track.playerSurface,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: const Icon(Icons.edit_rounded, color: Colors.white, size: 22),
-                    ),
-                  ),
-                ],
-              ),
-              const Spacer(flex: 2),
-              Center(
-                child: AspectRatio(
-                  aspectRatio: 1.0,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.45),
-                          blurRadius: 24,
-                          offset: const Offset(0, 12),
+                  const Spacer(flex: 2),
+                  Center(
+                    child: AspectRatio(
+                      aspectRatio: 1.0,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(24),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.45),
+                              blurRadius: 24,
+                              offset: const Offset(0, 12),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(24),
-                      child: CustomAlbumArtwork(
-                        track: track,
-                        showParentalBadge: track.hasParentalBadge,
-                        largeBadge: true,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const Spacer(flex: 2),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          track.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.4,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(24),
+                          child: CustomAlbumArtwork(
+                            track: track,
+                            showParentalBadge: track.hasParentalBadge,
+                            largeBadge: true,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Row(
+                      ),
+                    ),
+                  ),
+                  const Spacer(flex: 2),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            if (track.isExplicit) ...[
-                              const _ExplicitBadge(),
-                              const SizedBox(width: 7),
-                            ],
-                            Expanded(
-                              child: Text(
-                                track.artist,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFFC8BDB7),
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w500,
+                            Text(
+                              track.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 24,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.4,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                if (track.isExplicit) ...[
+                                  const _ExplicitBadge(),
+                                  const SizedBox(width: 7),
+                                ],
+                                Expanded(
+                                  child: Text(
+                                    track.artist,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Color(0xFFC8BDB7),
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
                                 ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      SquishyGesture(
+                        onTap: () {
+                          setState(() {
+                            if (_savedIds.contains(track.id)) {
+                              _savedIds.remove(track.id);
+                            } else {
+                              _savedIds.add(track.id);
+                            }
+                          });
+                          setModalState(() {});
+                        },
+                        child: Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: track.playerSurface,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.add_circle_outline_rounded,
+                            color: Color(0xFFEAE0DC),
+                            size: 24,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      SquishyGesture(
+                        onTap: () {
+                          setState(() {
+                            if (_likedIds.contains(track.id)) {
+                              _likedIds.remove(track.id);
+                            } else {
+                              _likedIds.add(track.id);
+                            }
+                          });
+                          setModalState(() {});
+                        },
+                        child: Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: track.playerSurface,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            _likedIds.contains(track.id) ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                            color: const Color(0xFFEAE0DC),
+                            size: 23,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Column(
+                    children: [
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 4.5,
+                          activeTrackColor: accentPeach,
+                          inactiveTrackColor: const Color(0xFF42312B),
+                          thumbColor: accentPeach,
+                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7.5),
+                          overlayShape: SliderComponentShape.noOverlay,
+                        ),
+                        child: Stack(
+                          alignment: Alignment.centerRight,
+                          children: [
+                            Slider(
+                              value: currentSeconds.toDouble(),
+                              min: 0,
+                              max: maxSeconds.toDouble(),
+                              onChanged: (val) {
+                                final newPos = Duration(seconds: val.toInt());
+                                _audioHandler.seek(newPos);
+                                setModalState(() {});
+                              },
+                            ),
+                            Container(
+                              width: 4,
+                              height: 4,
+                              margin: const EdgeInsets.only(right: 2),
+                              decoration: BoxDecoration(
+                                color: accentPeach,
+                                shape: BoxShape.circle,
                               ),
                             ),
                           ],
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            _formatDuration(position),
+                            style: const TextStyle(
+                              color: Color(0xFFC8BDB7),
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          Text(
+                            _formatDuration(Duration(seconds: maxSeconds)),
+                            style: const TextStyle(
+                              color: Color(0xFFC8BDB7),
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                  SquishyGesture(
-                    onTap: () {
-                      setState(() {
-                        if (_savedIds.contains(track.id)) {
-                          _savedIds.remove(track.id);
-                        } else {
-                          _savedIds.add(track.id);
-                        }
-                      });
-                      setModalState(() {});
-                    },
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: track.playerSurface,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.add_circle_outline_rounded,
-                        color: Color(0xFFEAE0DC),
-                        size: 24,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SquishyGesture(
-                    onTap: () {
-                      setState(() {
-                        if (_likedIds.contains(track.id)) {
-                          _likedIds.remove(track.id);
-                        } else {
-                          _likedIds.add(track.id);
-                        }
-                      });
-                      setModalState(() {});
-                    },
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: track.playerSurface,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        _likedIds.contains(track.id) ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                        color: Color(0xFFEAE0DC),
-                        size: 23,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              Column(
-                children: [
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 4.5,
-                      activeTrackColor: accentPeach,
-                      inactiveTrackColor: const Color(0xFF42312B),
-                      thumbColor: accentPeach,
-                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7.5),
-                      overlayShape: SliderComponentShape.noOverlay,
-                    ),
-                    child: Stack(
-                      alignment: Alignment.centerRight,
-                      children: [
-                        Slider(
-                          value: currentSeconds.toDouble(),
-                          min: 0,
-                          max: maxSeconds.toDouble(),
-                          onChanged: (val) {
-                            final newPos = Duration(seconds: val.toInt());
-                            setState(() => _position = newPos);
-                            setModalState(() {});
-                            _audioHandler.seek(newPos);
-                          },
-                        ),
-                        Container(
-                          width: 4,
-                          height: 4,
-                          margin: const EdgeInsets.only(right: 2),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      SquishyGesture(
+                        onTap: () {
+                          _skipPrevious();
+                          setModalState(() {});
+                        },
+                        child: Container(
+                          width: 88,
+                          height: 70,
                           decoration: BoxDecoration(
-                            color: accentPeach,
-                            shape: BoxShape.circle,
+                            color: track.playerButtonBrown,
+                            borderRadius: BorderRadius.circular(35),
+                          ),
+                          child: const Icon(
+                            Icons.skip_previous_rounded,
+                            color: Color(0xFFF6E6DF),
+                            size: 32,
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        _formatDuration(_position),
-                        style: const TextStyle(
-                          color: Color(0xFFC8BDB7),
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w500,
-                        ),
                       ),
-                      Text(
-                        _formatDuration(_duration),
-                        style: const TextStyle(
-                          color: Color(0xFFC8BDB7),
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              Row(
-                children: [
-                  SquishyGesture(
-                    onTap: () {
-                      _skipPrevious();
-                      setModalState(() {});
-                    },
-                    child: Container(
-                      width: 88,
-                      height: 70,
-                      decoration: BoxDecoration(
-                        color: track.playerButtonBrown,
-                        borderRadius: BorderRadius.circular(35),
-                      ),
-                      child: const Icon(
-                        Icons.skip_previous_rounded,
-                        color: Color(0xFFF6E6DF),
-                        size: 32,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: SquishyGesture(
-                      onTap: () {
-                        _togglePlayPause();
-                        setModalState(() {});
-                      },
-                      child: Container(
-                        height: 70,
-                        decoration: BoxDecoration(
-                          color: accentPeach,
-                          borderRadius: BorderRadius.circular(35),
-                        ),
-                        child: Icon(
-                          _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                          color: track.playerOnAccent,
-                          size: 34,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SquishyGesture(
-                    onTap: () {
-                      _skipNext();
-                      setModalState(() {});
-                    },
-                    child: Container(
-                      width: 88,
-                      height: 70,
-                      decoration: BoxDecoration(
-                        color: track.playerButtonBrown,
-                        borderRadius: BorderRadius.circular(35),
-                      ),
-                      child: const Icon(
-                        Icons.skip_next_rounded,
-                        color: Color(0xFFF6E6DF),
-                        size: 32,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              // Speed & Pitch controls
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Speed: ${_playbackSpeed.toStringAsFixed(1)}x',
-                      style: const TextStyle(color: Color(0xFFC8BDB7), fontSize: 12),
-                    ),
-                  ),
-                  Expanded(
-                    child: Slider(
-                      value: _playbackSpeed,
-                      min: 0.5,
-                      max: 2.0,
-                      divisions: 15,
-                      activeColor: accentPeach,
-                      onChanged: (v) {
-                        setState(() => _playbackSpeed = v);
-                        setModalState(() {});
-                        _audioHandler.setSpeed(v);
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Pitch: ${_playbackPitch.toStringAsFixed(1)}x',
-                      style: const TextStyle(color: Color(0xFFC8BDB7), fontSize: 12),
-                    ),
-                  ),
-                  Expanded(
-                    child: Slider(
-                      value: _playbackPitch,
-                      min: 0.5,
-                      max: 1.5,
-                      divisions: 10,
-                      activeColor: accentPeach,
-                      onChanged: (v) {
-                        setState(() => _playbackPitch = v);
-                        setModalState(() {});
-                        _audioHandler.setPitch(v);
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const Spacer(),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(26),
-                child: SizedBox(
-                  height: 52,
-                  child: Row(
-                    children: [
-                      _buildSegmentedBottomBtn(
-                        icon: Icons.info_rounded,
-                        surface: track.playerSurface,
-                        onTap: () => _showTrackInfoDialog(track),
-                        isFirst: true,
-                      ),
-                      const SizedBox(width: 3),
-                      _buildSegmentedBottomBtn(
-                        icon: Icons.headphones_rounded,
-                        surface: track.playerSurface,
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Audio Output: Active'),
-                              duration: Duration(seconds: 1),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: SquishyGesture(
+                          onTap: () {
+                            _togglePlayPause(isPlaying);
+                            setModalState(() {});
+                          },
+                          child: Container(
+                            height: 70,
+                            decoration: BoxDecoration(
+                              color: accentPeach,
+                              borderRadius: BorderRadius.circular(35),
                             ),
-                          );
-                        },
+                            child: Icon(
+                              isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                              color: track.playerOnAccent,
+                              size: 34,
+                            ),
+                          ),
+                        ),
                       ),
-                      const SizedBox(width: 3),
-                      _buildSegmentedBottomBtn(
-                        icon: Icons.shuffle_rounded,
-                        surface: _isShuffle ? track.playerButtonBrown : track.playerSurface,
+                      const SizedBox(width: 12),
+                      SquishyGesture(
                         onTap: () {
-                          setState(() => _isShuffle = !_isShuffle);
+                          _skipNext();
                           setModalState(() {});
                         },
-                      ),
-                      const SizedBox(width: 3),
-                      _buildSegmentedBottomBtn(
-                        icon: _repeatMode == 2 ? Icons.repeat_one_rounded : Icons.repeat_rounded,
-                        surface: _repeatMode > 0 ? track.playerButtonBrown : track.playerSurface,
-                        onTap: () {
-                          setState(() => _repeatMode = (_repeatMode + 1) % 3);
-                          setModalState(() {});
-                        },
-                      ),
-                      const SizedBox(width: 3),
-                      _buildSegmentedBottomBtn(
-                        icon: Icons.playlist_add_rounded,
-                        surface: track.playerSurface,
-                        onTap: _importOrScanMusic,
-                      ),
-                      const SizedBox(width: 3),
-                      _buildSegmentedBottomBtn(
-                        icon: Icons.queue_music_rounded,
-                        surface: track.playerSurface,
-                        onTap: () => _showQueueBottomSheet(setModalState),
-                      ),
-                      const SizedBox(width: 3),
-                      _buildSegmentedBottomBtn(
-                        icon: Icons.comment_rounded,
-                        surface: track.playerSurface,
-                        onTap: () => _showLyricsBottomSheet(track),
-                        isLast: true,
+                        child: Container(
+                          width: 88,
+                          height: 70,
+                          decoration: BoxDecoration(
+                            color: track.playerButtonBrown,
+                            borderRadius: BorderRadius.circular(35),
+                          ),
+                          child: const Icon(
+                            Icons.skip_next_rounded,
+                            color: Color(0xFFF6E6DF),
+                            size: 32,
+                          ),
+                        ),
                       ),
                     ],
                   ),
-                ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Speed: ${_playbackSpeed.toStringAsFixed(1)}x',
+                          style: const TextStyle(color: Color(0xFFC8BDB7), fontSize: 12),
+                        ),
+                      ),
+                      Expanded(
+                        child: Slider(
+                          value: _playbackSpeed,
+                          min: 0.5,
+                          max: 2.0,
+                          divisions: 15,
+                          activeColor: accentPeach,
+                          onChanged: (v) {
+                            setState(() => _playbackSpeed = v);
+                            setModalState(() {});
+                            _audioHandler.setSpeed(v);
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Pitch: ${_playbackPitch.toStringAsFixed(1)}x',
+                          style: const TextStyle(color: Color(0xFFC8BDB7), fontSize: 12),
+                        ),
+                      ),
+                      Expanded(
+                        child: Slider(
+                          value: _playbackPitch,
+                          min: 0.5,
+                          max: 1.5,
+                          divisions: 10,
+                          activeColor: accentPeach,
+                          onChanged: (v) {
+                            setState(() => _playbackPitch = v);
+                            setModalState(() {});
+                            _audioHandler.setPitch(v);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(26),
+                    child: SizedBox(
+                      height: 52,
+                      child: Row(
+                        children: [
+                          _buildSegmentedBottomBtn(
+                            icon: Icons.info_rounded,
+                            surface: track.playerSurface,
+                            onTap: () => _showTrackInfoDialog(track),
+                            isFirst: true,
+                          ),
+                          const SizedBox(width: 3),
+                          _buildSegmentedBottomBtn(
+                            icon: Icons.headphones_rounded,
+                            surface: track.playerSurface,
+                            onTap: () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Audio Output: Active'),
+                                  duration: Duration(seconds: 1),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(width: 3),
+                          _buildSegmentedBottomBtn(
+                            icon: Icons.shuffle_rounded,
+                            surface: _isShuffle ? track.playerButtonBrown : track.playerSurface,
+                            onTap: () {
+                              setState(() => _isShuffle = !_isShuffle);
+                              setModalState(() {});
+                            },
+                          ),
+                          const SizedBox(width: 3),
+                          _buildSegmentedBottomBtn(
+                            icon: _repeatMode == 2 ? Icons.repeat_one_rounded : Icons.repeat_rounded,
+                            surface: _repeatMode > 0 ? track.playerButtonBrown : track.playerSurface,
+                            onTap: () {
+                              setState(() => _repeatMode = (_repeatMode + 1) % 3);
+                              setModalState(() {});
+                            },
+                          ),
+                          const SizedBox(width: 3),
+                          _buildSegmentedBottomBtn(
+                            icon: Icons.playlist_add_rounded,
+                            surface: track.playerSurface,
+                            onTap: _importOrScanMusic,
+                          ),
+                          const SizedBox(width: 3),
+                          _buildSegmentedBottomBtn(
+                            icon: Icons.queue_music_rounded,
+                            surface: track.playerSurface,
+                            onTap: () => _showQueueBottomSheet(setModalState),
+                          ),
+                          const SizedBox(width: 3),
+                          _buildSegmentedBottomBtn(
+                            icon: Icons.comment_rounded,
+                            surface: track.playerSurface,
+                            onTap: () => _showLyricsBottomSheet(track),
+                            isLast: true,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
               ),
-              const SizedBox(height: 10),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
