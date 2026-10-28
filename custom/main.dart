@@ -32,7 +32,7 @@ Future<void> main() async {
       androidNotificationChannelId: 'com.alexlmp.app.channel.audio',
       androidNotificationChannelName: 'AlexLMP Music Playback',
       androidNotificationOngoing: true,
-      androidStopForegroundOnPause: false,
+      androidStopForegroundOnPause: true,
     ),
   );
 
