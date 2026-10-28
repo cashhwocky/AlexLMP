@@ -36,6 +36,8 @@ jobs:
           cp custom/pubspec.yaml app_build/pubspec.yaml
           cp custom/main.dart app_build/lib/main.dart
           cp custom/AndroidManifest.xml app_build/android/app/src/main/AndroidManifest.xml
+          # remove the scaffold's own MainActivity (different package) so only ours is used
+          rm -rf app_build/android/app/src/main/kotlin
           mkdir -p app_build/android/app/src/main/kotlin/com/alexlmp/app
           cp custom/MainActivity.kt app_build/android/app/src/main/kotlin/com/alexlmp/app/MainActivity.kt
 
