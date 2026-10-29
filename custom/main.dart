@@ -579,6 +579,10 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> setRepeatMode(AudioServiceRepeatMode repeatMode) async {
     _repeat = repeatMode;
+    // Let the player itself loop the current track for "repeat one".
+    await player.setLoopMode(
+      repeatMode == AudioServiceRepeatMode.one ? LoopMode.one : LoopMode.off,
+    );
     playbackState.add(playbackState.value.copyWith(repeatMode: repeatMode));
   }
 
@@ -727,19 +731,19 @@ void openPlayer(BuildContext context) {
   }
   Navigator.of(context).push(
     PageRouteBuilder(
-      opaque: true,
-      transitionDuration: const Duration(milliseconds: 380),
-      reverseTransitionDuration: const Duration(milliseconds: 300),
+      opaque: false,
+      transitionDuration: const Duration(milliseconds: 520),
+      reverseTransitionDuration: const Duration(milliseconds: 360),
       pageBuilder: (_, __, ___) => const NowPlayingScreen(),
       transitionsBuilder: (_, anim, __, child) {
         final curved = CurvedAnimation(
           parent: anim,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
+          curve: kEmphasizedDecel,
+          reverseCurve: kEmphasizedAccel,
         );
         return SlideTransition(
           position: Tween<Offset>(
-            begin: const Offset(0, 0.12),
+            begin: const Offset(0, 0.08),
             end: Offset.zero,
           ).animate(curved),
           child: FadeTransition(opacity: curved, child: child),
@@ -763,6 +767,7 @@ class AlexLmpRoot extends StatefulWidget {
 
 class _AlexLmpRootState extends State<AlexLmpRoot> {
   int _tab = 0; // 0 Home, 1 Mix, 2 Library
+  int _dir = 1; // slide direction of the last tab change
   String _chip = 'All';
 
   @override
@@ -815,19 +820,23 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               SafeArea(
                 bottom: false,
                 child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  transitionBuilder: (child, anim) => FadeTransition(
-                    opacity: anim,
-                    child: SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(0, 0.02),
-                        end: Offset.zero,
-                      ).animate(anim),
-                      child: child,
-                    ),
-                  ),
+                  duration: const Duration(milliseconds: 380),
+                  switchInCurve: kEmphasizedDecel,
+                  switchOutCurve: kEmphasizedAccel,
+                  transitionBuilder: (child, anim) {
+                    // shared-axis: new tab slides in from the travel direction,
+                    // old tab slides out the opposite way.
+                    final incoming = child.key == ValueKey(_tab);
+                    final begin = Offset(0.08 * (incoming ? _dir : -_dir), 0);
+                    return FadeTransition(
+                      opacity: anim,
+                      child: SlideTransition(
+                        position: Tween<Offset>(begin: begin, end: Offset.zero)
+                            .animate(anim),
+                        child: child,
+                      ),
+                    );
+                  },
                   child: KeyedSubtree(
                     key: ValueKey(_tab),
                     child: _tabBody(context, pal, tracks),
@@ -842,7 +851,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (audioHandler.currentTrack != null)
-                      MiniPlayer(track: audioHandler.currentTrack!, palette: pal),
+                      Reveal(
+                        dy: 40,
+                        child: MiniPlayer(track: audioHandler.currentTrack!, palette: pal),
+                      ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -912,7 +924,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     return Expanded(
       child: SquishyGesture(
         pressedScale: 0.92,
-        onTap: () => setState(() => _tab = i),
+        onTap: () => setState(() {
+          _dir = i >= _tab ? 1 : -1;
+          _tab = i;
+        }),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 260),
           curve: Curves.easeOutCubic,
@@ -1006,7 +1021,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     return ListView(
       padding: const EdgeInsets.only(top: 10, bottom: 185),
       children: [
-        header,
+        Reveal(child: header),
         const SizedBox(height: 24),
         _sectionHeader(
           "LET'S START WITH A RADIO",
@@ -1234,11 +1249,15 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   Widget _trackRow(BuildContext context, AppPalette pal, TrackItem t) {
     final idx = audioHandler.tracks.indexOf(t);
-    return TrackRow(
-      track: t,
-      palette: pal,
-      active: audioHandler.currentTrack?.id == t.id,
-      onTap: () => playAndOpen(context, idx),
+    return Reveal(
+      delayMs: min(max(idx, 0), 8) * 45,
+      dy: 16,
+      child: TrackRow(
+        track: t,
+        palette: pal,
+        active: audioHandler.currentTrack?.id == t.id,
+        onTap: () => playAndOpen(context, idx),
+      ),
     );
   }
 
@@ -1283,7 +1302,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             ),
           ),
         for (var i = 0; i < tracks.length; i++)
-          Padding(
+          Reveal(
+            delayMs: min(i, 8) * 45,
+            child: Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: SquishyGesture(
               pressedScale: 0.97,
@@ -1339,6 +1360,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 ),
               ),
             ),
+          ),
           ),
       ],
     );
@@ -1408,6 +1430,215 @@ final List<BoxShadow> _shadow = [
 // ─────────────────────────────────────────────────────────────────────────────
 // Reusable widgets
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Material 3 motion curves
+const Curve kEmphasized = Cubic(0.2, 0.0, 0.0, 1.0);
+const Curve kEmphasizedDecel = Cubic(0.05, 0.7, 0.1, 1.0);
+const Curve kEmphasizedAccel = Cubic(0.3, 0.0, 0.8, 0.15);
+
+/// Fade + slide-up entrance (staggered with [delayMs]).
+class Reveal extends StatelessWidget {
+  final int delayMs;
+  final double dy;
+  final Widget child;
+
+  const Reveal({super.key, this.delayMs = 0, this.dy = 22, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final total = 480 + delayMs;
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: Duration(milliseconds: total),
+      curve: Interval(delayMs / total, 1.0, curve: kEmphasizedDecel),
+      builder: (context, t, child) => Opacity(
+        opacity: t.clamp(0.0, 1.0).toDouble(),
+        child: Transform.translate(offset: Offset(0, (1 - t) * dy), child: child),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// Animated equalizer bars shown on the currently playing row.
+class EqBars extends StatefulWidget {
+  final Color color;
+  const EqBars({super.key, required this.color});
+
+  @override
+  State<EqBars> createState() => _EqBarsState();
+}
+
+class _EqBarsState extends State<EqBars> with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<bool>(
+      stream: audioHandler.player.playingStream,
+      initialData: audioHandler.player.playing,
+      builder: (context, snap) {
+        final playing = snap.data ?? false;
+        return AnimatedBuilder(
+          animation: _c,
+          builder: (context, _) {
+            return SizedBox(
+              width: 22,
+              height: 20,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: List.generate(3, (i) {
+                  final h = playing
+                      ? 5 + 15 * (0.5 + 0.5 * sin(2 * pi * (_c.value + i / 3)))
+                      : 5.0;
+                  return Container(
+                    width: 4.5,
+                    height: h,
+                    decoration: BoxDecoration(
+                      color: widget.color,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  );
+                }),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+/// Drag the whole screen down to dismiss it (follows the finger, springs back).
+class SwipeDownDismiss extends StatefulWidget {
+  final Widget child;
+  const SwipeDownDismiss({super.key, required this.child});
+
+  @override
+  State<SwipeDownDismiss> createState() => _SwipeDownDismissState();
+}
+
+class _SwipeDownDismissState extends State<SwipeDownDismiss>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  bool _dismissing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController.unbounded(vsync: this, value: 0);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  void _update(DragUpdateDetails d) {
+    if (_dismissing) return;
+    _c.value = (_c.value + d.delta.dy).clamp(-24.0, double.infinity).toDouble();
+  }
+
+  void _springBack(double velocity) {
+    _c.animateWith(
+      SpringSimulation(
+        const SpringDescription(mass: 1, stiffness: 320, damping: 26),
+        _c.value,
+        0,
+        velocity,
+      ),
+    );
+  }
+
+  void _end(DragEndDetails d) {
+    if (_dismissing) return;
+    final v = d.velocity.pixelsPerSecond.dy;
+    final h = MediaQuery.of(context).size.height;
+    if (_c.value > h * 0.16 || v > 900) {
+      HapticFeedback.lightImpact();
+      setState(() => _dismissing = true); // disables the hero flight
+      _c
+          .animateTo(
+            h,
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeInCubic,
+          )
+          .whenComplete(() {
+        if (mounted) Navigator.of(context).pop();
+      });
+    } else {
+      _springBack(v);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onVerticalDragUpdate: _update,
+      onVerticalDragEnd: _end,
+      onVerticalDragCancel: () => _springBack(0),
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, child) {
+          final h = MediaQuery.of(context).size.height;
+          final p = (_c.value / h).clamp(0.0, 1.0).toDouble();
+          return Transform.translate(
+            offset: Offset(0, _c.value),
+            child: Transform.scale(
+              scale: 1 - 0.05 * p,
+              alignment: Alignment.topCenter,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(min(1.0, p * 8) * 36),
+                child: child,
+              ),
+            ),
+          );
+        },
+        child: HeroMode(enabled: !_dismissing, child: widget.child),
+      ),
+    );
+  }
+}
+
+Widget _artShuttle(
+  BuildContext flightContext,
+  Animation<double> animation,
+  HeroFlightDirection direction,
+  BuildContext fromContext,
+  BuildContext toContext,
+) {
+  return AnimatedBuilder(
+    animation: animation,
+    builder: (context, _) {
+      final t = direction == HeroFlightDirection.push
+          ? animation.value
+          : 1 - animation.value;
+      final track = audioHandler.currentTrack;
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(18 + 10 * t),
+        child: track == null ? const SizedBox() : CustomAlbumArtwork(track: track),
+      );
+    },
+  );
+}
+
+RectTween _arcTween(Rect? begin, Rect? end) =>
+    MaterialRectArcTween(begin: begin, end: end);
 
 /// Wraps any widget with a springy "squish" press effect + light haptic.
 class SquishyGesture extends StatefulWidget {
@@ -1561,7 +1792,7 @@ class TrackRow extends StatelessWidget {
             if (active)
               Padding(
                 padding: const EdgeInsets.only(left: 8, right: 4),
-                child: Icon(Icons.graphic_eq_rounded, color: palette.accent, size: 22),
+                child: EqBars(color: palette.accent),
               ),
           ],
         ),
@@ -1647,11 +1878,16 @@ class MiniPlayer extends StatelessWidget {
                       );
                     },
                   ),
-                  ClipOval(
-                    child: SizedBox(
-                      width: 36,
-                      height: 36,
-                      child: CustomAlbumArtwork(track: track),
+                  Hero(
+                    tag: 'now_playing_art',
+                    createRectTween: _arcTween,
+                    flightShuttleBuilder: _artShuttle,
+                    child: ClipOval(
+                      child: SizedBox(
+                        width: 36,
+                        height: 36,
+                        child: CustomAlbumArtwork(track: track),
+                      ),
                     ),
                   ),
                 ],
@@ -1770,7 +2006,8 @@ class NowPlayingScreen extends StatelessWidget {
             final repeat = state.repeatMode;
             final liked = appState.isLiked(track.id);
 
-            return Scaffold(
+            return SwipeDownDismiss(
+              child: Scaffold(
               backgroundColor: pal.playerBg,
               body: SafeArea(
                 child: Padding(
@@ -1857,13 +2094,27 @@ class NowPlayingScreen extends StatelessWidget {
                                       ),
                                     ],
                                   ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(28),
-                                    child: AnimatedSwitcher(
-                                      duration: const Duration(milliseconds: 350),
-                                      child: KeyedSubtree(
-                                        key: ValueKey('${track.id}_${track.artStyle}'),
-                                        child: CustomAlbumArtwork(track: track),
+                                  child: Hero(
+                                    tag: 'now_playing_art',
+                                    createRectTween: _arcTween,
+                                    flightShuttleBuilder: _artShuttle,
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(28),
+                                      child: AnimatedSwitcher(
+                                        duration: const Duration(milliseconds: 450),
+                                        switchInCurve: kEmphasizedDecel,
+                                        transitionBuilder: (c, a) => FadeTransition(
+                                          opacity: a,
+                                          child: ScaleTransition(
+                                            scale: Tween<double>(begin: 0.92, end: 1.0)
+                                                .animate(a),
+                                            child: c,
+                                          ),
+                                        ),
+                                        child: KeyedSubtree(
+                                          key: ValueKey('${track.id}_${track.artStyle}'),
+                                          child: CustomAlbumArtwork(track: track),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -1873,7 +2124,9 @@ class NowPlayingScreen extends StatelessWidget {
                           ),
                         ),
                       ),
-                      Row(
+                      Reveal(
+                        delayMs: 120,
+                        child: Row(
                         children: [
                           Expanded(
                             child: Column(
@@ -1930,13 +2183,19 @@ class NowPlayingScreen extends StatelessWidget {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 14),
-                      SeekBar(
-                        fallbackSeconds: track.durationSeconds,
-                        active: pal.playerAccent,
                       ),
                       const SizedBox(height: 14),
-                      Row(
+                      Reveal(
+                        delayMs: 180,
+                        child: SeekBar(
+                          fallbackSeconds: track.durationSeconds,
+                          active: pal.playerAccent,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Reveal(
+                        delayMs: 240,
+                        child: Row(
                         children: [
                           SquishyGesture(
                             onTap: audioHandler.skipToPrevious,
@@ -1961,8 +2220,8 @@ class NowPlayingScreen extends StatelessWidget {
                               onTap: () =>
                                   playing ? audioHandler.pause() : audioHandler.play(),
                               child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 300),
-                                curve: Curves.easeOutCubic,
+                                duration: const Duration(milliseconds: 450),
+                                curve: kEmphasized,
                                 height: 70,
                                 decoration: BoxDecoration(
                                   color: pal.playerAccent,
@@ -2016,8 +2275,11 @@ class NowPlayingScreen extends StatelessWidget {
                           ),
                         ],
                       ),
+                      ),
                       const SizedBox(height: 18),
-                      ClipRRect(
+                      Reveal(
+                        delayMs: 300,
+                        child: ClipRRect(
                         borderRadius: BorderRadius.circular(26),
                         child: SizedBox(
                           height: 52,
@@ -2067,12 +2329,13 @@ class NowPlayingScreen extends StatelessWidget {
                           ),
                         ),
                       ),
+                      ),
                       const SizedBox(height: 10),
                     ],
                   ),
                 ),
               ),
-            );
+            ));
           },
         );
       },
@@ -2849,6 +3112,23 @@ class _SearchSheetState extends State<SearchSheet> {
 // Artwork
 // ─────────────────────────────────────────────────────────────────────────────
 
+final Map<String, Future<Uint8List?>> _artCache = {};
+
+/// Fetches the real embedded / MediaStore album art (cached per track).
+Future<Uint8List?> loadArt(TrackItem t) {
+  return _artCache.putIfAbsent(t.id, () async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _mediaChannel.invokeMethod<Uint8List>('getArt', {
+        'uri': t.source,
+        'path': t.filePath ?? '',
+      });
+    } catch (_) {
+      return null;
+    }
+  });
+}
+
 class CustomAlbumArtwork extends StatelessWidget {
   final TrackItem track;
 
@@ -2856,9 +3136,30 @@ class CustomAlbumArtwork extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
+    final placeholder = CustomPaint(
       painter: _ArtworkSymbolPainter(style: track.artStyle, colors: track.artColors),
       child: const SizedBox.expand(),
+    );
+    return FutureBuilder<Uint8List?>(
+      future: loadArt(track),
+      builder: (context, snap) {
+        final bytes = snap.data;
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 250),
+          child: (bytes != null && bytes.isNotEmpty)
+              ? SizedBox.expand(
+                  key: ValueKey('art_${track.id}'),
+                  child: Image.memory(
+                    bytes,
+                    fit: BoxFit.cover,
+                    cacheWidth: 512,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, __, ___) => placeholder,
+                  ),
+                )
+              : SizedBox.expand(key: ValueKey('ph_${track.id}'), child: placeholder),
+        );
+      },
     );
   }
 }
