@@ -1,8 +1,13 @@
 package com.alexlmp.app
 
 import android.content.ContentUris
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Size
+import java.io.ByteArrayOutputStream
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -24,9 +29,49 @@ class MainActivity : AudioServiceActivity() {
                             runOnUiThread { result.success(songs) }
                         }.start()
                     }
+                    "getArt" -> {
+                        val uri = call.argument<String>("uri")
+                        val path = call.argument<String>("path")
+                        Thread {
+                            val bytes = loadArt(uri, path)
+                            runOnUiThread { result.success(bytes) }
+                        }.start()
+                    }
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun loadArt(uriStr: String?, path: String?): ByteArray? {
+        // 1) Android 10+: system-provided album art thumbnail
+        if (!uriStr.isNullOrEmpty() && uriStr.startsWith("content://") &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+        ) {
+            try {
+                val bmp = contentResolver.loadThumbnail(Uri.parse(uriStr), Size(512, 512), null)
+                val out = ByteArrayOutputStream()
+                bmp.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                return out.toByteArray()
+            } catch (_: Exception) {
+            }
+        }
+        // 2) Fallback: picture embedded in the audio file's tags
+        try {
+            val retriever = MediaMetadataRetriever()
+            if (!path.isNullOrEmpty()) {
+                retriever.setDataSource(path)
+            } else if (!uriStr.isNullOrEmpty()) {
+                retriever.setDataSource(this, Uri.parse(uriStr))
+            } else {
+                retriever.release()
+                return null
+            }
+            val pic = retriever.embeddedPicture
+            retriever.release()
+            return pic
+        } catch (_: Exception) {
+        }
+        return null
     }
 
     private fun scanLocalAudio(): List<Map<String, Any>> {
