@@ -10,6 +10,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -175,10 +176,44 @@ class AppPalette {
     playerOnAccent: Color(0xFF3C0036),
   );
 
-  static const all = [classicBlue, emerald, sunsetPeach, cyberpunk];
+  static const amoled = AppPalette(
+    name: 'AMOLED',
+    accent: Color(0xFFD0BCFF),
+    onAccent: Color(0xFF381E72),
+    container: Color(0xFF1C1A24),
+    bg: Color(0xFF000000),
+    surface: Color(0xFF0C0C0E),
+    playerBg: Color(0xFF000000),
+    playerSurface: Color(0xFF141318),
+    playerButton: Color(0xFF2B2640),
+    playerAccent: Color(0xFFD0BCFF),
+    playerOnAccent: Color(0xFF381E72),
+  );
+
+  static const all = [classicBlue, emerald, sunsetPeach, cyberpunk, amoled];
 
   static AppPalette byName(String name) =>
       all.firstWhere((p) => p.name == name, orElse: () => classicBlue);
+}
+
+class Playlist {
+  final String id;
+  String name;
+  String? cover; // path of a copied gallery image
+  final List<String> trackIds;
+
+  Playlist({required this.id, required this.name, this.cover, List<String>? trackIds})
+      : trackIds = trackIds ?? [];
+
+  Map<String, dynamic> toJson() =>
+      {'id': id, 'name': name, 'cover': cover, 'tracks': trackIds};
+
+  factory Playlist.fromJson(Map<String, dynamic> j) => Playlist(
+        id: j['id'] as String,
+        name: j['name'] as String,
+        cover: j['cover'] as String?,
+        trackIds: List<String>.from(j['tracks'] as List? ?? const []),
+      );
 }
 
 class AppState extends ChangeNotifier {
@@ -191,6 +226,7 @@ class AppState extends ChangeNotifier {
   String playlistStyle = 'equalizer_bars';
   final Set<String> liked = {};
   Map<String, dynamic> _edits = {};
+  final List<Playlist> playlists = [];
 
   AppPalette get palette => AppPalette.byName(themeName);
 
@@ -202,6 +238,14 @@ class AppState extends ChangeNotifier {
     playlistName = prefs.getString('playlist_name') ?? playlistName;
     playlistStyle = prefs.getString('playlist_style') ?? playlistStyle;
     liked.addAll(prefs.getStringList('liked_ids') ?? const []);
+    try {
+      final raw = jsonDecode(prefs.getString('playlists') ?? '[]') as List;
+      playlists
+        ..clear()
+        ..addAll(raw.map((e) => Playlist.fromJson(Map<String, dynamic>.from(e as Map))));
+    } catch (_) {
+      playlists.clear();
+    }
     try {
       _edits = Map<String, dynamic>.from(
         jsonDecode(prefs.getString('track_edits') ?? '{}') as Map,
@@ -248,6 +292,80 @@ class AppState extends ChangeNotifier {
     if (!liked.remove(id)) liked.add(id);
     _prefs?.setStringList('liked_ids', liked.toList());
     notifyListeners();
+  }
+
+  // ── Playlists ─────────────────────────────────────────────────────────────
+
+  Playlist? playlistById(String id) {
+    for (final pl in playlists) {
+      if (pl.id == id) return pl;
+    }
+    return null;
+  }
+
+  void _savePlaylists() {
+    _prefs?.setString(
+      'playlists',
+      jsonEncode(playlists.map((pl) => pl.toJson()).toList()),
+    );
+    notifyListeners();
+  }
+
+  Playlist createPlaylist(String name, {String? cover}) {
+    final pl = Playlist(
+      id: 'pl_${DateTime.now().microsecondsSinceEpoch}',
+      name: name,
+      cover: cover,
+    );
+    playlists.add(pl);
+    _savePlaylists();
+    return pl;
+  }
+
+  void setPlaylistInfo(String id, String name, String? cover) {
+    final pl = playlistById(id);
+    if (pl == null) return;
+    pl.name = name;
+    pl.cover = cover;
+    _savePlaylists();
+  }
+
+  void deletePlaylist(String id) {
+    playlists.removeWhere((pl) => pl.id == id);
+    _savePlaylists();
+  }
+
+  bool inPlaylist(String pid, String tid) =>
+      playlistById(pid)?.trackIds.contains(tid) ?? false;
+
+  void togglePlaylistTrack(String pid, String tid) {
+    final pl = playlistById(pid);
+    if (pl == null) return;
+    if (!pl.trackIds.remove(tid)) pl.trackIds.add(tid);
+    _savePlaylists();
+  }
+
+  void addToPlaylist(String pid, String tid) {
+    final pl = playlistById(pid);
+    if (pl == null || pl.trackIds.contains(tid)) return;
+    pl.trackIds.add(tid);
+    _savePlaylists();
+  }
+
+  void removeFromPlaylist(String pid, String tid) {
+    final pl = playlistById(pid);
+    if (pl == null) return;
+    pl.trackIds.remove(tid);
+    _savePlaylists();
+  }
+
+  /// Moves a song inside a playlist (indexes refer to `trackIds`).
+  void movePlaylistTrack(String pid, int from, int to) {
+    final pl = playlistById(pid);
+    if (pl == null || from < 0 || from >= pl.trackIds.length) return;
+    final id = pl.trackIds.removeAt(from);
+    pl.trackIds.insert(to.clamp(0, pl.trackIds.length), id);
+    _savePlaylists();
   }
 
   void applyEdits(TrackItem t) {
