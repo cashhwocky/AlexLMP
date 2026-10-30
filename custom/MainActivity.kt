@@ -12,9 +12,6 @@ import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-// IMPORTANT: this must extend AudioServiceActivity (not FlutterActivity),
-// otherwise audio_service can't attach to the Flutter engine and playback /
-// lock-screen controls silently fail.
 class MainActivity : AudioServiceActivity() {
     private val channelName = "com.alexlmp.app/media"
 
@@ -43,7 +40,6 @@ class MainActivity : AudioServiceActivity() {
     }
 
     private fun loadArt(uriStr: String?, path: String?): ByteArray? {
-        // 1) Android 10+: system-provided album art thumbnail
         if (!uriStr.isNullOrEmpty() && uriStr.startsWith("content://") &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
         ) {
@@ -55,7 +51,6 @@ class MainActivity : AudioServiceActivity() {
             } catch (_: Exception) {
             }
         }
-        // 2) Fallback: picture embedded in the audio file's tags
         try {
             val retriever = MediaMetadataRetriever()
             if (!path.isNullOrEmpty()) {
@@ -74,8 +69,8 @@ class MainActivity : AudioServiceActivity() {
         return null
     }
 
-    private fun scanLocalAudio(): List<Map<String, Any>> {
-        val songs = mutableListOf<Map<String, Any>>()
+    private fun scanLocalAudio(): List> {
+        val songs = mutableListOf>()
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
         } else {
@@ -107,7 +102,6 @@ class MainActivity : AudioServiceActivity() {
                     val durationMs = cursor.getLong(durationCol)
                     if (durationMs < 3000) continue
                     val id = cursor.getLong(idCol)
-                    // content:// URI works on every Android version (scoped storage safe)
                     val uri = ContentUris.withAppendedId(collection, id).toString()
                     songs.add(
                         mapOf(
