@@ -70,7 +70,7 @@ Future<void> main() async {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
+// Helpers & Physics
 // ─────────────────────────────────────────────────────────────────────────────
 
 String cleanText(dynamic v, String fallback) {
@@ -105,8 +105,59 @@ Future<String?> pickAndSaveGalleryImage() async {
   }
 }
 
+class Squishy extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  final double scale;
+
+  const Squishy({super.key, required this.child, this.onTap, this.scale = 0.94});
+
+  @override
+  State<Squishy> createState() => _SquishyState();
+}
+
+class _SquishyState extends State<Squishy> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController.unbounded(vsync: this, value: 1.0);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _down() => _ctrl.animateTo(widget.scale, duration: const Duration(milliseconds: 90), curve: Curves.easeOut);
+  void _up() {
+    _ctrl.animateWith(SpringSimulation(const SpringDescription(mass: 1, stiffness: 480, damping: 16), _ctrl.value, 1.0, 0.0));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => _down(),
+      onTapUp: (_) {
+        HapticFeedback.lightImpact();
+        widget.onTap?.call();
+        _up();
+      },
+      onTapCancel: _up,
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (ctx, child) => Transform.scale(scale: _ctrl.value.clamp(0.7, 1.2), child: child),
+        child: widget.child,
+      ),
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Models & State
+// Models & AppState
 // ─────────────────────────────────────────────────────────────────────────────
 
 class Playlist {
@@ -122,13 +173,7 @@ class Playlist {
     List<String>? trackIds,
   }) : trackIds = trackIds ?? [];
 
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'cover': cover,
-    'tracks': trackIds,
-  };
-
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'cover': cover, 'tracks': trackIds};
   factory Playlist.fromJson(Map<String, dynamic> j) => Playlist(
     id: j['id'] as String,
     name: j['name'] as String,
@@ -165,9 +210,7 @@ class TrackItem {
     if (fp != null && fp.isNotEmpty && File(fp).existsSync()) {
       return Uri.file(fp);
     }
-    return source.startsWith('content://')
-        ? Uri.parse(source)
-        : Uri.file(source);
+    return source.startsWith('content://') ? Uri.parse(source) : Uri.file(source);
   }
 
   MediaItem toMediaItem() => MediaItem(
@@ -187,8 +230,16 @@ class AppState extends ChangeNotifier {
   bool linkSpeedAndPitch = false;
   double speed = 1.0;
   double pitch = 1.0;
+  bool showArtworkBlurBackdrop = true;
+  String playerDesignStyle = 'Material Extended';
+  bool skipSilence = false;
+  bool audioNormalization = true;
+  bool progressiveSeek = false;
+  bool pauseAtZeroVolume = false;
+
   final Set<String> liked = {};
   final Set<String> deletedIds = {};
+  final Map<String, int> playCounts = {};
   Map<String, dynamic> _edits = {};
   final List<Playlist> playlists = [];
 
@@ -200,19 +251,71 @@ class AppState extends ChangeNotifier {
     linkSpeedAndPitch = _prefs?.getBool('link_speed_pitch') ?? false;
     speed = _prefs?.getDouble('speed') ?? 1.0;
     pitch = _prefs?.getDouble('pitch') ?? 1.0;
+    showArtworkBlurBackdrop = _prefs?.getBool('blur_backdrop') ?? true;
+    playerDesignStyle = _prefs?.getString('player_style') ?? 'Material Extended';
+    skipSilence = _prefs?.getBool('skip_silence') ?? false;
+    audioNormalization = _prefs?.getBool('norm_audio') ?? true;
+    progressiveSeek = _prefs?.getBool('prog_seek') ?? false;
+    pauseAtZeroVolume = _prefs?.getBool('pause_zero_vol') ?? false;
+
     liked.addAll(_prefs?.getStringList('liked') ?? const []);
     deletedIds.addAll(_prefs?.getStringList('deleted') ?? const []);
+
+    try {
+      final rawCounts = jsonDecode(_prefs?.getString('play_counts') ?? '{}') as Map;
+      rawCounts.forEach((k, v) => playCounts[k.toString()] = (v as num).toInt());
+    } catch (_) {}
+
     try {
       final raw = jsonDecode(_prefs?.getString('playlists') ?? '[]') as List;
-      playlists
-        ..clear()
-        ..addAll(raw.map((e) => Playlist.fromJson(Map<String, dynamic>.from(e))));
+      playlists..clear()..addAll(raw.map((e) => Playlist.fromJson(Map<String, dynamic>.from(e))));
     } catch (_) {}
+
     try {
-      _edits = Map<String, dynamic>.from(
-        jsonDecode(_prefs?.getString('edits') ?? '{}'),
-      );
+      _edits = Map<String, dynamic>.from(jsonDecode(_prefs?.getString('edits') ?? '{}'));
     } catch (_) {}
+    notifyListeners();
+  }
+
+  void incrementPlayCount(String id) {
+    playCounts[id] = (playCounts[id] ?? 0) + 1;
+    _prefs?.setString('play_counts', jsonEncode(playCounts));
+    notifyListeners();
+  }
+
+  void setBlurBackdrop(bool v) {
+    showArtworkBlurBackdrop = v;
+    _prefs?.setBool('blur_backdrop', v);
+    notifyListeners();
+  }
+
+  void setSkipSilence(bool v) {
+    skipSilence = v;
+    _prefs?.setBool('skip_silence', v);
+    notifyListeners();
+  }
+
+  void setAudioNormalization(bool v) {
+    audioNormalization = v;
+    _prefs?.setBool('norm_audio', v);
+    notifyListeners();
+  }
+
+  void setProgressiveSeek(bool v) {
+    progressiveSeek = v;
+    _prefs?.setBool('prog_seek', v);
+    notifyListeners();
+  }
+
+  void setPauseAtZeroVolume(bool v) {
+    pauseAtZeroVolume = v;
+    _prefs?.setBool('pause_zero_vol', v);
+    notifyListeners();
+  }
+
+  void setPlayerDesignStyle(String style) {
+    playerDesignStyle = style;
+    _prefs?.setString('player_style', style);
     notifyListeners();
   }
 
@@ -290,10 +393,7 @@ class AppState extends ChangeNotifier {
   }
 
   void _savePlaylists() {
-    _prefs?.setString(
-      'playlists',
-      jsonEncode(playlists.map((p) => p.toJson()).toList()),
-    );
+    _prefs?.setString('playlists', jsonEncode(playlists.map((p) => p.toJson()).toList()));
     notifyListeners();
   }
 
@@ -322,8 +422,7 @@ class AppState extends ChangeNotifier {
     _savePlaylists();
   }
 
-  bool inPlaylist(String pid, String tid) =>
-      playlistById(pid)?.trackIds.contains(tid) ?? false;
+  bool inPlaylist(String pid, String tid) => playlistById(pid)?.trackIds.contains(tid) ?? false;
 
   void togglePlaylistTrack(String pid, String tid) {
     final pl = playlistById(pid);
@@ -375,7 +474,7 @@ class AppState extends ChangeNotifier {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Audio Handler (Sonic ExoPlayer Native Speed & Pitch)
+// Audio Handler
 // ─────────────────────────────────────────────────────────────────────────────
 
 class MyAudioHandler extends BaseAudioHandler with SeekHandler {
@@ -395,9 +494,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   int get index => _index;
-  TrackItem? get currentTrack =>
-      (_index >= 0 && _index < tracks.length) ? tracks[_index] : null;
-
+  TrackItem? get currentTrack => (_index >= 0 && _index < tracks.length) ? tracks[_index] : null;
   TrackItem? trackById(String id) {
     for (final t in tracks) {
       if (t.id == id) return t;
@@ -411,13 +508,10 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       await s.configure(const AudioSessionConfiguration.music());
     } catch (_) {}
     try {
-      await player.setSkipSilenceEnabled(false);
+      await player.setSkipSilenceEnabled(appState.skipSilence);
     } catch (_) {}
 
-    player.playbackEventStream.map(_transformEvent).listen(
-      playbackState.add,
-      onError: (_, __) {},
-    );
+    player.playbackEventStream.map(_transformEvent).listen(playbackState.add, onError: (_, __) {});
 
     player.processingStateStream.listen((state) {
       if (state == ProcessingState.ready) {
@@ -476,11 +570,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       player.playing ? MediaControl.pause : MediaControl.play,
       MediaControl.skipToNext,
     ],
-    systemActions: const {
-      MediaAction.seek,
-      MediaAction.seekForward,
-      MediaAction.seekBackward,
-    },
+    systemActions: const {MediaAction.seek},
     androidCompactActionIndices: const [0, 1, 2],
     processingState: const {
       ProcessingState.idle: AudioProcessingState.idle,
@@ -1056,12 +1146,13 @@ class _MainScaffoldState extends State<MainScaffold> {
   }
 
   void _showNotice() {
-    if (appNotice.value == null || !mounted) return;
+    final msg = appNotice.value;
+    if (msg == null || !mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(appNotice.value!, style: const TextStyle(fontWeight: FontWeight.bold)),
+          content: Text(msg, style: const TextStyle(fontWeight: FontWeight.bold)),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
