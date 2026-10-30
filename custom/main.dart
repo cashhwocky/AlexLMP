@@ -14,6 +14,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart' as ytd;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals
@@ -118,13 +119,20 @@ Future<String?> pickAndSaveGalleryImage() async {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Built-in Direct URL + Cobalt / Piped / Spotify Audio Downloader
+// On-Device YouTube / Spotify / Direct URL Audio Extractor (No Middleman API!)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ResolvedStream {
   final String url;
-  final String filename;
-  const ResolvedStream({required this.url, required this.filename});
+  final String title;
+  final String artist;
+  final String ext;
+  const ResolvedStream({
+    required this.url,
+    required this.title,
+    required this.artist,
+    this.ext = '.m4a',
+  });
 }
 
 Future<Directory> _getMusicDownloadsDir() async {
@@ -177,10 +185,43 @@ Future<List<TrackItem>> loadSavedDownloads() async {
   return list;
 }
 
-Future<String?> _resolveSpotifyTitle(HttpClient client, String url) async {
+/// Reads the exact Song Title + Artist from a Spotify link (no API key needed)
+Future<String?> _resolveSpotifyQuery(HttpClient client, String spotifyUrl) async {
+  // 1) Try scraping Spotify's <title> tag which includes "Song - song and lyrics by Artist | Spotify"
+  try {
+    final req = await client.getUrl(Uri.parse(spotifyUrl));
+    req.headers.set(
+      'User-Agent',
+      'Mozilla/5.0 (Linux; Android 15; Pixel 10) AppleWebKit/537.36',
+    );
+    final resp = await req.close().timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 200) {
+      final html = await resp.transform(utf8.decoder).join();
+      final titleMatch = RegExp(
+        r'<title>(.*?)</title>',
+        caseSensitive: false,
+      ).firstMatch(html);
+      if (titleMatch != null) {
+        var raw = titleMatch.group(1) ?? '';
+        raw = raw
+            .replaceAll('| Spotify', '')
+            .replaceAll('- song and lyrics by', '-')
+            .replaceAll('- song by', '-')
+            .replaceAll('&#x27;', "'")
+            .replaceAll('&amp;', '&')
+            .replaceAll('&quot;', '"')
+            .trim();
+        if (raw.isNotEmpty && !raw.toLowerCase().startsWith('spotify')) {
+          return raw;
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 2) Fallback to Spotify public oEmbed endpoint
   try {
     final oembedUri = Uri.parse(
-      'https://open.spotify.com/oembed?url=${Uri.encodeComponent(url)}',
+      'https://open.spotify.com/oembed?url=${Uri.encodeComponent(spotifyUrl)}',
     );
     final req = await client.getUrl(oembedUri);
     req.headers.set('User-Agent', 'Mozilla/5.0');
@@ -195,314 +236,270 @@ Future<String?> _resolveSpotifyTitle(HttpClient client, String url) async {
   return null;
 }
 
-Future<ResolvedStream?> _resolveViaCobalt(
-  HttpClient client,
-  String targetUrl,
-) async {
-  const cobaltEndpoints = [
-    'https://api.cobalt.tools/',
-    'https://cobalt-api.kwiatekmiki.com/',
-    'https://cobalt.api.timelessnesses.me/',
-  ];
-
-  for (final endpoint in cobaltEndpoints) {
-    try {
-      final uri = Uri.parse(endpoint);
-      final req = await client.postUrl(uri);
-      req.headers.set('Accept', 'application/json');
-      req.headers.set('Content-Type', 'application/json');
-      req.headers.set(
-        'User-Agent',
-        'Mozilla/5.0 (Linux; Android 15; Pixel 10) AppleWebKit/537.36',
-      );
-      req.add(
-        utf8.encode(
-          jsonEncode({
-            'url': targetUrl,
-            'downloadMode': 'audio',
-            'audioFormat': 'mp3',
-            'audioBitrate': '128',
-          }),
-        ),
-      );
-      final resp = await req.close().timeout(const Duration(seconds: 12));
-      final body = await resp.transform(utf8.decoder).join();
-      final data = jsonDecode(body);
-      if (data is Map) {
-        final dlUrl = (data['url'] ?? '').toString();
-        if (dlUrl.startsWith('http')) {
-          return ResolvedStream(
-            url: dlUrl,
-            filename: (data['filename'] ?? '').toString(),
-          );
-        }
-      }
-    } catch (_) {}
-  }
-
-  const legacyEndpoints = [
-    'https://co.wuk.sh/api/json',
-  ];
-  for (final endpoint in legacyEndpoints) {
-    try {
-      final uri = Uri.parse(endpoint);
-      final req = await client.postUrl(uri);
-      req.headers.set('Accept', 'application/json');
-      req.headers.set('Content-Type', 'application/json');
-      req.add(
-        utf8.encode(
-          jsonEncode({
-            'url': targetUrl,
-            'isAudioOnly': true,
-            'aFormat': 'mp3',
-          }),
-        ),
-      );
-      final resp = await req.close().timeout(const Duration(seconds: 12));
-      final body = await resp.transform(utf8.decoder).join();
-      final data = jsonDecode(body);
-      if (data is Map) {
-        final dlUrl = (data['url'] ?? '').toString();
-        if (dlUrl.startsWith('http')) {
-          return ResolvedStream(
-            url: dlUrl,
-            filename: (data['filename'] ?? '').toString(),
-          );
-        }
-      }
-    } catch (_) {}
-  }
+String? _extractYouTubeVideoId(String input) {
+  final trimmed = input.trim();
+  final reg = RegExp(
+    r'(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|shorts|live)\/|.*[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})',
+  );
+  final m = reg.firstMatch(trimmed);
+  if (m != null) return m.group(1);
+  if (RegExp(r'^[a-zA-Z0-9_-]{11}$').hasMatch(trimmed)) return trimmed;
   return null;
 }
 
-Future<ResolvedStream?> _resolveViaPiped(
+/// Searches YouTube directly from the user's phone via YouTube's official
+/// InnerTube `/youtubei/v1/search` endpoint (no third-party server needed).
+Future<String?> _searchYouTubeVideoIdDirect(
   HttpClient client,
-  String queryOrUrl,
+  String query,
 ) async {
-  const pipedInstances = [
-    'https://pipedapi.kavin.rocks',
-    'https://pipedapi.tokhmi.xyz',
-    'https://pipedapi.moomoo.me',
-    'https://api.piped.private.coffee',
+  try {
+    final uri = Uri.parse('https://www.youtube.com/youtubei/v1/search?prettyPrint=false');
+    final req = await client.postUrl(uri);
+    req.headers.set('Content-Type', 'application/json');
+    req.headers.set(
+      'User-Agent',
+      'com.google.android.youtube/19.29.37 (Linux; U; Android 15) gzip',
+    );
+    req.add(
+      utf8.encode(
+        jsonEncode({
+          'context': {
+            'client': {
+              'clientName': 'ANDROID',
+              'clientVersion': '19.29.37',
+              'androidSdkVersion': 35,
+              'hl': 'en',
+              'gl': 'US',
+            },
+          },
+          'query': '$query official audio',
+        }),
+      ),
+    );
+    final resp = await req.close().timeout(const Duration(seconds: 12));
+    if (resp.statusCode == 200) {
+      final body = await resp.transform(utf8.decoder).join();
+      final match = RegExp(r'"videoId"\s*:\s*"([a-zA-Z0-9_-]{11})"').firstMatch(body);
+      if (match != null) return match.group(1);
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// Calls YouTube's direct InnerTube Player API using Android VR / iOS / Android
+/// clients right from the device to get a direct unthrottled audio stream URL.
+Future<ResolvedStream?> _extractViaDirectInnerTube(
+  HttpClient client,
+  String videoId,
+) async {
+  final clients = [
+    {
+      'clientName': 'ANDROID_VR',
+      'clientVersion': '1.60.19',
+      'deviceMake': 'Oculus',
+      'deviceModel': 'Quest 3',
+      'osName': 'Android',
+      'osVersion': '12L',
+      'androidSdkVersion': 32,
+      'ua':
+          'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+    },
+    {
+      'clientName': 'IOS',
+      'clientVersion': '19.45.4',
+      'deviceMake': 'Apple',
+      'deviceModel': 'iPhone16,2',
+      'osName': 'iPhone',
+      'osVersion': '18.1.0.22B83',
+      'ua':
+          'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)',
+    },
+    {
+      'clientName': 'ANDROID_TESTSUITE',
+      'clientVersion': '1.9',
+      'androidSdkVersion': 35,
+      'ua': 'com.google.android.youtube/1.9 (Linux; U; Android 15) gzip',
+    },
   ];
 
-  String? extractYtId(String input) {
-    final u = Uri.tryParse(input);
-    if (u == null) return null;
-    if (u.host.contains('youtu.be')) {
-      return u.pathSegments.isNotEmpty ? u.pathSegments.first : null;
-    }
-    if (u.host.contains('youtube.com')) {
-      return u.queryParameters['v'];
-    }
-    return null;
-  }
-
-  for (final base in pipedInstances) {
+  for (final c in clients) {
     try {
-      String? videoId = extractYtId(queryOrUrl);
-      if (videoId == null) {
-        final searchUri = Uri.parse(
-          '$base/search?q=${Uri.encodeQueryComponent(queryOrUrl)}&filter=music_songs',
+      final uri = Uri.parse(
+        'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+      );
+      final req = await client.postUrl(uri);
+      req.headers.set('Content-Type', 'application/json');
+      req.headers.set('User-Agent', c['ua'].toString());
+
+      final clientMap = <String, dynamic>{
+        'clientName': c['clientName'],
+        'clientVersion': c['clientVersion'],
+        'hl': 'en',
+        'gl': 'US',
+      };
+      if (c['deviceMake'] != null) clientMap['deviceMake'] = c['deviceMake'];
+      if (c['deviceModel'] != null) clientMap['deviceModel'] = c['deviceModel'];
+      if (c['osName'] != null) clientMap['osName'] = c['osName'];
+      if (c['osVersion'] != null) clientMap['osVersion'] = c['osVersion'];
+      if (c['androidSdkVersion'] != null) {
+        clientMap['androidSdkVersion'] = c['androidSdkVersion'];
+      }
+
+      req.add(
+        utf8.encode(
+          jsonEncode({
+            'videoId': videoId,
+            'context': {'client': clientMap},
+            'contentCheckOk': true,
+            'racyCheckOk': true,
+          }),
+        ),
+      );
+
+      final resp = await req.close().timeout(const Duration(seconds: 12));
+      if (resp.statusCode != 200) continue;
+      final body = await resp.transform(utf8.decoder).join();
+      final data = jsonDecode(body) as Map;
+
+      final details = data['videoDetails'] as Map?;
+      final title = (details?['title'] ?? 'Downloaded Song').toString();
+      final author = (details?['author'] ?? 'Artist')
+          .toString()
+          .replaceAll(' - Topic', '');
+
+      final streamingData = data['streamingData'] as Map?;
+      if (streamingData == null) continue;
+
+      final adaptive = (streamingData['adaptiveFormats'] as List?) ?? const [];
+      final formats = (streamingData['formats'] as List?) ?? const [];
+      final allFormats = [...adaptive, ...formats];
+
+      String? bestUrl;
+      String bestExt = '.m4a';
+      int bestBitrate = -1;
+
+      for (final f in allFormats) {
+        if (f is! Map) continue;
+        final url = (f['url'] ?? '').toString();
+        if (!url.startsWith('http')) continue;
+        final mime = (f['mimeType'] ?? '').toString().toLowerCase();
+        final bitrate = (f['bitrate'] as num?)?.toInt() ?? 0;
+
+        if (mime.startsWith('audio/')) {
+          // Prefer audio/mp4 (m4a) because Android MediaStore & ExoPlayer love it
+          final bonus = mime.contains('mp4') ? 500000 : 0;
+          if (bitrate + bonus > bestBitrate) {
+            bestBitrate = bitrate + bonus;
+            bestUrl = url;
+            bestExt = mime.contains('mp4') ? '.m4a' : '.ogg';
+          }
+        }
+      }
+
+      // If no pure audio stream had a direct URL, check muxed mp4 stream
+      if (bestUrl == null) {
+        for (final f in formats) {
+          if (f is! Map) continue;
+          final url = (f['url'] ?? '').toString();
+          if (url.startsWith('http')) {
+            bestUrl = url;
+            bestExt = '.m4a';
+            break;
+          }
+        }
+      }
+
+      if (bestUrl != null) {
+        return ResolvedStream(
+          url: bestUrl,
+          title: title,
+          artist: author,
+          ext: bestExt,
         );
-        final sReq = await client.getUrl(searchUri);
-        sReq.headers.set('User-Agent', 'Mozilla/5.0');
-        final sResp = await sReq.close().timeout(const Duration(seconds: 10));
-        if (sResp.statusCode == 200) {
-          final sBody = await sResp.transform(utf8.decoder).join();
-          final sJson = jsonDecode(sBody) as Map;
-          final items = (sJson['items'] as List?) ?? const [];
-          if (items.isNotEmpty) {
-            final firstUrl = (items.first['url'] ?? '').toString();
-            if (firstUrl.contains('v=')) {
-              videoId = firstUrl.split('v=').last.split('&').first;
-            }
-          }
-        }
-      }
-
-      if (videoId == null || videoId.isEmpty) continue;
-
-      final ytUrl = 'https://www.youtube.com/watch?v=$videoId';
-      final cobaltHit = await _resolveViaCobalt(client, ytUrl);
-      if (cobaltHit != null) return cobaltHit;
-
-      final streamUri = Uri.parse('$base/streams/$videoId');
-      final stReq = await client.getUrl(streamUri);
-      stReq.headers.set('User-Agent', 'Mozilla/5.0');
-      final stResp = await stReq.close().timeout(const Duration(seconds: 10));
-      if (stResp.statusCode == 200) {
-        final stBody = await stResp.transform(utf8.decoder).join();
-        final stJson = jsonDecode(stBody) as Map;
-        final title = (stJson['title'] ?? 'Downloaded Song').toString();
-        final uploader = (stJson['uploader'] ?? 'Artist').toString();
-        final streams = (stJson['audioStreams'] as List?) ?? const [];
-        if (streams.isNotEmpty) {
-          Map? best;
-          for (final s in streams) {
-            if (s is Map && (s['url'] ?? '').toString().startsWith('http')) {
-              final mime = (s['mimeType'] ?? '').toString().toLowerCase();
-              if (mime.contains('mp4') || mime.contains('m4a') || best == null) {
-                best = s;
-              }
-            }
-          }
-          if (best != null) {
-            return ResolvedStream(
-              url: best['url'].toString(),
-              filename: '$uploader - $title.m4a',
-            );
-          }
-        }
       }
     } catch (_) {}
   }
   return null;
 }
 
-Future<bool> downloadAudioIntoApp({
-  required String inputUrlOrQuery,
+/// Uses `youtube_explode_dart` locally on the phone to search & download audio
+/// directly from YouTube's servers without any third-party proxy.
+Future<bool> _downloadViaYoutubeExplode({
+  required String queryOrVideoId,
+  required bool isVideoId,
   String? customTitle,
   String? customArtist,
 }) async {
-  final rawInput = inputUrlOrQuery.trim();
-  if (rawInput.isEmpty) return false;
-
-  final client = HttpClient()
-    ..connectionTimeout = const Duration(seconds: 15);
-
+  final yt = ytd.YoutubeExplode();
   try {
-    downloadProgress.value = 0.02;
-    downloadStatus.value = 'Resolving audio link…';
-
-    String downloadUrl = rawInput;
-    String suggestedFilename = '';
-
-    if (downloadUrl.contains('dropbox.com') && downloadUrl.contains('dl=0')) {
-      downloadUrl = downloadUrl.replaceAll('dl=0', 'dl=1');
-    }
-
-    if (downloadUrl.contains('drive.google.com/file/d/')) {
-      final parts = downloadUrl.split('/file/d/');
-      if (parts.length > 1) {
-        final fileId = parts[1].split('/').first;
-        downloadUrl = 'https://drive.google.com/uc?export=download&id=$fileId';
-      }
-    }
-
-    final isHttp =
-        rawInput.startsWith('http://') || rawInput.startsWith('https://');
-    final lower = rawInput.toLowerCase();
-    final isSocialOrStreamingLink = isHttp &&
-        (lower.contains('youtube.com') ||
-            lower.contains('youtu.be') ||
-            lower.contains('soundcloud.com') ||
-            lower.contains('spotify.com') ||
-            lower.contains('tiktok.com'));
-
-    if (!isHttp) {
-      downloadStatus.value = 'Searching "$rawInput"…';
-      final resolved = await _resolveViaPiped(client, rawInput);
-      if (resolved == null) {
-        appNotice.value =
-            'Could not resolve search query. Try pasting a direct .mp3 link or YouTube URL.';
-        return false;
-      }
-      downloadUrl = resolved.url;
-      suggestedFilename =
-          resolved.filename.isEmpty ? '$rawInput.m4a' : resolved.filename;
-    } else if (isSocialOrStreamingLink) {
-      if (lower.contains('spotify.com')) {
-        downloadStatus.value = 'Reading Spotify track info…';
-        final spTitle = await _resolveSpotifyTitle(client, rawInput);
-        if (spTitle != null) {
-          customTitle ??= spTitle;
-          downloadStatus.value = 'Matching "$spTitle" audio stream…';
-          final resolved = await _resolveViaPiped(client, spTitle);
-          if (resolved != null) {
-            downloadUrl = resolved.url;
-            suggestedFilename =
-                resolved.filename.isEmpty ? '$spTitle.m4a' : resolved.filename;
-          } else {
-            appNotice.value =
-                'Found Spotify track "$spTitle", but stream servers were busy. Try a direct MP3 or YouTube link.';
-            return false;
-          }
-        }
-      } else {
-        downloadStatus.value = 'Extracting audio via Cobalt…';
-        final cobalt = await _resolveViaCobalt(client, rawInput);
-        if (cobalt != null) {
-          downloadUrl = cobalt.url;
-          suggestedFilename = cobalt.filename;
-        } else {
-          downloadStatus.value = 'Trying backup stream extractor…';
-          final piped = await _resolveViaPiped(client, rawInput);
-          if (piped != null) {
-            downloadUrl = piped.url;
-            suggestedFilename = piped.filename;
-          } else {
-            appNotice.value =
-                'Could not extract stream from that link. Try a direct .mp3 / Catbox / Discord link.';
-            return false;
-          }
-        }
-      }
-    }
-
-    downloadStatus.value = 'Downloading audio to AlexLMP…';
-    final uri = Uri.parse(downloadUrl);
-    final req = await client.getUrl(uri);
-    req.headers.set(
-      'User-Agent',
-      'Mozilla/5.0 (Linux; Android 15; Pixel 10) AppleWebKit/537.36',
-    );
-    final resp = await req.close();
-
-    if (resp.statusCode < 200 || resp.statusCode >= 400) {
-      appNotice.value = 'Download failed (HTTP ${resp.statusCode}).';
-      return false;
-    }
-
-    String ext = '.mp3';
-    final pathExt = p.extension(uri.path).toLowerCase();
-    if (const ['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.opus']
-        .contains(pathExt)) {
-      ext = pathExt;
-    } else if (suggestedFilename.isNotEmpty) {
-      final sExt = p.extension(suggestedFilename).toLowerCase();
-      if (sExt.isNotEmpty) ext = sExt;
-    }
-
-    String cleanBaseName = '';
-    if (customTitle != null && customTitle.trim().isNotEmpty) {
-      final art = (customArtist != null && customArtist.trim().isNotEmpty)
-          ? '${customArtist.trim()} - '
-          : '';
-      cleanBaseName = '$art${customTitle.trim()}';
-    } else if (suggestedFilename.isNotEmpty) {
-      cleanBaseName = p.basenameWithoutExtension(suggestedFilename);
+    ytd.Video? video;
+    if (isVideoId) {
+      downloadStatus.value = 'Fetching track metadata from YouTube…';
+      video = await yt.videos.get(queryOrVideoId);
     } else {
-      final seg = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : '';
-      cleanBaseName = Uri.decodeComponent(p.basenameWithoutExtension(seg));
+      downloadStatus.value = 'Searching "$queryOrVideoId"…';
+      final results = await yt.search.search('$queryOrVideoId official audio');
+      if (results.isNotEmpty) {
+        video = results.first;
+      }
     }
 
-    cleanBaseName = cleanBaseName
+    if (video == null) return false;
+
+    downloadStatus.value = 'Extracting lossless audio stream…';
+    final manifest = await yt.videos.streamsClient.getManifest(
+      video.id,
+      ytClients: [
+        ytd.YoutubeApiClient.androidVr,
+        ytd.YoutubeApiClient.ios,
+        ytd.YoutubeApiClient.safari,
+        ytd.YoutubeApiClient.android,
+      ],
+    );
+
+    final audioStreams = manifest.audioOnly;
+    if (audioStreams.isEmpty) return false;
+
+    // Prefer mp4a/m4a container for universal Android ExoPlayer compatibility
+    ytd.AudioStreamInfo? chosen;
+    for (final s in audioStreams.sortByBitrate()) {
+      if (s.container.name.toLowerCase().contains('mp4') ||
+          s.container.name.toLowerCase().contains('m4a')) {
+        chosen = s;
+        break;
+      }
+    }
+    chosen ??= audioStreams.withHighestBitrate();
+
+    final finalTitle = (customTitle != null && customTitle.trim().isNotEmpty)
+        ? customTitle.trim()
+        : video.title.trim();
+    final finalArtist = (customArtist != null && customArtist.trim().isNotEmpty)
+        ? customArtist.trim()
+        : video.author.replaceAll(' - Topic', '').trim();
+
+    var safeName = '$finalArtist - $finalTitle'
         .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
         .trim();
-    if (cleanBaseName.isEmpty) {
-      cleanBaseName = 'Track_${DateTime.now().millisecondsSinceEpoch}';
+    if (safeName.isEmpty) {
+      safeName = 'Track_${DateTime.now().millisecondsSinceEpoch}';
     }
 
+    final ext = chosen.container.name.toLowerCase().contains('mp4')
+        ? '.m4a'
+        : '.m4a';
     final dir = await _getMusicDownloadsDir();
-    final savePath = p.join(dir.path, '$cleanBaseName$ext');
+    final savePath = p.join(dir.path, '$safeName$ext');
     final outFile = File(savePath);
     final sink = outFile.openWrite();
 
-    final totalBytes = resp.contentLength;
+    final totalBytes = chosen.size.totalBytes;
     int received = 0;
 
-    await for (final chunk in resp) {
+    downloadStatus.value = 'Downloading "$finalTitle"…';
+    final byteStream = yt.videos.streamsClient.get(chosen);
+    await for (final chunk in byteStream) {
       sink.add(chunk);
       received += chunk.length;
       if (totalBytes > 0) {
@@ -516,31 +513,15 @@ Future<bool> downloadAudioIntoApp({
       try {
         outFile.deleteSync();
       } catch (_) {}
-      appNotice.value =
-          'The link did not return a valid audio file. Make sure it is a direct audio URL.';
       return false;
     }
-
-    String finalTitle = customTitle?.trim() ?? '';
-    String finalArtist = customArtist?.trim() ?? '';
-    if (finalTitle.isEmpty) {
-      if (cleanBaseName.contains(' - ')) {
-        final parts = cleanBaseName.split(' - ');
-        finalArtist = parts.first.trim();
-        finalTitle = parts.sublist(1).join(' - ').trim();
-      } else {
-        finalTitle = cleanBaseName;
-        finalArtist = 'Downloaded Track';
-      }
-    }
-    if (finalArtist.isEmpty) finalArtist = 'Downloaded Track';
 
     final newTrack = TrackItem(
       id: 'dl_${savePath.hashCode}',
       title: finalTitle,
       artist: finalArtist,
       album: 'AlexLMP Downloads',
-      durationSeconds: 0,
+      durationSeconds: video.duration?.inSeconds ?? 0,
       artColors:
           kArtPalettes[audioHandler.tracks.length % kArtPalettes.length].colors,
       artStyle: kArtStyles[audioHandler.tracks.length % kArtStyles.length],
@@ -551,6 +532,162 @@ Future<bool> downloadAudioIntoApp({
     await audioHandler.addTracks([newTrack], playFirst: true);
     appNotice.value = 'Downloaded "$finalTitle" into your library!';
     return true;
+  } catch (_) {
+    return false;
+  } finally {
+    yt.close();
+  }
+}
+
+/// Main entry point for downloading any song into AlexLMP:
+/// Works with:
+/// 1) Song Name & Artist ("Playboi Carti - Timeless", etc.)
+/// 2) YouTube / YouTube Music / Shorts / youtu.be links
+/// 3) Spotify track links (auto-matches the full song on YouTube Music)
+/// 4) Direct .mp3 / .flac / .wav / .m4a / Catbox / Discord / Dropbox / Drive URLs
+Future<bool> downloadAudioIntoApp({
+  required String inputUrlOrQuery,
+  String? customTitle,
+  String? customArtist,
+}) async {
+  final rawInput = inputUrlOrQuery.trim();
+  if (rawInput.isEmpty) return false;
+
+  final client = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 15);
+
+  try {
+    downloadProgress.value = 0.04;
+    downloadStatus.value = 'Preparing download…';
+
+    final isHttp =
+        rawInput.startsWith('http://') || rawInput.startsWith('https://');
+    final lower = rawInput.toLowerCase();
+
+    // Case A: Spotify Link -> Read Title & Artist from Spotify, then fetch full song!
+    if (isHttp && lower.contains('spotify.com')) {
+      downloadStatus.value = 'Reading Spotify song info…';
+      final spQuery = await _resolveSpotifyQuery(client, rawInput);
+      if (spQuery == null || spQuery.isEmpty) {
+        appNotice.value =
+            'Could not read that Spotify link. Try typing the Song Name & Artist directly!';
+        return false;
+      }
+      // Try on-device YoutubeExplode first
+      final okExplode = await _downloadViaYoutubeExplode(
+        queryOrVideoId: spQuery,
+        isVideoId: false,
+        customTitle: customTitle,
+        customArtist: customArtist,
+      );
+      if (okExplode) return true;
+
+      // Fallback to direct InnerTube search + player extraction
+      downloadStatus.value = 'Matching "$spQuery" stream…';
+      final vid = await _searchYouTubeVideoIdDirect(client, spQuery);
+      if (vid != null) {
+        final stream = await _extractViaDirectInnerTube(client, vid);
+        if (stream != null) {
+          return await _downloadBinaryStreamToLibrary(
+            client: client,
+            downloadUrl: stream.url,
+            title: customTitle ?? stream.title,
+            artist: customArtist ?? stream.artist,
+            ext: stream.ext,
+          );
+        }
+      }
+      appNotice.value = 'Matched "$spQuery", but could not pull stream.';
+      return false;
+    }
+
+    // Case B: YouTube / youtu.be / music.youtube.com link
+    final ytId = _extractYouTubeVideoId(rawInput);
+    if (ytId != null && (isHttp || rawInput.length == 11)) {
+      final okExplode = await _downloadViaYoutubeExplode(
+        queryOrVideoId: ytId,
+        isVideoId: true,
+        customTitle: customTitle,
+        customArtist: customArtist,
+      );
+      if (okExplode) return true;
+
+      downloadStatus.value = 'Using direct Android VR stream extractor…';
+      final stream = await _extractViaDirectInnerTube(client, ytId);
+      if (stream != null) {
+        return await _downloadBinaryStreamToLibrary(
+          client: client,
+          downloadUrl: stream.url,
+          title: customTitle ?? stream.title,
+          artist: customArtist ?? stream.artist,
+          ext: stream.ext,
+        );
+      }
+      appNotice.value = 'Could not extract audio from that YouTube video.';
+      return false;
+    }
+
+    // Case C: Plain text Song Name / Artist search query (not a URL!)
+    if (!isHttp) {
+      final okExplode = await _downloadViaYoutubeExplode(
+        queryOrVideoId: rawInput,
+        isVideoId: false,
+        customTitle: customTitle,
+        customArtist: customArtist,
+      );
+      if (okExplode) return true;
+
+      downloadStatus.value = 'Searching YouTube Music for "$rawInput"…';
+      final vid = await _searchYouTubeVideoIdDirect(client, rawInput);
+      if (vid != null) {
+        final stream = await _extractViaDirectInnerTube(client, vid);
+        if (stream != null) {
+          return await _downloadBinaryStreamToLibrary(
+            client: client,
+            downloadUrl: stream.url,
+            title: customTitle ?? stream.title,
+            artist: customArtist ?? stream.artist,
+            ext: stream.ext,
+          );
+        }
+      }
+      appNotice.value = 'Could not find a downloadable stream for "$rawInput".';
+      return false;
+    }
+
+    // Case D: Direct Audio File URL (.mp3, .wav, .flac, .m4a, Catbox, Discord, Dropbox, Google Drive)
+    String directUrl = rawInput;
+    if (directUrl.contains('dropbox.com') && directUrl.contains('dl=0')) {
+      directUrl = directUrl.replaceAll('dl=0', 'dl=1');
+    }
+    if (directUrl.contains('drive.google.com/file/d/')) {
+      final parts = directUrl.split('/file/d/');
+      if (parts.length > 1) {
+        final fileId = parts[1].split('/').first;
+        directUrl = 'https://drive.google.com/uc?export=download&id=$fileId';
+      }
+    }
+
+    final uri = Uri.parse(directUrl);
+    final seg = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : 'Track';
+    final decodedName = Uri.decodeComponent(p.basenameWithoutExtension(seg));
+    String ext = p.extension(uri.path).toLowerCase();
+    if (!const ['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.opus']
+        .contains(ext)) {
+      ext = '.mp3';
+    }
+
+    return await _downloadBinaryStreamToLibrary(
+      client: client,
+      downloadUrl: directUrl,
+      title: (customTitle != null && customTitle.trim().isNotEmpty)
+          ? customTitle.trim()
+          : (decodedName.isEmpty ? 'Downloaded Track' : decodedName),
+      artist: (customArtist != null && customArtist.trim().isNotEmpty)
+          ? customArtist.trim()
+          : 'Downloaded Track',
+      ext: ext,
+    );
   } catch (e) {
     appNotice.value = 'Download error: $e';
     return false;
@@ -559,6 +696,78 @@ Future<bool> downloadAudioIntoApp({
     downloadProgress.value = null;
     downloadStatus.value = null;
   }
+}
+
+Future<bool> _downloadBinaryStreamToLibrary({
+  required HttpClient client,
+  required String downloadUrl,
+  required String title,
+  required String artist,
+  required String ext,
+}) async {
+  downloadStatus.value = 'Downloading "$title"…';
+  final uri = Uri.parse(downloadUrl);
+  final req = await client.getUrl(uri);
+  req.headers.set(
+    'User-Agent',
+    'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L) gzip',
+  );
+  final resp = await req.close();
+
+  if (resp.statusCode < 200 || resp.statusCode >= 400) {
+    appNotice.value = 'Download failed (HTTP ${resp.statusCode}).';
+    return false;
+  }
+
+  var safeName = '$artist - $title'
+      .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+      .trim();
+  if (safeName.isEmpty) {
+    safeName = 'Track_${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  final dir = await _getMusicDownloadsDir();
+  final savePath = p.join(dir.path, '$safeName$ext');
+  final outFile = File(savePath);
+  final sink = outFile.openWrite();
+
+  final totalBytes = resp.contentLength;
+  int received = 0;
+
+  await for (final chunk in resp) {
+    sink.add(chunk);
+    received += chunk.length;
+    if (totalBytes > 0) {
+      downloadProgress.value = (received / totalBytes).clamp(0.05, 0.99);
+    }
+  }
+  await sink.flush();
+  await sink.close();
+
+  if (received < 1024) {
+    try {
+      outFile.deleteSync();
+    } catch (_) {}
+    appNotice.value = 'Link did not return valid audio data.';
+    return false;
+  }
+
+  final newTrack = TrackItem(
+    id: 'dl_${savePath.hashCode}',
+    title: title,
+    artist: artist,
+    album: 'AlexLMP Downloads',
+    durationSeconds: 0,
+    artColors:
+        kArtPalettes[audioHandler.tracks.length % kArtPalettes.length].colors,
+    artStyle: kArtStyles[audioHandler.tracks.length % kArtStyles.length],
+    source: savePath,
+    filePath: savePath,
+  );
+
+  await audioHandler.addTracks([newTrack], playFirst: true);
+  appNotice.value = 'Downloaded "$title" into your library!';
+  return true;
 }
 
 Future<int> quickImportPhoneDownloadsFolder() async {
@@ -2114,7 +2323,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Download from a direct URL / link or scan your phone to get started.',
+            'Download any song by name or link, or scan your phone to get started.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Color(0xFFA6ADB2), fontSize: 14),
           ),
@@ -2133,7 +2342,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   Icon(Icons.cloud_download_rounded, color: pal.onAccent),
                   const SizedBox(width: 8),
                   Text(
-                    'Download via Link / URL',
+                    'Download Song / Paste Link',
                     style: TextStyle(
                       color: pal.onAccent,
                       fontWeight: FontWeight.w700,
@@ -2473,7 +2682,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Direct URL & Cobalt Downloader',
+                            'Direct Song & Link Downloader',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 16,
@@ -2484,7 +2693,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                           Text(
                             busyDl
                                 ? (downloadStatus.value ?? 'Downloading…')
-                                : 'Paste MP3 / YouTube / Spotify link or song name',
+                                : 'Type Song Name or paste Spotify / YouTube / MP3 link',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -2872,7 +3081,7 @@ final List<BoxShadow> _shadow = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Direct URL / Cobalt Downloader Bottom Sheet
+// Direct URL / YouTube / Spotify Downloader Bottom Sheet
 // ─────────────────────────────────────────────────────────────────────────────
 
 void showDirectUrlDownloadSheet(BuildContext context) {
@@ -2912,7 +3121,7 @@ void showDirectUrlDownloadSheet(BuildContext context) {
                       const SizedBox(width: 10),
                       const Expanded(
                         child: Text(
-                          'Direct URL & Cobalt Downloader',
+                          'Direct Song & Link Downloader',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 20,
@@ -2924,7 +3133,7 @@ void showDirectUrlDownloadSheet(BuildContext context) {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Paste a direct .mp3 / .flac / .wav / Catbox / Discord / Dropbox link, a YouTube / SoundCloud / Spotify URL, or type "Artist - Song Name".',
+                    'Type any "Artist - Song Name", or paste a Spotify track link, YouTube link, or direct .mp3 / Catbox / Discord URL.',
                     style: TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                   const SizedBox(height: 16),
@@ -2933,9 +3142,9 @@ void showDirectUrlDownloadSheet(BuildContext context) {
                     autofocus: true,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      labelText: 'Audio URL, YouTube/Spotify Link, or Song Name',
+                      labelText: 'Song Name, Spotify Link, YouTube Link, or MP3 URL',
                       labelStyle: const TextStyle(color: Colors.white70),
-                      hintText: 'https://... or Artist - Song',
+                      hintText: 'e.g. Playboi Carti - Timeless or https://...',
                       hintStyle: const TextStyle(color: Colors.white38),
                       filled: true,
                       fillColor: pal.container,
@@ -5575,8 +5784,8 @@ void showAddMusicSheet(BuildContext context) {
             _sheetTile(
               pal,
               Icons.cloud_download_rounded,
-              'Direct URL / Cobalt Downloader',
-              'Paste MP3, Catbox, Discord, YouTube or Spotify link',
+              'Direct Song & Link Downloader',
+              'Type Song Name or paste Spotify, YouTube, or MP3 link',
               () {
                 Navigator.pop(ctx);
                 showDirectUrlDownloadSheet(context);
@@ -6341,7 +6550,7 @@ class _SearchSheetState extends State<SearchSheet> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Artwork (No nested generic brackets)
+// Artwork
 // ─────────────────────────────────────────────────────────────────────────────
 
 final Map<String, Object?> _artCache = {};
