@@ -14,8 +14,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals & Palettes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,7 +70,7 @@ Future<void> main() async {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers & Physics
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 String cleanText(dynamic v, String fallback) {
@@ -98,7 +96,7 @@ Future<String?> pickAndSaveGalleryImage() async {
     final ext = p.extension(srcPath).isEmpty ? '.jpg' : p.extension(srcPath);
     final dst = p.join(
       dir.path,
-      'pl_${DateTime.now().microsecondsSinceEpoch}$ext',
+      'pl_cover_${DateTime.now().microsecondsSinceEpoch}$ext',
     );
     await File(srcPath).copy(dst);
     return dst;
@@ -107,59 +105,8 @@ Future<String?> pickAndSaveGalleryImage() async {
   }
 }
 
-class Squishy extends StatefulWidget {
-  final Widget child;
-  final VoidCallback? onTap;
-  final double scale;
-
-  const Squishy({super.key, required this.child, this.onTap, this.scale = 0.94});
-
-  @override
-  State<Squishy> createState() => _SquishyState();
-}
-
-class _SquishyState extends State<Squishy> with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController.unbounded(vsync: this, value: 1.0);
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  void _down() => _ctrl.animateTo(widget.scale, duration: const Duration(milliseconds: 90), curve: Curves.easeOut);
-  void _up() {
-    _ctrl.animateWith(SpringSimulation(const SpringDescription(mass: 1, stiffness: 480, damping: 16), _ctrl.value, 1.0, 0.0));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => _down(),
-      onTapUp: (_) {
-        HapticFeedback.lightImpact();
-        widget.onTap?.call();
-        _up();
-      },
-      onTapCancel: _up,
-      child: AnimatedBuilder(
-        animation: _ctrl,
-        builder: (ctx, child) => Transform.scale(scale: _ctrl.value.clamp(0.7, 1.2), child: child),
-        child: widget.child,
-      ),
-    );
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Models & AppState
+// Models & State
 // ─────────────────────────────────────────────────────────────────────────────
 
 class Playlist {
@@ -175,7 +122,13 @@ class Playlist {
     List<String>? trackIds,
   }) : trackIds = trackIds ?? [];
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'cover': cover, 'tracks': trackIds};
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'cover': cover,
+    'tracks': trackIds,
+  };
+
   factory Playlist.fromJson(Map<String, dynamic> j) => Playlist(
     id: j['id'] as String,
     name: j['name'] as String,
@@ -208,10 +161,13 @@ class TrackItem {
   });
 
   Uri get playbackUri {
-    if (filePath != null && filePath!.isNotEmpty && File(filePath!).existsSync()) {
-      return Uri.file(filePath!);
+    final fp = filePath;
+    if (fp != null && fp.isNotEmpty && File(fp).existsSync()) {
+      return Uri.file(fp);
     }
-    return source.startsWith('content://') ? Uri.parse(source) : Uri.file(source);
+    return source.startsWith('content://')
+        ? Uri.parse(source)
+        : Uri.file(source);
   }
 
   MediaItem toMediaItem() => MediaItem(
@@ -227,20 +183,12 @@ class AppState extends ChangeNotifier {
   SharedPreferences? _prefs;
   Color seedColor = const Color(0xFF567CFF);
   bool useAmoled = true;
-  String playerDesignStyle = 'Material Extended';
-  bool showArtworkBlurBackdrop = true;
-  bool skipSilence = false;
-  bool audioNormalization = true;
-  bool progressiveSeek = false;
-  bool pauseAtZeroVolume = false;
-  int crossfadeSeconds = 0;
+  bool vinylSpinMode = true;
   bool linkSpeedAndPitch = false;
   double speed = 1.0;
   double pitch = 1.0;
-
   final Set<String> liked = {};
   final Set<String> deletedIds = {};
-  final Map<String, int> playCounts = {};
   Map<String, dynamic> _edits = {};
   final List<Playlist> playlists = [];
 
@@ -248,39 +196,23 @@ class AppState extends ChangeNotifier {
     _prefs = await SharedPreferences.getInstance();
     seedColor = Color(_prefs?.getInt('seed_color') ?? 0xFF567CFF);
     useAmoled = _prefs?.getBool('use_amoled') ?? true;
-    playerDesignStyle = _prefs?.getString('player_style') ?? 'Material Extended';
-    showArtworkBlurBackdrop = _prefs?.getBool('blur_backdrop') ?? true;
-    skipSilence = _prefs?.getBool('skip_silence') ?? false;
-    audioNormalization = _prefs?.getBool('norm_audio') ?? true;
-    progressiveSeek = _prefs?.getBool('prog_seek') ?? false;
-    pauseAtZeroVolume = _prefs?.getBool('pause_zero_vol') ?? false;
-    crossfadeSeconds = _prefs?.getInt('crossfade_sec') ?? 0;
+    vinylSpinMode = _prefs?.getBool('vinyl_spin_mode') ?? true;
     linkSpeedAndPitch = _prefs?.getBool('link_speed_pitch') ?? false;
     speed = _prefs?.getDouble('speed') ?? 1.0;
     pitch = _prefs?.getDouble('pitch') ?? 1.0;
-
     liked.addAll(_prefs?.getStringList('liked') ?? const []);
     deletedIds.addAll(_prefs?.getStringList('deleted') ?? const []);
-
-    try {
-      final rawCounts = jsonDecode(_prefs?.getString('play_counts') ?? '{}') as Map;
-      rawCounts.forEach((k, v) => playCounts[k.toString()] = (v as num).toInt());
-    } catch (_) {}
-
     try {
       final raw = jsonDecode(_prefs?.getString('playlists') ?? '[]') as List;
-      playlists..clear()..addAll(raw.map((e) => Playlist.fromJson(Map<String, dynamic>.from(e))));
+      playlists
+        ..clear()
+        ..addAll(raw.map((e) => Playlist.fromJson(Map<String, dynamic>.from(e))));
     } catch (_) {}
-
     try {
-      _edits = Map<String, dynamic>.from(jsonDecode(_prefs?.getString('edits') ?? '{}'));
+      _edits = Map<String, dynamic>.from(
+        jsonDecode(_prefs?.getString('edits') ?? '{}'),
+      );
     } catch (_) {}
-    notifyListeners();
-  }
-
-  void setPlayerDesignStyle(String style) {
-    playerDesignStyle = style;
-    _prefs?.setString('player_style', style);
     notifyListeners();
   }
 
@@ -296,40 +228,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setBlurBackdrop(bool v) {
-    showArtworkBlurBackdrop = v;
-    _prefs?.setBool('blur_backdrop', v);
-    notifyListeners();
-  }
-
-  void setSkipSilence(bool v) {
-    skipSilence = v;
-    _prefs?.setBool('skip_silence', v);
-    audioHandler.player.setSkipSilenceEnabled(v);
-    notifyListeners();
-  }
-
-  void setAudioNormalization(bool v) {
-    audioNormalization = v;
-    _prefs?.setBool('norm_audio', v);
-    notifyListeners();
-  }
-
-  void setProgressiveSeek(bool v) {
-    progressiveSeek = v;
-    _prefs?.setBool('prog_seek', v);
-    notifyListeners();
-  }
-
-  void setPauseAtZeroVolume(bool v) {
-    pauseAtZeroVolume = v;
-    _prefs?.setBool('pause_zero_vol', v);
-    notifyListeners();
-  }
-
-  void setCrossfadeSeconds(int sec) {
-    crossfadeSeconds = sec;
-    _prefs?.setInt('crossfade_sec', sec);
+  void setVinylSpinMode(bool v) {
+    vinylSpinMode = v;
+    _prefs?.setBool('vinyl_spin_mode', v);
     notifyListeners();
   }
 
@@ -348,12 +249,6 @@ class AppState extends ChangeNotifier {
   void setPitch(double v) {
     pitch = v.clamp(0.5, 2.0);
     _prefs?.setDouble('pitch', pitch);
-    notifyListeners();
-  }
-
-  void incrementPlayCount(String id) {
-    playCounts[id] = (playCounts[id] ?? 0) + 1;
-    _prefs?.setString('play_counts', jsonEncode(playCounts));
     notifyListeners();
   }
 
@@ -395,7 +290,10 @@ class AppState extends ChangeNotifier {
   }
 
   void _savePlaylists() {
-    _prefs?.setString('playlists', jsonEncode(playlists.map((p) => p.toJson()).toList()));
+    _prefs?.setString(
+      'playlists',
+      jsonEncode(playlists.map((p) => p.toJson()).toList()),
+    );
     notifyListeners();
   }
 
@@ -424,7 +322,8 @@ class AppState extends ChangeNotifier {
     _savePlaylists();
   }
 
-  bool inPlaylist(String pid, String tid) => playlistById(pid)?.trackIds.contains(tid) ?? false;
+  bool inPlaylist(String pid, String tid) =>
+      playlistById(pid)?.trackIds.contains(tid) ?? false;
 
   void togglePlaylistTrack(String pid, String tid) {
     final pl = playlistById(pid);
@@ -476,7 +375,7 @@ class AppState extends ChangeNotifier {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Audio Handler
+// Audio Handler (Sonic ExoPlayer Native Speed & Pitch)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class MyAudioHandler extends BaseAudioHandler with SeekHandler {
@@ -496,7 +395,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   int get index => _index;
-  TrackItem? get currentTrack => (_index >= 0 && _index < tracks.length) ? tracks[_index] : null;
+  TrackItem? get currentTrack =>
+      (_index >= 0 && _index < tracks.length) ? tracks[_index] : null;
+
   TrackItem? trackById(String id) {
     for (final t in tracks) {
       if (t.id == id) return t;
@@ -510,10 +411,13 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       await s.configure(const AudioSessionConfiguration.music());
     } catch (_) {}
     try {
-      await player.setSkipSilenceEnabled(appState.skipSilence);
+      await player.setSkipSilenceEnabled(false);
     } catch (_) {}
 
-    player.playbackEventStream.map(_transformEvent).listen(playbackState.add, onError: (_, __) {});
+    player.playbackEventStream.map(_transformEvent).listen(
+      playbackState.add,
+      onError: (_, __) {},
+    );
 
     player.processingStateStream.listen((state) {
       if (state == ProcessingState.ready) {
@@ -572,7 +476,11 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       player.playing ? MediaControl.pause : MediaControl.play,
       MediaControl.skipToNext,
     ],
-    systemActions: const {MediaAction.seek},
+    systemActions: const {
+      MediaAction.seek,
+      MediaAction.seekForward,
+      MediaAction.seekBackward,
+    },
     androidCompactActionIndices: const [0, 1, 2],
     processingState: const {
       ProcessingState.idle: AudioProcessingState.idle,
@@ -625,10 +533,12 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       } else if (wasCurrent) {
         if (_index >= tracks.length) _index = 0;
         currentIndex.value = _index;
+        libraryRevision.value++;
         await _load(_index, play: wasPlaying);
       } else if (removeIdx < _index) {
         _index = math.max(0, _index - 1);
         currentIndex.value = _index;
+        libraryRevision.value++;
       }
     }
   }
@@ -880,7 +790,7 @@ Future<int> quickImportDownloads() async {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Artwork & Procedural Cover Generators
+// Artwork
 // ─────────────────────────────────────────────────────────────────────────────
 
 final Map<String, Object?> _artCache = {};
@@ -1146,13 +1056,12 @@ class _MainScaffoldState extends State<MainScaffold> {
   }
 
   void _showNotice() {
-    final msg = appNotice.value;
-    if (msg == null || !mounted) return;
+    if (appNotice.value == null || !mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(msg, style: const TextStyle(fontWeight: FontWeight.bold)),
+          content: Text(appNotice.value!, style: const TextStyle(fontWeight: FontWeight.bold)),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
@@ -1166,19 +1075,12 @@ class _MainScaffoldState extends State<MainScaffold> {
       listenable: Listenable.merge([audioHandler.currentIndex, audioHandler.libraryRevision]),
       builder: (ctx, _) {
         final track = audioHandler.currentTrack;
-        final isAmoled = appState.useAmoled;
-        final barBg = isAmoled ? const Color(0xFF0A0A0E) : const Color(0xFF0F152E);
-
         return Scaffold(
           body: Stack(
             children: [
               IndexedStack(
                 index: _tab,
-                children: const [
-                  HomeTab(),
-                  SearchTab(),
-                  LibraryTab(),
-                ],
+                children: const [HomeTab(), SearchTab(), LibraryTab()],
               ),
               if (track != null)
                 Positioned(
@@ -1191,7 +1093,7 @@ class _MainScaffoldState extends State<MainScaffold> {
           ),
           bottomNavigationBar: Container(
             decoration: BoxDecoration(
-              color: barBg,
+              color: appState.useAmoled ? const Color(0xFF0A0A0E) : const Color(0xFF0F152E),
               borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
               boxShadow: [
                 BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 16, offset: const Offset(0, -4)),
@@ -1308,7 +1210,6 @@ class HomeTab extends StatelessWidget {
       ),
       body: CustomScrollView(
         slivers: [
-          // Filter Chips
           SliverToBoxAdapter(
             child: SizedBox(
               height: 48,
@@ -1334,16 +1235,12 @@ class HomeTab extends StatelessWidget {
               ),
             ),
           ),
-
-          // Quick Picks Header
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
               child: const Text('Quick picks', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
             ),
           ),
-
-          // Quick Picks Cards Carousel
           SliverToBoxAdapter(
             child: SizedBox(
               height: 250,
@@ -1392,8 +1289,6 @@ class HomeTab extends StatelessWidget {
                     ),
             ),
           ),
-
-          // AI / Mixes Banner
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -1426,8 +1321,6 @@ class HomeTab extends StatelessWidget {
               ),
             ),
           ),
-
-          // Your Playlists Header
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
@@ -1443,8 +1336,6 @@ class HomeTab extends StatelessWidget {
               ),
             ),
           ),
-
-          // Playlists List
           SliverToBoxAdapter(
             child: SizedBox(
               height: 190,
@@ -1502,7 +1393,7 @@ class HomeTab extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Search Screen (Explore & Moods Grid)
+// Search Screen
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SearchTab extends StatefulWidget {
@@ -1640,7 +1531,7 @@ class _SearchTabState extends State<SearchTab> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Library Screen (ArchiveTune 2x2 Grid + Liked + Most Played)
+// Library Screen
 // ─────────────────────────────────────────────────────────────────────────────
 
 class LibraryTab extends StatelessWidget {
@@ -1694,7 +1585,6 @@ class LibraryTab extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 160),
         children: [
-          // Filter Row Chips
           SizedBox(
             height: 44,
             child: ListView(
@@ -1709,8 +1599,6 @@ class LibraryTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 18),
-
-          // Most Played Hero Card
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -1780,8 +1668,6 @@ class LibraryTab extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-
-          // 2x2 Grid from Screenshot
           Row(
             children: [
               Expanded(
@@ -1832,31 +1718,6 @@ class LibraryTab extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 16),
-
-          // Engine Details Card
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: const Color(0xFF263A75),
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.star_rounded, color: Color(0xFFFFD54F), size: 32),
-                const SizedBox(width: 14),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('AlexLMP Media Engine', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-                      Text('Lossless local playback + ExoPlayer pitch shifter', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
           ),
         ],
       ),
@@ -1928,7 +1789,7 @@ class LibraryTab extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Liked Screen (Replicating Screenshot Layout without Faces)
+// Liked Screen
 // ─────────────────────────────────────────────────────────────────────────────
 
 class LikedTracksScreen extends StatelessWidget {
@@ -1978,15 +1839,9 @@ class LikedTracksScreen extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        const Text(
-                          'Liked',
-                          style: TextStyle(fontSize: 34, fontWeight: FontWeight.w900),
-                        ),
+                        const Text('Liked', style: TextStyle(fontSize: 34, fontWeight: FontWeight.w900)),
                         const SizedBox(height: 4),
-                        Text(
-                          '${likedTracks.length} songs • $durationStr',
-                          style: const TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold),
-                        ),
+                        Text('${likedTracks.length} songs • $durationStr', style: const TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold)),
                       ],
                     ),
                   ),
@@ -1994,8 +1849,6 @@ class LikedTracksScreen extends StatelessWidget {
               ),
             ),
           ),
-
-          // Squishy Action Controls from Screenshot
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -2021,10 +1874,7 @@ class LikedTracksScreen extends StatelessWidget {
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(32),
-                      ),
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(32)),
                       child: const Row(
                         children: [
                           Icon(Icons.play_arrow_rounded, color: Colors.black, size: 26),
@@ -2040,42 +1890,10 @@ class LikedTracksScreen extends StatelessWidget {
               ),
             ),
           ),
-
-          // Date Added Filter Pill Row
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF263A75),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text('Date added', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF263A75).withOpacity(0.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.arrow_downward_rounded, size: 16),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Liked Song List
           if (likedTracks.isEmpty)
             const SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(
-                child: Text('No liked songs yet. Tap the heart icon in player!', style: TextStyle(color: Colors.grey)),
-              ),
+              child: Center(child: Text('No liked songs yet.', style: TextStyle(color: Colors.grey))),
             )
           else
             SliverList(
@@ -2089,23 +1907,8 @@ class LikedTracksScreen extends StatelessWidget {
                       child: SizedBox(width: 48, height: 48, child: CustomAlbumArtwork(track: t)),
                     ),
                     title: Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Row(
-                      children: [
-                        const Icon(Icons.favorite_rounded, color: Color(0xFFFF719A), size: 14),
-                        const SizedBox(width: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                          decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(3)),
-                          child: const Text('E', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(child: Text('${t.artist} • ${formatDuration(Duration(seconds: t.durationSeconds))}', maxLines: 1, overflow: TextOverflow.ellipsis)),
-                      ],
-                    ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.more_vert_rounded),
-                      onPressed: () => showAddToPlaylistSheet(context, t),
-                    ),
+                    subtitle: Text('${t.artist} • ${formatDuration(Duration(seconds: t.durationSeconds))}', maxLines: 1),
+                    trailing: IconButton(icon: const Icon(Icons.more_vert_rounded), onPressed: () => showAddToPlaylistSheet(context, t)),
                     onTap: () {
                       audioHandler.playTrackById(t.id);
                       openPlayer(context);
@@ -2127,11 +1930,7 @@ class LikedTracksScreen extends StatelessWidget {
       child: Container(
         width: 48,
         height: 48,
-        decoration: BoxDecoration(
-          color: const Color(0xFF141C38),
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white12),
-        ),
+        decoration: BoxDecoration(color: const Color(0xFF141C38), shape: BoxShape.circle, border: Border.all(color: Colors.white12)),
         child: Icon(icon, color: Colors.white70, size: 22),
       ),
     );
@@ -2160,7 +1959,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
         ? 0
         : audioHandler.index.clamp(0, math.max(0, audioHandler.tracks.length - 1));
     _pageCtrl = PageController(
-      initialPage: initPage,
+      initialPage: initPage.toInt(),
       viewportFraction: 0.90,
     );
     audioHandler.currentIndex.addListener(_onIndexChanged);
@@ -2195,28 +1994,20 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
           behavior: HitTestBehavior.opaque,
           onVerticalDragUpdate: (details) {
             if (details.primaryDelta != null && details.primaryDelta! > 0) {
-              setState(() {
-                _dragDownOffset += details.primaryDelta!;
-              });
+              setState(() => _dragDownOffset += details.primaryDelta!);
             } else if (details.primaryDelta != null && details.primaryDelta! < 0 && _dragDownOffset > 0) {
-              setState(() {
-                _dragDownOffset = math.max(0.0, _dragDownOffset + details.primaryDelta!);
-              });
+              setState(() => _dragDownOffset = math.max(0.0, _dragDownOffset + details.primaryDelta!));
             }
           },
           onVerticalDragEnd: (details) {
             if (_dragDownOffset > 100 || (details.primaryVelocity != null && details.primaryVelocity! > 500)) {
               Navigator.pop(context);
             } else {
-              setState(() {
-                _dragDownOffset = 0.0;
-              });
+              setState(() => _dragDownOffset = 0.0);
             }
           },
           onVerticalDragCancel: () {
-            if (_dragDownOffset > 0) {
-              setState(() => _dragDownOffset = 0.0);
-            }
+            if (_dragDownOffset > 0) setState(() => _dragDownOffset = 0.0);
           },
           child: AnimatedContainer(
             duration: _dragDownOffset == 0.0 ? const Duration(milliseconds: 180) : Duration.zero,
@@ -2225,7 +2016,6 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
             child: Scaffold(
               body: Stack(
                 children: [
-                  // Subtle backdrop blur
                   if (appState.showArtworkBlurBackdrop)
                     Positioned.fill(
                       child: Opacity(
@@ -2240,7 +2030,6 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 22),
                       child: Column(
                         children: [
-                          // Header Row
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -2248,27 +2037,16 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                                 icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 30),
                                 onPressed: () => Navigator.pop(context),
                               ),
-                              const Text(
-                                'Now Playing',
-                                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
-                              ),
+                              const Text('Now Playing', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
                               Row(
                                 children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.chat_bubble_outline_rounded, size: 22),
-                                    onPressed: () {},
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.format_list_bulleted_rounded, size: 22),
-                                    onPressed: () => showQueueSheet(context),
-                                  ),
+                                  IconButton(icon: const Icon(Icons.chat_bubble_outline_rounded, size: 22), onPressed: () {}),
+                                  IconButton(icon: const Icon(Icons.format_list_bulleted_rounded, size: 22), onPressed: () => showQueueSheet(context)),
                                 ],
                               ),
                             ],
                           ),
                           const SizedBox(height: 12),
-
-                          // Large Album Art Swipeable Carousel
                           Expanded(
                             child: Center(
                               child: AspectRatio(
@@ -2291,9 +2069,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                                     );
                                     return Padding(
                                       padding: const EdgeInsets.symmetric(horizontal: 6),
-                                      child: isCurrent
-                                          ? Hero(tag: 'now_playing_art', child: art)
-                                          : art,
+                                      child: isCurrent ? Hero(tag: 'now_playing_art', child: art) : art,
                                     );
                                   },
                                 ),
@@ -2301,8 +2077,6 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                             ),
                           ),
                           const SizedBox(height: 18),
-
-                          // Track Info + Explicit Badge + Like
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -2313,12 +2087,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                                     Row(
                                       children: [
                                         Flexible(
-                                          child: Text(
-                                            track.title,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 24),
-                                          ),
+                                          child: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 24)),
                                         ),
                                         const SizedBox(width: 8),
                                         Container(
@@ -2329,12 +2098,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                                       ],
                                     ),
                                     const SizedBox(height: 4),
-                                    Text(
-                                      track.artist,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(color: Colors.grey, fontSize: 16),
-                                    ),
+                                    Text(track.artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 16)),
                                   ],
                                 ),
                               ),
@@ -2349,12 +2113,8 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                             ],
                           ),
                           const SizedBox(height: 20),
-
-                          // Scrubbing Bar
                           WavySeekBar(track: track),
                           const SizedBox(height: 20),
-
-                          // Pill-Shaped Primary Controls
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -2368,15 +2128,8 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                                     child: Container(
                                       width: 104,
                                       height: 64,
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFF7D8D5),
-                                        borderRadius: BorderRadius.circular(32),
-                                      ),
-                                      child: Icon(
-                                        playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                                        color: Colors.black,
-                                        size: 38,
-                                      ),
+                                      decoration: BoxDecoration(color: const Color(0xFFF7D8D5), borderRadius: BorderRadius.circular(32)),
+                                      child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.black, size: 38),
                                     ),
                                   );
                                 },
@@ -2385,8 +2138,6 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
                             ],
                           ),
                           const SizedBox(height: 16),
-
-                          // Bottom Sub-Pills (Shuffle, Repeat, More Menu)
                           StreamBuilder<PlaybackState>(
                             stream: audioHandler.playbackState,
                             builder: (ctx, snap) {
@@ -2396,36 +2147,18 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
 
                               return Row(
                                 children: [
-                                  Expanded(
-                                    child: _subPill(
-                                      icon: Icons.shuffle_rounded,
-                                      active: shuffle,
-                                      onTap: () => audioHandler.setShuffleMode(shuffle ? AudioServiceShuffleMode.none : AudioServiceShuffleMode.all),
-                                    ),
-                                  ),
+                                  Expanded(child: _subPill(icon: Icons.shuffle_rounded, active: shuffle, onTap: () => audioHandler.setShuffleMode(shuffle ? AudioServiceShuffleMode.none : AudioServiceShuffleMode.all))),
                                   const SizedBox(width: 8),
-                                  Expanded(
-                                    child: _subPill(
-                                      icon: repeat == AudioServiceRepeatMode.one ? Icons.repeat_one_rounded : Icons.repeat_rounded,
-                                      active: repeat != AudioServiceRepeatMode.none,
-                                      onTap: () {
-                                        final next = switch (repeat) {
-                                          AudioServiceRepeatMode.none => AudioServiceRepeatMode.all,
-                                          AudioServiceRepeatMode.all => AudioServiceRepeatMode.one,
-                                          _ => AudioServiceRepeatMode.none,
-                                        };
-                                        audioHandler.setRepeatMode(next);
-                                      },
-                                    ),
-                                  ),
+                                  Expanded(child: _subPill(icon: repeat == AudioServiceRepeatMode.one ? Icons.repeat_one_rounded : Icons.repeat_rounded, active: repeat != AudioServiceRepeatMode.none, onTap: () {
+                                    final next = switch (repeat) {
+                                      AudioServiceRepeatMode.none => AudioServiceRepeatMode.all,
+                                      AudioServiceRepeatMode.all => AudioServiceRepeatMode.one,
+                                      _ => AudioServiceRepeatMode.none,
+                                    };
+                                    audioHandler.setRepeatMode(next);
+                                  })),
                                   const SizedBox(width: 8),
-                                  Expanded(
-                                    child: _subPill(
-                                      icon: Icons.more_horiz_rounded,
-                                      active: false,
-                                      onTap: () => showAddToPlaylistSheet(context, track),
-                                    ),
-                                  ),
+                                  Expanded(child: _subPill(icon: Icons.more_horiz_rounded, active: false, onTap: () => showAddToPlaylistSheet(context, track))),
                                 ],
                               );
                             },
@@ -2450,10 +2183,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
       child: Container(
         width: width,
         height: 64,
-        decoration: BoxDecoration(
-          color: const Color(0xFF1E1A1A),
-          borderRadius: BorderRadius.circular(32),
-        ),
+        decoration: BoxDecoration(color: const Color(0xFF1E1A1A), borderRadius: BorderRadius.circular(32)),
         child: Icon(icon, color: Colors.white, size: 30),
       ),
     );
@@ -2464,10 +2194,7 @@ class _NowPlayingScreenState extends State<NowPlayingScreen> {
       onTap: onTap,
       child: Container(
         height: 52,
-        decoration: BoxDecoration(
-          color: const Color(0xFF1E1A1A),
-          borderRadius: BorderRadius.circular(26),
-        ),
+        decoration: BoxDecoration(color: const Color(0xFF1E1A1A), borderRadius: BorderRadius.circular(26)),
         child: Icon(icon, color: active ? const Color(0xFF567CFF) : Colors.white70, size: 22),
       ),
     );
@@ -2572,7 +2299,7 @@ class MiniPlayer extends StatelessWidget {
       },
       child: Squishy(
         onTap: () => openPlayer(context),
-        scale: 0.97,
+        scale: 0.96,
         child: Container(
           height: 68,
           padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -3105,20 +2832,6 @@ void showPlaybackSheet(BuildContext context) {
                   ),
                   Text('${appState.pitch.toStringAsFixed(2)}p'),
                 ],
-              ),
-              Wrap(
-                spacing: 8,
-                children: [-6, -3, -1, 0, 1, 3, 6].map((st) {
-                  final tp = math.pow(2.0, st / 12.0).toDouble();
-                  return ChoiceChip(
-                    label: Text(st >= 0 ? '+$st st' : '$st st'),
-                    selected: (appState.pitch - tp).abs() < 0.02,
-                    onSelected: (_) {
-                      audioHandler.setPitch(tp);
-                      if (appState.linkSpeedAndPitch) audioHandler.setSpeed(tp);
-                    },
-                  );
-                }).toList(),
               ),
             ],
           ),
