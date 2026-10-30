@@ -39,7 +39,7 @@
         </receiver>
 
         <activity
-            android:name="com.alexlmp.app.MainActivity"
+            android:name=".MainActivity"
             android:label="AlexLMP"
             android:exported="true"
             android:launchMode="singleTop"
