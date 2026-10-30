@@ -388,6 +388,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   bool _shuffle = false;
   AudioServiceRepeatMode _repeat = AudioServiceRepeatMode.none;
   final ValueNotifier<int> currentIndex = ValueNotifier<int>(0);
+  final ValueNotifier<int> libraryRevision = ValueNotifier<int>(0);
 
   MyAudioHandler() {
     _init();
@@ -499,6 +500,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> setTracks(List<TrackItem> list) async {
     final cid = currentTrack?.id;
     tracks = list;
+    libraryRevision.value++;
     if (list.isEmpty) return;
     final keep = list.indexWhere((t) => t.id == cid);
     if (keep >= 0) {
@@ -521,6 +523,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     if (removeIdx >= 0) {
       final wasPlaying = player.playing;
       tracks.removeAt(removeIdx);
+      libraryRevision.value++;
       if (tracks.isEmpty) {
         _index = 0;
         currentIndex.value = 0;
@@ -548,6 +551,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       _index++;
     }
     currentIndex.value = _index;
+    libraryRevision.value++;
   }
 
   Future<void> _load(int i, {bool play = true}) async {
@@ -625,6 +629,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> pause() => player.pause();
   @override
   Future<void> seek(Duration position) => player.seek(position);
+
   @override
   Future<void> skipToNext() async {
     final n = _nextIndex(auto: false);
@@ -1036,7 +1041,10 @@ class _MainScaffoldState extends State<MainScaffold> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([audioHandler.currentIndex, audioHandler.tracks.isEmpty ? ValueNotifier(0) : audioHandler.playbackState]),
+      listenable: Listenable.merge([
+        audioHandler.currentIndex,
+        audioHandler.libraryRevision,
+      ]),
       builder: (ctx, _) {
         final track = audioHandler.currentTrack;
         return Scaffold(
@@ -2292,6 +2300,8 @@ class PlaylistDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
     return ListenableBuilder(
       listenable: appState,
       builder: (ctx, _) {
