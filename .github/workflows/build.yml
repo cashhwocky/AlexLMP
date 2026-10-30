@@ -36,10 +36,175 @@ jobs:
           cp custom/pubspec.yaml app_build/pubspec.yaml
           cp custom/main.dart app_build/lib/main.dart
           cp custom/AndroidManifest.xml app_build/android/app/src/main/AndroidManifest.xml
-          # remove the scaffold's own MainActivity (different package) so only ours is used
           rm -rf app_build/android/app/src/main/kotlin
           mkdir -p app_build/android/app/src/main/kotlin/com/alexlmp/app
           cp custom/MainActivity.kt app_build/android/app/src/main/kotlin/com/alexlmp/app/MainActivity.kt
+
+      - name: Generate Custom AlexLMP Adaptive & PNG App Icons
+        run: |
+          RES="app_build/android/app/src/main/res"
+          mkdir -p "$RES/drawable"
+          mkdir -p "$RES/mipmap-anydpi-v26"
+
+          # Adaptive Icon Background (Deep AMOLED + Indigo Radial Glow)
+          cat << 'EOF' > "$RES/drawable/ic_launcher_background.xml"
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:aapt="http://schemas.android.com/aapt"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:pathData="M0,0h108v108h-108z" android:fillColor="#050508"/>
+              <path android:pathData="M0,0h108v108h-108z">
+                  <aapt:attr name="android:fillColor">
+                      <gradient
+                          android:type="radial"
+                          android:centerX="54"
+                          android:centerY="54"
+                          android:gradientRadius="60">
+                          <item android:offset="0.0" android:color="#2E1C59"/>
+                          <item android:offset="0.65" android:color="#0C0A14"/>
+                          <item android:offset="1.0" android:color="#000000"/>
+                      </gradient>
+                  </aapt:attr>
+              </path>
+          </vector>
+          EOF
+
+          # Adaptive Icon Foreground (Neon Liquid Glass Vinyl + Equalizer Pulse)
+          cat << 'EOF' > "$RES/drawable/ic_launcher_foreground.xml"
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:aapt="http://schemas.android.com/aapt"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <!-- Outer glowing ring -->
+              <path
+                  android:pathData="M54,24A30,30 0 1,1 24,54A30,30 0 0,1 54,24Z"
+                  android:strokeWidth="3.5"
+                  android:fillColor="#14FFFFFF">
+                  <aapt:attr name="android:strokeColor">
+                      <gradient
+                          android:type="linear"
+                          android:startX="24"
+                          android:startY="24"
+                          android:endX="84"
+                          android:endY="84">
+                          <item android:offset="0.0" android:color="#8CD0F0"/>
+                          <item android:offset="0.5" android:color="#D0BCFF"/>
+                          <item android:offset="1.0" android:color="#F09CE2"/>
+                      </gradient>
+                  </aapt:attr>
+              </path>
+              <!-- Inner vinyl groove -->
+              <path
+                  android:pathData="M54,32A22,22 0 1,1 32,54A22,22 0 0,1 54,32Z"
+                  android:strokeWidth="1.5"
+                  android:strokeColor="#448CD0F0"
+                  android:fillColor="#00000000"/>
+              <!-- Equalizer / Music Wave Bars -->
+              <path
+                  android:pathData="M41,47 L41,61"
+                  android:strokeWidth="4.2"
+                  android:strokeLineCap="round"
+                  android:strokeColor="#8CD0F0"/>
+              <path
+                  android:pathData="M49.5,39 L49.5,69"
+                  android:strokeWidth="4.2"
+                  android:strokeLineCap="round"
+                  android:strokeColor="#D0BCFF"/>
+              <path
+                  android:pathData="M58.5,43 L58.5,65"
+                  android:strokeWidth="4.2"
+                  android:strokeLineCap="round"
+                  android:strokeColor="#F09CE2"/>
+              <path
+                  android:pathData="M67,49 L67,59"
+                  android:strokeWidth="4.2"
+                  android:strokeLineCap="round"
+                  android:strokeColor="#9CF0C0"/>
+          </vector>
+          EOF
+
+          cat << 'EOF' > "$RES/mipmap-anydpi-v26/ic_launcher.xml"
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background"/>
+              <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+          </adaptive-icon>
+          EOF
+
+          cat << 'EOF' > "$RES/mipmap-anydpi-v26/ic_launcher_round.xml"
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background"/>
+              <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+          </adaptive-icon>
+          EOF
+
+          # Also render crisp PNG mipmaps for legacy/fallback launchers using Python
+          python3 - << 'PYEOF'
+          import os, struct, zlib, math
+
+          def make_png(size):
+              pixels = bytearray(size * size * 4)
+              cx = cy = size / 2.0
+              r_max = size * 0.45
+              for y in range(size):
+                  for x in range(size):
+                      dx, dy = x - cx, y - cy
+                      dist = math.hypot(dx, dy)
+                      idx = (y * size + x) * 4
+                      if dist > size * 0.48:
+                          pixels[idx:idx+4] = bytes([0, 0, 0, 0])
+                          continue
+                      # AMOLED radial background
+                      t = min(1.0, dist / r_max)
+                      r = int(46 * (1 - t) + 5 * t)
+                      g = int(28 * (1 - t) + 5 * t)
+                      b = int(89 * (1 - t) + 10 * t)
+                      # Outer neon ring
+                      ring_d = abs(dist - size * 0.34)
+                      if ring_d < size * 0.03:
+                          r, g, b = 140, 208, 240
+                      # Equalizer bars in center
+                      nx = (x - cx) / (size * 0.34)
+                      ny = abs(y - cy) / (size * 0.34)
+                      bars = [(-0.42, 0.35, (140,208,240)), (-0.14, 0.62, (208,188,255)), (0.14, 0.48, (240,156,226)), (0.42, 0.28, (156,240,192))]
+                      for bx, bh, col in bars:
+                          if abs(nx - bx) < 0.085 and ny < bh:
+                              r, g, b = col
+                      pixels[idx:idx+4] = bytes([r, g, b, 255])
+
+              raw = bytearray()
+              for y in range(size):
+                  raw.append(0)
+                  raw.extend(pixels[y*size*4:(y+1)*size*4])
+              def chunk(tag, data):
+                  return struct.pack("!I", len(data)) + tag + data + struct.pack("!I", zlib.crc32(tag + data) & 0xffffffff)
+              ihdr = struct.pack("!IIBBBBB", size, size, 8, 6, 0, 0, 0)
+              return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
+
+          sizes = {
+              "mipmap-mdpi": 48,
+              "mipmap-hdpi": 72,
+              "mipmap-xhdpi": 96,
+              "mipmap-xxhdpi": 144,
+              "mipmap-xxxhdpi": 192,
+          }
+          base = "app_build/android/app/src/main/res"
+          for folder, sz in sizes.items():
+              p = os.path.join(base, folder)
+              os.makedirs(p, exist_ok=True)
+              data = make_png(sz)
+              with open(os.path.join(p, "ic_launcher.png"), "wb") as f:
+                  f.write(data)
+              with open(os.path.join(p, "ic_launcher_round.png"), "wb") as f:
+                  f.write(data)
+          PYEOF
 
       - name: Configure Gradle for Android SDK 35
         run: |
@@ -68,8 +233,8 @@ jobs:
                   applicationId = "com.alexlmp.app"
                   minSdk = 24
                   targetSdk = 35
-                  versionCode = 1
-                  versionName = "1.0.0"
+                  versionCode = 2
+                  versionName = "2.0.0"
               }
 
               buildTypes {
