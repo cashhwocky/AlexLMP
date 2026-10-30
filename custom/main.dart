@@ -23,6 +23,8 @@ late final MyAudioHandler audioHandler;
 final AppState appState = AppState();
 final ValueNotifier<String?> appNotice = ValueNotifier<String?>(null);
 final ValueNotifier<bool> scanning = ValueNotifier<bool>(false);
+final ValueNotifier<double?> downloadProgress = ValueNotifier<double?>(null);
+final ValueNotifier<String?> downloadStatus = ValueNotifier<String?>(null);
 const MethodChannel _mediaChannel = MethodChannel('com.alexlmp.app/media');
 
 const List<String> kArtStyles = [
@@ -90,8 +92,6 @@ String formatDuration(Duration d) {
   return '$mins:$secs';
 }
 
-/// Copies a picked gallery image into app-private storage so playlist covers
-/// persist across app restarts.
 Future<String?> pickAndSaveGalleryImage() async {
   try {
     final res = await FilePicker.platform.pickFiles(type: FileType.image);
@@ -110,6 +110,513 @@ Future<String?> pickAndSaveGalleryImage() async {
     appNotice.value = 'Could not load image: $e';
     return null;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Built-in Direct URL + Cobalt / Piped / Spotify Audio Downloader
+// ─────────────────────────────────────────────────────────────────────────────
+
+Future<Directory> _getMusicDownloadsDir() async {
+  final docDir = await getApplicationDocumentsDirectory();
+  final d = Directory(p.join(docDir.path, 'alexlmp_downloads'));
+  if (!d.existsSync()) d.createSync(recursive: true);
+  return d;
+}
+
+/// Loads all previously downloaded songs from the app's private download folder.
+Future<List<TrackItem>> loadSavedDownloads() async {
+  final list = <TrackItem>[];
+  try {
+    final d = await _getMusicDownloadsDir();
+    final files = d
+        .listSync()
+        .whereType<File>()
+        .where((f) {
+          final ext = p.extension(f.path).toLowerCase();
+          return const ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac', '.opus']
+              .contains(ext);
+        })
+        .toList()
+      ..sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+    for (var i = 0; i < files.length; i++) {
+      final f = files[i];
+      final base = p.basenameWithoutExtension(f.path);
+      String title = base;
+      String artist = 'Downloaded Track';
+      if (base.contains(' - ')) {
+        final parts = base.split(' - ');
+        artist = parts.first.trim();
+        title = parts.sublist(1).join(' - ').trim();
+      }
+      final t = TrackItem(
+        id: 'dl_${f.path.hashCode}',
+        title: title,
+        artist: artist,
+        album: 'AlexLMP Downloads',
+        durationSeconds: 0,
+        artColors: kArtPalettes[i % kArtPalettes.length],
+        artStyle: kArtStyles[i % kArtStyles.length],
+        source: f.path,
+        filePath: f.path,
+      );
+      appState.applyEdits(t);
+      list.add(t);
+    }
+  } catch (_) {}
+  return list;
+}
+
+/// Resolves a Spotify track URL into "Artist - Song Title" using Spotify's
+/// public oEmbed endpoint (no API key needed).
+Future<String?> _resolveSpotifyTitle(HttpClient client, String url) async {
+  try {
+    final oembedUri = Uri.parse(
+      'https://open.spotify.com/oembed?url=${Uri.encodeComponent(url)}',
+    );
+    final req = await client.getUrl(oembedUri);
+    req.headers.set('User-Agent', 'Mozilla/5.0');
+    final resp = await req.close().timeout(const Duration(seconds: 10));
+    if (resp.statusCode == 200) {
+      final body = await resp.transform(utf8.decoder).join();
+      final json = jsonDecode(body) as Map;
+      final title = json['title']?.toString().trim();
+      if (title != null && title.isNotEmpty) return title;
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// Tries public Cobalt API instances to turn a YouTube / SoundCloud / TikTok URL
+/// into a direct MP3 download stream URL.
+Future?> _resolveViaCobalt(
+  HttpClient client,
+  String targetUrl,
+) async {
+  const cobaltEndpoints = [
+    'https://api.cobalt.tools/',
+    'https://cobalt-api.kwiatekmiki.com/',
+    'https://cobalt.api.timelessnesses.me/',
+  ];
+
+  for (final endpoint in cobaltEndpoints) {
+    try {
+      final uri = Uri.parse(endpoint);
+      final req = await client.postUrl(uri);
+      req.headers.set('Accept', 'application/json');
+      req.headers.set('Content-Type', 'application/json');
+      req.headers.set(
+        'User-Agent',
+        'Mozilla/5.0 (Linux; Android 15; Pixel 10) AppleWebKit/537.36',
+      );
+      req.add(
+        utf8.encode(
+          jsonEncode({
+            'url': targetUrl,
+            'downloadMode': 'audio',
+            'audioFormat': 'mp3',
+            'audioBitrate': '128',
+          }),
+        ),
+      );
+      final resp = await req.close().timeout(const Duration(seconds: 12));
+      final body = await resp.transform(utf8.decoder).join();
+      final data = jsonDecode(body);
+      if (data is Map) {
+        final dlUrl = (data['url'] ?? '').toString();
+        if (dlUrl.startsWith('http')) {
+          return {
+            'url': dlUrl,
+            'filename': (data['filename'] ?? '').toString(),
+          };
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Legacy v7 Cobalt API fallback
+  const legacyEndpoints = [
+    'https://co.wuk.sh/api/json',
+  ];
+  for (final endpoint in legacyEndpoints) {
+    try {
+      final uri = Uri.parse(endpoint);
+      final req = await client.postUrl(uri);
+      req.headers.set('Accept', 'application/json');
+      req.headers.set('Content-Type', 'application/json');
+      req.add(
+        utf8.encode(
+          jsonEncode({
+            'url': targetUrl,
+            'isAudioOnly': true,
+            'aFormat': 'mp3',
+          }),
+        ),
+      );
+      final resp = await req.close().timeout(const Duration(seconds: 12));
+      final body = await resp.transform(utf8.decoder).join();
+      final data = jsonDecode(body);
+      if (data is Map) {
+        final dlUrl = (data['url'] ?? '').toString();
+        if (dlUrl.startsWith('http')) {
+          return {
+            'url': dlUrl,
+            'filename': (data['filename'] ?? '').toString(),
+          };
+        }
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+/// Searches a song query or YouTube video ID on public Piped API instances and
+/// returns the direct M4A/MP3 audio stream URL + title.
+Future?> _resolveViaPiped(
+  HttpClient client,
+  String queryOrUrl,
+) async {
+  const pipedInstances = [
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.tokhmi.xyz',
+    'https://pipedapi.moomoo.me',
+    'https://api.piped.private.coffee',
+  ];
+
+  String? extractYtId(String input) {
+    final u = Uri.tryParse(input);
+    if (u == null) return null;
+    if (u.host.contains('youtu.be')) {
+      return u.pathSegments.isNotEmpty ? u.pathSegments.first : null;
+    }
+    if (u.host.contains('youtube.com')) {
+      return u.queryParameters['v'];
+    }
+    return null;
+  }
+
+  for (final base in pipedInstances) {
+    try {
+      String? videoId = extractYtId(queryOrUrl);
+      if (videoId == null) {
+        // Search query to get videoId
+        final searchUri = Uri.parse(
+          '$base/search?q=${Uri.encodeQueryComponent(queryOrUrl)}&filter=music_songs',
+        );
+        final sReq = await client.getUrl(searchUri);
+        sReq.headers.set('User-Agent', 'Mozilla/5.0');
+        final sResp = await sReq.close().timeout(const Duration(seconds: 10));
+        if (sResp.statusCode == 200) {
+          final sBody = await sResp.transform(utf8.decoder).join();
+          final sJson = jsonDecode(sBody) as Map;
+          final items = (sJson['items'] as List?) ?? const [];
+          if (items.isNotEmpty) {
+            final firstUrl = (items.first['url'] ?? '').toString();
+            if (firstUrl.contains('v=')) {
+              videoId = firstUrl.split('v=').last.split('&').first;
+            }
+          }
+        }
+      }
+
+      if (videoId == null || videoId.isEmpty) continue;
+
+      // Try Cobalt first now that we have a real YouTube link
+      final ytUrl = 'https://www.youtube.com/watch?v=$videoId';
+      final cobaltHit = await _resolveViaCobalt(client, ytUrl);
+      if (cobaltHit != null) return cobaltHit;
+
+      // Otherwise grab direct audio stream from Piped
+      final streamUri = Uri.parse('$base/streams/$videoId');
+      final stReq = await client.getUrl(streamUri);
+      stReq.headers.set('User-Agent', 'Mozilla/5.0');
+      final stResp = await stReq.close().timeout(const Duration(seconds: 10));
+      if (stResp.statusCode == 200) {
+        final stBody = await stResp.transform(utf8.decoder).join();
+        final stJson = jsonDecode(stBody) as Map;
+        final title = (stJson['title'] ?? 'Downloaded Song').toString();
+        final uploader = (stJson['uploader'] ?? 'Artist').toString();
+        final streams = (stJson['audioStreams'] as List?) ?? const [];
+        if (streams.isNotEmpty) {
+          // Pick highest bitrate m4a/mp4 stream
+          Map? best;
+          for (final s in streams) {
+            if (s is Map && (s['url'] ?? '').toString().startsWith('http')) {
+              final mime = (s['mimeType'] ?? '').toString().toLowerCase();
+              if (mime.contains('mp4') || mime.contains('m4a') || best == null) {
+                best = s;
+              }
+            }
+          }
+          if (best != null) {
+            return {
+              'url': best['url'].toString(),
+              'filename': '$uploader - $title.m4a',
+            };
+          }
+        }
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+/// Downloads a direct URL (MP3/FLAC/WAV/M4A/Discord/Catbox/Dropbox) OR resolves
+/// a YouTube/SoundCloud/Spotify URL or song search query and adds it to AlexLMP.
+Future<bool> downloadAudioIntoApp({
+  required String inputUrlOrQuery,
+  String? customTitle,
+  String? customArtist,
+}) async {
+  final rawInput = inputUrlOrQuery.trim();
+  if (rawInput.isEmpty) return false;
+
+  final client = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 15);
+
+  try {
+    downloadProgress.value = 0.02;
+    downloadStatus.value = 'Resolving audio link…';
+
+    String downloadUrl = rawInput;
+    String suggestedFilename = '';
+
+    // Convert Dropbox ?dl=0 to ?dl=1 for direct binary download
+    if (downloadUrl.contains('dropbox.com') && downloadUrl.contains('dl=0')) {
+      downloadUrl = downloadUrl.replaceAll('dl=0', 'dl=1');
+    }
+
+    // Convert Google Drive share links to direct download links
+    if (downloadUrl.contains('drive.google.com/file/d/')) {
+      final parts = downloadUrl.split('/file/d/');
+      if (parts.length > 1) {
+        final fileId = parts[1].split('/').first;
+        downloadUrl = 'https://drive.google.com/uc?export=download&id=$fileId';
+      }
+    }
+
+    final isHttp =
+        rawInput.startsWith('http://') || rawInput.startsWith('https://');
+    final lower = rawInput.toLowerCase();
+    final isSocialOrStreamingLink = isHttp &&
+        (lower.contains('youtube.com') ||
+            lower.contains('youtu.be') ||
+            lower.contains('soundcloud.com') ||
+            lower.contains('spotify.com') ||
+            lower.contains('tiktok.com'));
+
+    if (!isHttp) {
+      // User typed a song name like "Artist - Song" instead of a link
+      downloadStatus.value = 'Searching "$rawInput"…';
+      final resolved = await _resolveViaPiped(client, rawInput);
+      if (resolved == null) {
+        appNotice.value =
+            'Could not resolve search query. Try pasting a direct .mp3 link or YouTube URL.';
+        return false;
+      }
+      downloadUrl = resolved['url']!;
+      suggestedFilename = resolved['filename'] ?? '$rawInput.m4a';
+    } else if (isSocialOrStreamingLink) {
+      if (lower.contains('spotify.com')) {
+        downloadStatus.value = 'Reading Spotify track info…';
+        final spTitle = await _resolveSpotifyTitle(client, rawInput);
+        if (spTitle != null) {
+          customTitle ??= spTitle;
+          downloadStatus.value = 'Matching "$spTitle" audio stream…';
+          final resolved = await _resolveViaPiped(client, spTitle);
+          if (resolved != null) {
+            downloadUrl = resolved['url']!;
+            suggestedFilename = resolved['filename'] ?? '$spTitle.m4a';
+          } else {
+            appNotice.value =
+                'Found Spotify track "$spTitle", but stream servers were busy. Try a direct MP3 or YouTube link.';
+            return false;
+          }
+        }
+      } else {
+        downloadStatus.value = 'Extracting audio via Cobalt…';
+        final cobalt = await _resolveViaCobalt(client, rawInput);
+        if (cobalt != null) {
+          downloadUrl = cobalt['url']!;
+          suggestedFilename = cobalt['filename'] ?? '';
+        } else {
+          downloadStatus.value = 'Trying backup stream extractor…';
+          final piped = await _resolveViaPiped(client, rawInput);
+          if (piped != null) {
+            downloadUrl = piped['url']!;
+            suggestedFilename = piped['filename'] ?? '';
+          } else {
+            appNotice.value =
+                'Could not extract stream from that link. Try a direct .mp3 / Catbox / Discord link.';
+            return false;
+          }
+        }
+      }
+    }
+
+    // Download the binary audio stream
+    downloadStatus.value = 'Downloading audio to AlexLMP…';
+    final uri = Uri.parse(downloadUrl);
+    final req = await client.getUrl(uri);
+    req.headers.set(
+      'User-Agent',
+      'Mozilla/5.0 (Linux; Android 15; Pixel 10) AppleWebKit/537.36',
+    );
+    final resp = await req.close();
+
+    if (resp.statusCode < 200 || resp.statusCode >= 400) {
+      appNotice.value = 'Download failed (HTTP ${resp.statusCode}).';
+      return false;
+    }
+
+    // Determine filename & extension
+    String ext = '.mp3';
+    final pathExt = p.extension(uri.path).toLowerCase();
+    if (const ['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.opus']
+        .contains(pathExt)) {
+      ext = pathExt;
+    } else if (suggestedFilename.isNotEmpty) {
+      final sExt = p.extension(suggestedFilename).toLowerCase();
+      if (sExt.isNotEmpty) ext = sExt;
+    }
+
+    String cleanBaseName = '';
+    if (customTitle != null && customTitle.trim().isNotEmpty) {
+      final art = (customArtist != null && customArtist.trim().isNotEmpty)
+          ? '${customArtist.trim()} - '
+          : '';
+      cleanBaseName = '$art${customTitle.trim()}';
+    } else if (suggestedFilename.isNotEmpty) {
+      cleanBaseName = p.basenameWithoutExtension(suggestedFilename);
+    } else {
+      final seg = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : '';
+      cleanBaseName = Uri.decodeComponent(p.basenameWithoutExtension(seg));
+    }
+
+    cleanBaseName = cleanBaseName
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .trim();
+    if (cleanBaseName.isEmpty) {
+      cleanBaseName = 'Track_${DateTime.now().millisecondsSinceEpoch}';
+    }
+
+    final dir = await _getMusicDownloadsDir();
+    final savePath = p.join(dir.path, '$cleanBaseName$ext');
+    final outFile = File(savePath);
+    final sink = outFile.openWrite();
+
+    final totalBytes = resp.contentLength;
+    int received = 0;
+
+    await for (final chunk in resp) {
+      sink.add(chunk);
+      received += chunk.length;
+      if (totalBytes > 0) {
+        downloadProgress.value = (received / totalBytes).clamp(0.05, 0.99);
+      }
+    }
+    await sink.flush();
+    await sink.close();
+
+    if (received < 1024) {
+      // Too small to be an audio file
+      try {
+        outFile.deleteSync();
+      } catch (_) {}
+      appNotice.value =
+          'The link did not return a valid audio file. Make sure it is a direct audio URL.';
+      return false;
+    }
+
+    String finalTitle = customTitle?.trim() ?? '';
+    String finalArtist = customArtist?.trim() ?? '';
+    if (finalTitle.isEmpty) {
+      if (cleanBaseName.contains(' - ')) {
+        final parts = cleanBaseName.split(' - ');
+        finalArtist = parts.first.trim();
+        finalTitle = parts.sublist(1).join(' - ').trim();
+      } else {
+        finalTitle = cleanBaseName;
+        finalArtist = 'Downloaded Track';
+      }
+    }
+    if (finalArtist.isEmpty) finalArtist = 'Downloaded Track';
+
+    final newTrack = TrackItem(
+      id: 'dl_${savePath.hashCode}',
+      title: finalTitle,
+      artist: finalArtist,
+      album: 'AlexLMP Downloads',
+      durationSeconds: 0,
+      artColors:
+          kArtPalettes[audioHandler.tracks.length % kArtPalettes.length],
+      artStyle: kArtStyles[audioHandler.tracks.length % kArtStyles.length],
+      source: savePath,
+      filePath: savePath,
+    );
+
+    await audioHandler.addTracks([newTrack], playFirst: true);
+    appNotice.value = 'Downloaded "$finalTitle" into your library!';
+    return true;
+  } catch (e) {
+    appNotice.value = 'Download error: $e';
+    return false;
+  } finally {
+    client.close();
+    downloadProgress.value = null;
+    downloadStatus.value = null;
+  }
+}
+
+/// Scans `/storage/emulated/0/Download` and `/storage/emulated/0/Music` directly
+/// for any `.mp3`/`.flac`/`.wav`/`.m4a` files that Android's MediaStore missed.
+Future<int> quickImportPhoneDownloadsFolder() async {
+  int count = 0;
+  try {
+    await ensureMediaPermissions();
+    final existingPaths = audioHandler.tracks
+        .map((t) => t.filePath ?? t.source)
+        .toSet();
+    final found = <TrackItem>[];
+    final candidateDirs = [
+      Directory('/storage/emulated/0/Download'),
+      Directory('/storage/emulated/0/Music'),
+    ];
+
+    for (final d in candidateDirs) {
+      if (!d.existsSync()) continue;
+      for (final entity in d.listSync(followLinks: false)) {
+        if (entity is! File) continue;
+        final ext = p.extension(entity.path).toLowerCase();
+        if (!const ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac']
+            .contains(ext)) {
+          continue;
+        }
+        if (existingPaths.contains(entity.path)) continue;
+        final base = p.basenameWithoutExtension(entity.path);
+        if (base.toLowerCase().contains('306 bobby')) continue;
+        final t = TrackItem(
+          id: 'local_${entity.path.hashCode}',
+          title: base,
+          artist: 'Downloads Folder',
+          album: 'Phone Downloads',
+          durationSeconds: 0,
+          artColors: kArtPalettes[found.length % kArtPalettes.length],
+          artStyle: kArtStyles[found.length % kArtStyles.length],
+          source: entity.path,
+          filePath: entity.path,
+        );
+        appState.applyEdits(t);
+        found.add(t);
+        existingPaths.add(entity.path);
+        count++;
+      }
+    }
+    if (found.isNotEmpty) {
+      await audioHandler.addTracks(found, playFirst: false);
+    }
+  } catch (_) {}
+  return count;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -246,9 +753,11 @@ class Playlist {
 class AppState extends ChangeNotifier {
   SharedPreferences? _prefs;
   String themeName = 'AMOLED';
-  bool liquidGlass = true;
+  // Default OFF on first launch as requested
+  bool liquidGlass = false;
   bool vinylSpinMode = false;
   bool stopOnTaskClear = true;
+  bool linkSpeedAndPitch = false;
   double speed = 1.0;
   double pitch = 1.0;
   String playlistName = 'Your AlexLMP Mixes';
@@ -263,9 +772,10 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _prefs = prefs;
     themeName = prefs.getString('theme_name') ?? themeName;
-    liquidGlass = prefs.getBool('liquid_glass') ?? true;
+    liquidGlass = prefs.getBool('liquid_glass_beta') ?? false;
     vinylSpinMode = prefs.getBool('vinyl_spin_mode') ?? false;
     stopOnTaskClear = prefs.getBool('stop_on_task_clear') ?? true;
+    linkSpeedAndPitch = prefs.getBool('link_speed_pitch') ?? false;
     speed = prefs.getDouble('playback_speed') ?? 1.0;
     pitch = prefs.getDouble('playback_pitch') ?? 1.0;
     playlistName = prefs.getString('playlist_name') ?? playlistName;
@@ -299,7 +809,7 @@ class AppState extends ChangeNotifier {
 
   void setLiquidGlass(bool v) {
     liquidGlass = v;
-    _prefs?.setBool('liquid_glass', v);
+    _prefs?.setBool('liquid_glass_beta', v);
     notifyListeners();
   }
 
@@ -312,6 +822,12 @@ class AppState extends ChangeNotifier {
   void setStopOnTaskClear(bool v) {
     stopOnTaskClear = v;
     _prefs?.setBool('stop_on_task_clear', v);
+    notifyListeners();
+  }
+
+  void setLinkSpeedAndPitch(bool v) {
+    linkSpeedAndPitch = v;
+    _prefs?.setBool('link_speed_pitch', v);
     notifyListeners();
   }
 
@@ -459,8 +975,19 @@ class TrackItem {
     this.filePath,
   });
 
-  Uri get uri =>
-      source.startsWith('content://') ? Uri.parse(source) : Uri.file(source);
+  Uri get playbackUri {
+    final fp = filePath;
+    if (fp != null && fp.isNotEmpty) {
+      try {
+        if (File(fp).existsSync()) {
+          return Uri.file(fp);
+        }
+      } catch (_) {}
+    }
+    return source.startsWith('content://')
+        ? Uri.parse(source)
+        : Uri.file(source);
+  }
 
   MediaItem toMediaItem() {
     return MediaItem(
@@ -474,11 +1001,15 @@ class TrackItem {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Audio handler (real playback + lock screen + reliable pitch shifting)
+// Audio handler (real playback + lock screen + reliable Sonic pitch shifting)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class MyAudioHandler extends BaseAudioHandler with SeekHandler {
-  final AudioPlayer player = AudioPlayer();
+  final AudioPlayer player = AudioPlayer(
+    handleInterruptions: true,
+    androidApplyAudioAttributes: true,
+    handleAudioSessionActivation: true,
+  );
   final Random _rng = Random();
 
   List<TrackItem> tracks = [];
@@ -513,6 +1044,10 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       await session.configure(const AudioSessionConfiguration.music());
     } catch (_) {}
 
+    try {
+      await player.setSkipSilenceEnabled(false);
+    } catch (_) {}
+
     player.playbackEventStream.map(_transformEvent).listen(
       playbackState.add,
       onError: (Object e, StackTrace st) {
@@ -522,11 +1057,15 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
     player.processingStateStream.listen((state) {
       if (state == ProcessingState.ready) {
-        // Re-apply pitch & speed whenever ExoPlayer finishes preparing a track
-        // so SonicAudioProcessor never drops the pitch parameter.
         _applySpeedAndPitch();
       } else if (state == ProcessingState.completed) {
         _onCompleted();
+      }
+    });
+
+    player.playingStream.listen((isPlaying) {
+      if (isPlaying) {
+        _applySpeedAndPitch();
       }
     });
 
@@ -539,11 +1078,15 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   Future<void> _applySpeedAndPitch() async {
+    final targetSpeed = appState.speed.clamp(0.5, 2.0);
+    final targetPitch = appState.pitch.clamp(0.5, 2.0);
     try {
-      await player.setSpeed(appState.speed);
+      if ((player.speed - targetSpeed).abs() > 0.005) {
+        await player.setSpeed(targetSpeed);
+      }
     } catch (_) {}
     try {
-      await player.setPitch(appState.pitch);
+      await player.setPitch(targetPitch);
     } catch (_) {}
   }
 
@@ -645,14 +1188,19 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     final t = tracks[i];
     mediaItem.add(t.toMediaItem());
     try {
-      await player.setAudioSource(AudioSource.uri(t.uri));
+      try {
+        await player.setAudioSource(AudioSource.uri(t.playbackUri));
+      } catch (_) {
+        final fallbackUri = t.source.startsWith('content://')
+            ? Uri.parse(t.source)
+            : Uri.file(t.source);
+        await player.setAudioSource(AudioSource.uri(fallbackUri));
+      }
       if (seq != _loadSeq) return;
       _loadedId = t.id;
       await _applySpeedAndPitch();
       if (play) {
         player.play();
-        // Ensure pitch sticks after playback starts on all Android OEM codecs
-        Future.delayed(const Duration(milliseconds: 80), _applySpeedAndPitch);
       }
     } on PlayerInterruptedException {
       return;
@@ -788,7 +1336,6 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     final clamped = speed.clamp(0.5, 2.0);
     try {
       await player.setSpeed(clamped);
-      await player.setPitch(appState.pitch);
     } catch (_) {}
     playbackState.add(playbackState.value.copyWith(speed: clamped));
   }
@@ -796,10 +1343,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> setPitch(double pitch) async {
     final clamped = pitch.clamp(0.5, 2.0);
     try {
-      // ExoPlayer's SonicAudioProcessor activates pitch shifting reliably
-      // when both pitch and speed are pushed to PlaybackParameters.
       await player.setPitch(clamped);
-      await player.setSpeed(appState.speed);
     } catch (e) {
       appNotice.value = 'Pitch change error: $e';
     }
@@ -823,8 +1367,12 @@ Future<void> scanDeviceAudio() async {
   if (!Platform.isAndroid || scanning.value) return;
   scanning.value = true;
   try {
+    final savedDownloads = await loadSavedDownloads();
     final granted = await ensureMediaPermissions();
     if (!granted) {
+      if (savedDownloads.isNotEmpty) {
+        await audioHandler.setTracks(savedDownloads);
+      }
       appNotice.value = 'Allow music access to load your songs.';
       return;
     }
@@ -856,8 +1404,8 @@ Future<void> scanDeviceAudio() async {
     }
     final imported =
         audioHandler.tracks.where((t) => t.id.startsWith('local_')).toList();
-    await audioHandler.setTracks([...imported, ...scanned]);
-    if (scanned.isEmpty && imported.isEmpty) {
+    await audioHandler.setTracks([...savedDownloads, ...imported, ...scanned]);
+    if (scanned.isEmpty && imported.isEmpty && savedDownloads.isEmpty) {
       appNotice.value = 'No music files found on this device.';
     }
   } catch (e) {
@@ -895,7 +1443,7 @@ Future<void> pickLocalFiles() async {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// iOS 27 Liquid Glass & Ambient Mesh Backdrop Components
+// iOS 27 Liquid Glass (Beta) & Ambient Mesh Backdrop Components
 // ─────────────────────────────────────────────────────────────────────────────
 
 class LiquidGlassBox extends StatelessWidget {
@@ -980,7 +1528,6 @@ class LiquidGlassBox extends StatelessWidget {
   }
 }
 
-/// Animated aurora plasma blobs behind the UI when iOS 27 Liquid Glass is active.
 class AuroraPlasmaBackground extends StatefulWidget {
   final Color accent;
   final Color secondary;
@@ -1212,6 +1759,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         audioHandler.libraryRevision,
         audioHandler.currentIndex,
         scanning,
+        downloadProgress,
       ]),
       builder: (context, _) {
         final pal = appState.palette;
@@ -1396,54 +1944,16 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             ),
             child: Icon(Icons.graphic_eq_rounded, color: pal.onAccent, size: 24),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           _chipButton(pal, 'All'),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           _chipButton(pal, 'Mood'),
           const Spacer(),
-          // Quick iOS 27 Liquid Glass toggle pill
-          SquishyGesture(
-            onTap: () => appState.setLiquidGlass(!appState.liquidGlass),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 260),
-              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-              decoration: BoxDecoration(
-                color: appState.liquidGlass
-                    ? pal.accent.withOpacity(0.22)
-                    : pal.surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: appState.liquidGlass
-                      ? pal.accent
-                      : const Color(0xFF333B40),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.blur_on_rounded,
-                    color: appState.liquidGlass ? pal.accent : Colors.white70,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Glass',
-                    style: TextStyle(
-                      color: appState.liquidGlass ? pal.accent : Colors.white70,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
           SquishyGesture(
             onTap: () => showAddMusicSheet(context),
             child: Container(
-              width: 40,
-              height: 40,
+              width: 42,
+              height: 42,
               decoration: BoxDecoration(
                 color: pal.surface,
                 shape: BoxShape.circle,
@@ -1452,16 +1962,16 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               child: const Icon(
                 Icons.add_rounded,
                 color: Color(0xFFD5DCE0),
-                size: 22,
+                size: 24,
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 12),
           SquishyGesture(
             onTap: () => showSettingsSheet(context),
             child: const Padding(
               padding: EdgeInsets.all(4),
-              child: Icon(Icons.settings_rounded, color: Colors.white, size: 25),
+              child: Icon(Icons.settings_rounded, color: Colors.white, size: 26),
             ),
           ),
         ],
@@ -1622,13 +2132,13 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Allow music access, then scan or pick files to get started.',
+            'Download from a direct URL / link or scan your phone to get started.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Color(0xFFA6ADB2), fontSize: 14),
           ),
           const SizedBox(height: 24),
           SquishyGesture(
-            onTap: () => showAddMusicSheet(context),
+            onTap: () => showDirectUrlDownloadSheet(context),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
               decoration: BoxDecoration(
@@ -1638,10 +2148,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.add_rounded, color: pal.onAccent),
+                  Icon(Icons.cloud_download_rounded, color: pal.onAccent),
                   const SizedBox(width: 8),
                   Text(
-                    'Add Music',
+                    'Download via Link / URL',
                     style: TextStyle(
                       color: pal.onAccent,
                       fontWeight: FontWeight.w700,
@@ -1663,7 +2173,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       onTap: () => setState(() => _chip = label),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
         decoration: BoxDecoration(
           color: selected ? pal.accent : Colors.transparent,
           borderRadius: BorderRadius.circular(22),
@@ -1852,13 +2362,14 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
-  // ── Library (Songs / Playlists / Artists) ─────────────────────────────────
+  // ── Library (With Direct URL / Cobalt Downloader Card at the Very Top!) ──
 
   Widget _libraryTab(
     BuildContext context,
     AppPalette pal,
     List<TrackItem> tracks,
   ) {
+    final busyDl = downloadProgress.value != null;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 185),
       children: [
@@ -1942,8 +2453,129 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             ),
           ],
         ),
-        const SizedBox(height: 16),
-        // Segmented selector: Songs | Playlists | Artists
+        const SizedBox(height: 14),
+        // ── TOP OF LIBRARY: Direct URL / Cobalt / Downloads Quick Bar ──
+        SquishyGesture(
+          pressedScale: 0.97,
+          onTap: () => showDirectUrlDownloadSheet(context),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  pal.accent.withOpacity(0.24),
+                  pal.container.withOpacity(0.95),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: pal.accent.withOpacity(0.55)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: pal.accent,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        Icons.cloud_download_rounded,
+                        color: pal.onAccent,
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Direct URL & Cobalt Downloader',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            busyDl
+                                ? (downloadStatus.value ?? 'Downloading…')
+                                : 'Paste MP3 / YouTube / Spotify link or song name',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFFD0D7DC),
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SquishyGesture(
+                      onTap: () async {
+                        final added = await quickImportPhoneDownloadsFolder();
+                        appNotice.value = added > 0
+                            ? 'Imported $added new track(s) from Phone Downloads!'
+                            : 'No new audio files in Phone Downloads folder.';
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.35),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.white24),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.download_done_rounded,
+                              color: pal.accent,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 4),
+                            const Text(
+                              'Grab DL Folder',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (busyDl) ...[
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LinearProgressIndicator(
+                      value: downloadProgress.value,
+                      backgroundColor: Colors.black38,
+                      valueColor: AlwaysStoppedAnimation<Color>(pal.accent),
+                      minHeight: 6,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
         LiquidGlassBox(
           borderRadius: BorderRadius.circular(26),
           fallbackColor: pal.surface,
@@ -2026,7 +2658,6 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Create playlist banner card
         SquishyGesture(
           pressedScale: 0.97,
           onTap: () => showCreateOrEditPlaylistDialog(context),
@@ -2264,7 +2895,215 @@ final List<BoxShadow> _shadow = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Playlist Cover & Full Playlist Detail Screen (Drag-and-Drop Reorder + Edit)
+// Direct URL / Cobalt Downloader Bottom Sheet
+// ─────────────────────────────────────────────────────────────────────────────
+
+void showDirectUrlDownloadSheet(BuildContext context) {
+  final urlCtrl = TextEditingController();
+  final titleCtrl = TextEditingController();
+  final artistCtrl = TextEditingController();
+
+  _sheet(
+    context,
+    (ctx) => Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(ctx).viewInsets.bottom,
+      ),
+      child: ListenableBuilder(
+        listenable: Listenable.merge([
+          appState,
+          downloadProgress,
+          downloadStatus,
+        ]),
+        builder: (ctx, _) {
+          final pal = appState.palette;
+          final busy = downloadProgress.value != null;
+          return SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.cloud_download_rounded,
+                        color: pal.accent,
+                        size: 26,
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Direct URL & Cobalt Downloader',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Paste a direct .mp3 / .flac / .wav / Catbox / Discord / Dropbox link, a YouTube / SoundCloud / Spotify URL, or type "Artist - Song Name".',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: urlCtrl,
+                    autofocus: true,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Audio URL, YouTube/Spotify Link, or Song Name',
+                      labelStyle: const TextStyle(color: Colors.white70),
+                      hintText: 'https://... or Artist - Song',
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      filled: true,
+                      fillColor: pal.container,
+                      prefixIcon: Icon(Icons.link_rounded, color: pal.accent),
+                      suffixIcon: IconButton(
+                        icon: const Icon(
+                          Icons.content_paste_rounded,
+                          color: Colors.white70,
+                        ),
+                        tooltip: 'Paste from clipboard',
+                        onPressed: () async {
+                          final data = await Clipboard.getData('text/plain');
+                          if (data?.text != null) {
+                            urlCtrl.text = data!.text!.trim();
+                          }
+                        },
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(18),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: titleCtrl,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: InputDecoration(
+                            labelText: 'Custom Title (Optional)',
+                            labelStyle: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
+                            filled: true,
+                            fillColor: pal.container,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: artistCtrl,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: InputDecoration(
+                            labelText: 'Artist (Optional)',
+                            labelStyle: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
+                            filled: true,
+                            fillColor: pal.container,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (busy) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      downloadStatus.value ?? 'Downloading…',
+                      style: TextStyle(
+                        color: pal.accent,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: LinearProgressIndicator(
+                        value: downloadProgress.value,
+                        backgroundColor: Colors.white12,
+                        valueColor: AlwaysStoppedAnimation<Color>(pal.accent),
+                        minHeight: 7,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: pal.accent,
+                        foregroundColor: pal.onAccent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(26),
+                        ),
+                      ),
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              final input = urlCtrl.text.trim();
+                              if (input.isEmpty) return;
+                              final ok = await downloadAudioIntoApp(
+                                inputUrlOrQuery: input,
+                                customTitle: titleCtrl.text.trim().isEmpty
+                                    ? null
+                                    : titleCtrl.text.trim(),
+                                customArtist: artistCtrl.text.trim().isEmpty
+                                    ? null
+                                    : artistCtrl.text.trim(),
+                              );
+                              if (ok && ctx.mounted) {
+                                Navigator.pop(ctx);
+                              }
+                            },
+                      icon: Icon(
+                        busy
+                            ? Icons.hourglass_top_rounded
+                            : Icons.download_rounded,
+                      ),
+                      label: Text(
+                        busy ? 'Downloading…' : 'Download Straight to Library',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    ),
+    scroll: true,
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Playlist Cover & Full Playlist Detail Screen
 // ─────────────────────────────────────────────────────────────────────────────
 
 class PlaylistCoverThumbnail extends StatelessWidget {
@@ -2292,7 +3131,6 @@ class PlaylistCoverThumbnail extends StatelessWidget {
         ),
       );
     }
-    // Fallback to first track's artwork or styled gradient
     TrackItem? firstTrack;
     if (playlist.trackIds.isNotEmpty) {
       firstTrack = audioHandler.trackById(playlist.trackIds.first);
@@ -2364,7 +3202,6 @@ class PlaylistDetailScreen extends StatelessWidget {
               SafeArea(
                 child: Column(
                   children: [
-                    // Top bar
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
                       child: Row(
@@ -2461,7 +3298,6 @@ class PlaylistDetailScreen extends StatelessWidget {
                         ],
                       ),
                     ),
-                    // Playlist Hero Header (Tap image or edit button to change icon/title)
                     Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 20,
@@ -2708,7 +3544,6 @@ class PlaylistDetailScreen extends StatelessWidget {
                                           ),
                                         ),
                                       ),
-                                      // Quick move to top / bottom + remove menu
                                       PopupMenuButton<String>(
                                         icon: const Icon(
                                           Icons.more_vert_rounded,
@@ -2821,8 +3656,6 @@ class Reveal extends StatelessWidget {
   }
 }
 
-/// Interactive 3D Perspective Tilt + Specular Glare + Optional Vinyl Spin
-/// for the Now Playing Album Art.
 class Interactive3DArtwork extends StatefulWidget {
   final TrackItem track;
   final bool playing;
@@ -2910,7 +3743,6 @@ class _Interactive3DArtworkState extends State<Interactive3DArtwork>
                   fit: StackFit.expand,
                   children: [
                     child!,
-                    // Dynamic specular reflection overlay
                     IgnorePointer(
                       child: Container(
                         decoration: BoxDecoration(
@@ -3565,7 +4397,6 @@ class NowPlayingScreen extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const SizedBox(height: 8),
-                            // Header with Down button, Album Title, Pencil Icon AND 3-Dot Playlist Menu
                             Row(
                               children: [
                                 SquishyGesture(
@@ -3615,7 +4446,6 @@ class NowPlayingScreen extends StatelessWidget {
                                     ),
                                   ),
                                 ),
-                                // Pencil Icon (Edit Song)
                                 SquishyGesture(
                                   onTap: () =>
                                       showEditTrackDialog(context, track),
@@ -3634,7 +4464,6 @@ class NowPlayingScreen extends StatelessWidget {
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                // 3-Dot Menu Next to Pencil Icon (Add to Playlists)
                                 SquishyGesture(
                                   onTap: () =>
                                       showAddToPlaylistSheet(context, track),
@@ -3768,7 +4597,6 @@ class NowPlayingScreen extends StatelessWidget {
                                     ),
                                   ),
                                   const SizedBox(width: 10),
-                                  // Pitch / Speed badge if active
                                   if (appState.speed != 1.0 ||
                                       appState.pitch != 1.0)
                                     Padding(
@@ -4086,7 +4914,6 @@ class NowPlayingScreen extends StatelessWidget {
   }
 }
 
-/// Google Android 15 style Expressive Wavy SeekBar
 class WavySeekBar extends StatefulWidget {
   final int fallbackSeconds;
   final Color active;
@@ -4236,7 +5063,6 @@ class _WavyTrackPainter extends CustomPainter {
     final cy = size.height / 2;
     final activeX = size.width * progress;
 
-    // Inactive straight track
     final inactivePaint = Paint()
       ..color = inactiveColor
       ..strokeWidth = 4.5
@@ -4249,7 +5075,6 @@ class _WavyTrackPainter extends CustomPainter {
       );
     }
 
-    // Active wavy sine path
     final activePaint = Paint()
       ..color = activeColor
       ..style = PaintingStyle.stroke
@@ -4265,7 +5090,6 @@ class _WavyTrackPainter extends CustomPainter {
     }
     canvas.drawPath(path, activePaint);
 
-    // Pill thumb handle
     final thumbRect = RRect.fromRectAndRadius(
       Rect.fromCenter(center: Offset(activeX, cy), width: 10, height: 22),
       const Radius.circular(6),
@@ -4352,7 +5176,6 @@ Widget _sheetTile(
   );
 }
 
-/// Three-dot menu sheet in Now Playing & Track rows: Add song to any playlist or create one.
 void showAddToPlaylistSheet(BuildContext context, TrackItem track) {
   _sheet(
     context,
@@ -4481,7 +5304,6 @@ void showAddToPlaylistSheet(BuildContext context, TrackItem track) {
   );
 }
 
-/// Dialog to create a new playlist OR edit an existing playlist's name & gallery icon.
 void showCreateOrEditPlaylistDialog(
   BuildContext context, {
   Playlist? existing,
@@ -4507,7 +5329,6 @@ void showCreateOrEditPlaylistDialog(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Gallery cover image picker
               SquishyGesture(
                 onTap: () async {
                   final picked = await pickAndSaveGalleryImage();
@@ -4776,6 +5597,29 @@ void showAddMusicSheet(BuildContext context) {
             const SizedBox(height: 12),
             _sheetTile(
               pal,
+              Icons.cloud_download_rounded,
+              'Direct URL / Cobalt Downloader',
+              'Paste MP3, Catbox, Discord, YouTube or Spotify link',
+              () {
+                Navigator.pop(ctx);
+                showDirectUrlDownloadSheet(context);
+              },
+            ),
+            _sheetTile(
+              pal,
+              Icons.download_done_rounded,
+              'Quick-Import Phone Downloads Folder',
+              'Grab all audio files inside /Download & /Music automatically',
+              () async {
+                Navigator.pop(ctx);
+                final added = await quickImportPhoneDownloadsFolder();
+                appNotice.value = added > 0
+                    ? 'Imported $added new track(s) from Phone Downloads!'
+                    : 'No new audio files found in Phone Downloads.';
+              },
+            ),
+            _sheetTile(
+              pal,
               Icons.folder_open_rounded,
               'Pick Local Audio Files',
               'Import MP3, FLAC, WAV, M4A from device',
@@ -4897,12 +5741,37 @@ void showSettingsSheet(BuildContext context) {
                   const SizedBox(height: 16),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      'iOS 27 Liquid Glass UI',
-                      style: TextStyle(fontWeight: FontWeight.w700),
+                    title: Row(
+                      children: [
+                        const Text(
+                          'iOS 27 Liquid Glass UI',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: pal.accent.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: pal.accent),
+                          ),
+                          child: Text(
+                            'BETA',
+                            style: TextStyle(
+                              color: pal.accent,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.6,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     subtitle: const Text(
-                      'Frosted blur cards, specular glass rims & aurora plasma mesh',
+                      'Experimental frosted blur cards & aurora plasma mesh (Off by default)',
                     ),
                     value: appState.liquidGlass,
                     activeColor: pal.accent,
@@ -4998,7 +5867,32 @@ void showPlaybackSheet(BuildContext context) {
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text(
+                    'Link Speed & Pitch (Vinyl / Nightcore Mode)',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'Shifts pitch & tempo together like a real turntable',
+                    style: TextStyle(color: Colors.white60, fontSize: 12),
+                  ),
+                  value: appState.linkSpeedAndPitch,
+                  activeColor: pal.playerAccent,
+                  onChanged: (v) {
+                    appState.setLinkSpeedAndPitch(v);
+                    if (v) {
+                      appState.setSpeed(appState.pitch);
+                      audioHandler.setSpeed(appState.pitch);
+                    }
+                  },
+                ),
+                const SizedBox(height: 6),
                 Text(
                   'Speed: ${appState.speed.toStringAsFixed(2)}x',
                   style: const TextStyle(
@@ -5015,6 +5909,10 @@ void showPlaybackSheet(BuildContext context) {
                   onChanged: (v) {
                     appState.setSpeed(v);
                     audioHandler.setSpeed(v);
+                    if (appState.linkSpeedAndPitch) {
+                      appState.setPitch(v);
+                      audioHandler.setPitch(v);
+                    }
                   },
                 ),
                 const SizedBox(height: 6),
@@ -5034,17 +5932,22 @@ void showPlaybackSheet(BuildContext context) {
                   onChanged: (v) {
                     appState.setPitch(v);
                     audioHandler.setPitch(v);
+                    if (appState.linkSpeedAndPitch) {
+                      appState.setSpeed(v);
+                      audioHandler.setSpeed(v);
+                    }
                   },
                 ),
                 const SizedBox(height: 8),
-                // Quick semitone presets
                 Wrap(
                   spacing: 8,
                   children: [-6, -3, -1, 0, 1, 3, 6].map((st) {
                     final targetPitch = pow(2.0, st / 12.0).toDouble();
                     final active = (appState.pitch - targetPitch).abs() < 0.02;
                     return ChoiceChip(
-                      label: Text(st == 0 ? '0 st' : (st > 0 ? '+$st st' : '$st st')),
+                      label: Text(
+                        st == 0 ? '0 st' : (st > 0 ? '+$st st' : '$st st'),
+                      ),
                       selected: active,
                       showCheckmark: false,
                       selectedColor: pal.playerAccent,
@@ -5056,6 +5959,10 @@ void showPlaybackSheet(BuildContext context) {
                       onSelected: (_) {
                         appState.setPitch(targetPitch);
                         audioHandler.setPitch(targetPitch);
+                        if (appState.linkSpeedAndPitch) {
+                          appState.setSpeed(targetPitch);
+                          audioHandler.setSpeed(targetPitch);
+                        }
                       },
                     );
                   }).toList(),
