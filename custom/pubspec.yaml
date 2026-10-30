@@ -1,7 +1,7 @@
 name: alex_lmp
-description: AlexLMP Material You Music Player
+description: AlexLMP Material You & Liquid Glass Music Player
 publish_to: 'none'
-version: 1.0.0+1
+version: 2.0.0+2
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -15,6 +15,7 @@ dependencies:
   file_picker: ^8.1.2
   permission_handler: ^11.3.1
   shared_preferences: ^2.3.2
+  path_provider: ^2.1.4
   path: ^1.9.0
 
 dev_dependencies:
