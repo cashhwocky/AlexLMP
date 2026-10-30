@@ -35,111 +35,87 @@ jobs:
         run: |
           cp custom/pubspec.yaml app_build/pubspec.yaml
           cp custom/main.dart app_build/lib/main.dart
-          cp custom/AndroidManifest.xml app_build/android/app/src/main/AndroidManifest.xml
           rm -rf app_build/android/app/src/main/kotlin
           mkdir -p app_build/android/app/src/main/kotlin/com/alexlmp/app
           cp custom/MainActivity.kt app_build/android/app/src/main/kotlin/com/alexlmp/app/MainActivity.kt
 
-      - name: Generate Custom AlexLMP Adaptive & PNG App Icons
+      - name: Write Clean AndroidManifest.xml With Launcher Intent
         run: |
-          RES="app_build/android/app/src/main/res"
-          mkdir -p "$RES/drawable"
-          mkdir -p "$RES/mipmap-anydpi-v26"
+          python3 - << 'PYEOF'
+          manifest = """<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools">
 
-          cat << 'EOF' > "$RES/drawable/ic_launcher_background.xml"
-          <?xml version="1.0" encoding="utf-8"?>
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              xmlns:aapt="http://schemas.android.com/aapt"
-              android:width="108dp"
-              android:height="108dp"
-              android:viewportWidth="108"
-              android:viewportHeight="108">
-              <path android:pathData="M0,0h108v108h-108z" android:fillColor="#050508"/>
-              <path android:pathData="M0,0h108v108h-108z">
-                  <aapt:attr name="android:fillColor">
-                      <gradient
-                          android:type="radial"
-                          android:centerX="54"
-                          android:centerY="54"
-                          android:gradientRadius="60">
-                          <item android:offset="0.0" android:color="#2E1C59"/>
-                          <item android:offset="0.65" android:color="#0C0A14"/>
-                          <item android:offset="1.0" android:color="#000000"/>
-                      </gradient>
-                  </aapt:attr>
-              </path>
-          </vector>
-          EOF
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 
-          cat << 'EOF' > "$RES/drawable/ic_launcher_foreground.xml"
-          <?xml version="1.0" encoding="utf-8"?>
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              xmlns:aapt="http://schemas.android.com/aapt"
-              android:width="108dp"
-              android:height="108dp"
-              android:viewportWidth="108"
-              android:viewportHeight="108">
-              <path
-                  android:pathData="M54,24A30,30 0 1,1 24,54A30,30 0 0,1 54,24Z"
-                  android:strokeWidth="3.5"
-                  android:fillColor="#14FFFFFF">
-                  <aapt:attr name="android:strokeColor">
-                      <gradient
-                          android:type="linear"
-                          android:startX="24"
-                          android:startY="24"
-                          android:endX="84"
-                          android:endY="84">
-                          <item android:offset="0.0" android:color="#8CD0F0"/>
-                          <item android:offset="0.5" android:color="#D0BCFF"/>
-                          <item android:offset="1.0" android:color="#F09CE2"/>
-                      </gradient>
-                  </aapt:attr>
-              </path>
-              <path
-                  android:pathData="M54,32A22,22 0 1,1 32,54A22,22 0 0,1 54,32Z"
-                  android:strokeWidth="1.5"
-                  android:strokeColor="#448CD0F0"
-                  android:fillColor="#00000000"/>
-              <path
-                  android:pathData="M41,47 L41,61"
-                  android:strokeWidth="4.2"
-                  android:strokeLineCap="round"
-                  android:strokeColor="#8CD0F0"/>
-              <path
-                  android:pathData="M49.5,39 L49.5,69"
-                  android:strokeWidth="4.2"
-                  android:strokeLineCap="round"
-                  android:strokeColor="#D0BCFF"/>
-              <path
-                  android:pathData="M58.5,43 L58.5,65"
-                  android:strokeWidth="4.2"
-                  android:strokeLineCap="round"
-                  android:strokeColor="#F09CE2"/>
-              <path
-                  android:pathData="M67,49 L67,59"
-                  android:strokeWidth="4.2"
-                  android:strokeLineCap="round"
-                  android:strokeColor="#9CF0C0"/>
-          </vector>
-          EOF
+              <application
+                  android:label="AlexLMP"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:usesCleartextTraffic="true"
+                  android:extractNativeLibs="true"
+                  android:requestLegacyExternalStorage="true">
 
-          cat << 'EOF' > "$RES/mipmap-anydpi-v26/ic_launcher.xml"
-          <?xml version="1.0" encoding="utf-8"?>
-          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-              <background android:drawable="@drawable/ic_launcher_background"/>
-              <foreground android:drawable="@drawable/ic_launcher_foreground"/>
-          </adaptive-icon>
-          EOF
+                  <service
+                      android:name="com.ryanheise.audioservice.AudioService"
+                      android:foregroundServiceType="mediaPlayback"
+                      android:exported="true"
+                      tools:ignore="Instantiatable">
+                      <intent-filter>
+                          <action android:name="android.media.browse.MediaBrowserService" />
+                      </intent-filter>
+                  </service>
 
-          cat << 'EOF' > "$RES/mipmap-anydpi-v26/ic_launcher_round.xml"
-          <?xml version="1.0" encoding="utf-8"?>
-          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-              <background android:drawable="@drawable/ic_launcher_background"/>
-              <foreground android:drawable="@drawable/ic_launcher_foreground"/>
-          </adaptive-icon>
-          EOF
+                  <receiver
+                      android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+                      android:exported="true"
+                      tools:ignore="Instantiatable">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MEDIA_BUTTON" />
+                      </intent-filter>
+                  </receiver>
 
+                  <activity
+                      android:name="com.alexlmp.app.MainActivity"
+                      android:label="AlexLMP"
+                      android:exported="true"
+                      android:enabled="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+
+                      <meta-data
+                          android:name="io.flutter.embedding.android.NormalTheme"
+                          android:resource="@style/NormalTheme" />
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
+              </application>
+          </manifest>
+          """
+          with open("app_build/android/app/src/main/AndroidManifest.xml", "w") as f:
+              f.write(manifest.strip() + "\n")
+          PYEOF
+
+      - name: Generate Custom AlexLMP App Icons
+        run: |
           python3 - << 'PYEOF'
           import os, struct, zlib, math
 
@@ -230,8 +206,8 @@ jobs:
                   applicationId = "com.alexlmp.app"
                   minSdk = 24
                   targetSdk = 35
-                  versionCode = 3
-                  versionName = "3.0.0"
+                  versionCode = 4
+                  versionName = "4.0.0"
                   ndk {
                       abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
                   }
