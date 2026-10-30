@@ -27,8 +27,8 @@ class MainActivity : AudioServiceActivity() {
                         }.start()
                     }
                     "getArt" -> {
-                        val uri = call.argument<String>("uri")
-                        val path = call.argument<String>("path")
+                        val uri = call.argument("uri") as? String
+                        val path = call.argument("path") as? String
                         Thread {
                             val bytes = loadArt(uri, path)
                             runOnUiThread { result.success(bytes) }
@@ -69,8 +69,8 @@ class MainActivity : AudioServiceActivity() {
         return null
     }
 
-    private fun scanLocalAudio(): List> {
-        val songs = mutableListOf>()
+    private fun scanLocalAudio(): List<Any> {
+        val songs = ArrayList<Any>()
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
         } else {
@@ -103,17 +103,15 @@ class MainActivity : AudioServiceActivity() {
                     if (durationMs < 3000) continue
                     val id = cursor.getLong(idCol)
                     val uri = ContentUris.withAppendedId(collection, id).toString()
-                    songs.add(
-                        mapOf(
-                            "id" to id,
-                            "uri" to uri,
-                            "title" to (cursor.getString(titleCol) ?: "Unknown Track"),
-                            "artist" to (cursor.getString(artistCol) ?: "Unknown Artist"),
-                            "album" to (cursor.getString(albumCol) ?: "Local Audio"),
-                            "durationSeconds" to (durationMs / 1000).toInt(),
-                            "filePath" to (cursor.getString(dataCol) ?: "")
-                        )
-                    )
+                    val item = HashMap<String, Any>()
+                    item["id"] = id
+                    item["uri"] = uri
+                    item["title"] = cursor.getString(titleCol) ?: "Unknown Track"
+                    item["artist"] = cursor.getString(artistCol) ?: "Unknown Artist"
+                    item["album"] = cursor.getString(albumCol) ?: "Local Audio"
+                    item["durationSeconds"] = (durationMs / 1000).toInt()
+                    item["filePath"] = cursor.getString(dataCol) ?: ""
+                    songs.add(item)
                 }
             }
         } catch (_: Exception) {
