@@ -17,7 +17,6 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true"
-        android:extractNativeLibs="true"
         android:requestLegacyExternalStorage="true">
 
         <service
@@ -40,7 +39,7 @@
         </receiver>
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.alexlmp.app.MainActivity"
             android:label="AlexLMP"
             android:exported="true"
             android:launchMode="singleTop"
@@ -55,7 +54,7 @@
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.action.LAUNCHER" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
