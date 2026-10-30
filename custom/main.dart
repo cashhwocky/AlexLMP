@@ -35,12 +35,17 @@ const List<String> kArtStyles = [
   'neon_vinyl',
 ];
 
-const List<List<Color>> kArtPalettes = [
-  [Color(0xFF3E1C0C), Color(0xFFD96B38), Color(0xFF1A0F0A)],
-  [Color(0xFF42173B), Color(0xFFE0538A), Color(0xFF28193D)],
-  [Color(0xFF062A4E), Color(0xFF1F7AE0), Color(0xFF0A2416)],
-  [Color(0xFF1A3A2A), Color(0xFF9C27B0), Color(0xFF00BCD4)],
-  [Color(0xFF4A1E0D), Color(0xFFE66833), Color(0xFF1B110E)],
+class ColorStopSet {
+  final List<Color> colors;
+  const ColorStopSet(this.colors);
+}
+
+const List<ColorStopSet> kArtPalettes = [
+  ColorStopSet([Color(0xFF3E1C0C), Color(0xFFD96B38), Color(0xFF1A0F0A)]),
+  ColorStopSet([Color(0xFF42173B), Color(0xFFE0538A), Color(0xFF28193D)]),
+  ColorStopSet([Color(0xFF062A4E), Color(0xFF1F7AE0), Color(0xFF0A2416)]),
+  ColorStopSet([Color(0xFF1A3A2A), Color(0xFF9C27B0), Color(0xFF00BCD4)]),
+  ColorStopSet([Color(0xFF4A1E0D), Color(0xFFE66833), Color(0xFF1B110E)]),
 ];
 
 Future<void> main() async {
@@ -116,6 +121,12 @@ Future<String?> pickAndSaveGalleryImage() async {
 // Built-in Direct URL + Cobalt / Piped / Spotify Audio Downloader
 // ─────────────────────────────────────────────────────────────────────────────
 
+class ResolvedStream {
+  final String url;
+  final String filename;
+  const ResolvedStream({required this.url, required this.filename});
+}
+
 Future<Directory> _getMusicDownloadsDir() async {
   final docDir = await getApplicationDocumentsDirectory();
   final d = Directory(p.join(docDir.path, 'alexlmp_downloads'));
@@ -123,7 +134,6 @@ Future<Directory> _getMusicDownloadsDir() async {
   return d;
 }
 
-/// Loads all previously downloaded songs from the app's private download folder.
 Future<List<TrackItem>> loadSavedDownloads() async {
   final list = <TrackItem>[];
   try {
@@ -155,7 +165,7 @@ Future<List<TrackItem>> loadSavedDownloads() async {
         artist: artist,
         album: 'AlexLMP Downloads',
         durationSeconds: 0,
-        artColors: kArtPalettes[i % kArtPalettes.length],
+        artColors: kArtPalettes[i % kArtPalettes.length].colors,
         artStyle: kArtStyles[i % kArtStyles.length],
         source: f.path,
         filePath: f.path,
@@ -167,8 +177,6 @@ Future<List<TrackItem>> loadSavedDownloads() async {
   return list;
 }
 
-/// Resolves a Spotify track URL into "Artist - Song Title" using Spotify's
-/// public oEmbed endpoint (no API key needed).
 Future<String?> _resolveSpotifyTitle(HttpClient client, String url) async {
   try {
     final oembedUri = Uri.parse(
@@ -187,9 +195,7 @@ Future<String?> _resolveSpotifyTitle(HttpClient client, String url) async {
   return null;
 }
 
-/// Tries public Cobalt API instances to turn a YouTube / SoundCloud / TikTok URL
-/// into a direct MP3 download stream URL.
-Future?> _resolveViaCobalt(
+Future<ResolvedStream?> _resolveViaCobalt(
   HttpClient client,
   String targetUrl,
 ) async {
@@ -225,16 +231,15 @@ Future?> _resolveViaCobalt(
       if (data is Map) {
         final dlUrl = (data['url'] ?? '').toString();
         if (dlUrl.startsWith('http')) {
-          return {
-            'url': dlUrl,
-            'filename': (data['filename'] ?? '').toString(),
-          };
+          return ResolvedStream(
+            url: dlUrl,
+            filename: (data['filename'] ?? '').toString(),
+          );
         }
       }
     } catch (_) {}
   }
 
-  // Legacy v7 Cobalt API fallback
   const legacyEndpoints = [
     'https://co.wuk.sh/api/json',
   ];
@@ -259,10 +264,10 @@ Future?> _resolveViaCobalt(
       if (data is Map) {
         final dlUrl = (data['url'] ?? '').toString();
         if (dlUrl.startsWith('http')) {
-          return {
-            'url': dlUrl,
-            'filename': (data['filename'] ?? '').toString(),
-          };
+          return ResolvedStream(
+            url: dlUrl,
+            filename: (data['filename'] ?? '').toString(),
+          );
         }
       }
     } catch (_) {}
@@ -270,9 +275,7 @@ Future?> _resolveViaCobalt(
   return null;
 }
 
-/// Searches a song query or YouTube video ID on public Piped API instances and
-/// returns the direct M4A/MP3 audio stream URL + title.
-Future?> _resolveViaPiped(
+Future<ResolvedStream?> _resolveViaPiped(
   HttpClient client,
   String queryOrUrl,
 ) async {
@@ -299,7 +302,6 @@ Future?> _resolveViaPiped(
     try {
       String? videoId = extractYtId(queryOrUrl);
       if (videoId == null) {
-        // Search query to get videoId
         final searchUri = Uri.parse(
           '$base/search?q=${Uri.encodeQueryComponent(queryOrUrl)}&filter=music_songs',
         );
@@ -321,12 +323,10 @@ Future?> _resolveViaPiped(
 
       if (videoId == null || videoId.isEmpty) continue;
 
-      // Try Cobalt first now that we have a real YouTube link
       final ytUrl = 'https://www.youtube.com/watch?v=$videoId';
       final cobaltHit = await _resolveViaCobalt(client, ytUrl);
       if (cobaltHit != null) return cobaltHit;
 
-      // Otherwise grab direct audio stream from Piped
       final streamUri = Uri.parse('$base/streams/$videoId');
       final stReq = await client.getUrl(streamUri);
       stReq.headers.set('User-Agent', 'Mozilla/5.0');
@@ -338,7 +338,6 @@ Future?> _resolveViaPiped(
         final uploader = (stJson['uploader'] ?? 'Artist').toString();
         final streams = (stJson['audioStreams'] as List?) ?? const [];
         if (streams.isNotEmpty) {
-          // Pick highest bitrate m4a/mp4 stream
           Map? best;
           for (final s in streams) {
             if (s is Map && (s['url'] ?? '').toString().startsWith('http')) {
@@ -349,10 +348,10 @@ Future?> _resolveViaPiped(
             }
           }
           if (best != null) {
-            return {
-              'url': best['url'].toString(),
-              'filename': '$uploader - $title.m4a',
-            };
+            return ResolvedStream(
+              url: best['url'].toString(),
+              filename: '$uploader - $title.m4a',
+            );
           }
         }
       }
@@ -361,8 +360,6 @@ Future?> _resolveViaPiped(
   return null;
 }
 
-/// Downloads a direct URL (MP3/FLAC/WAV/M4A/Discord/Catbox/Dropbox) OR resolves
-/// a YouTube/SoundCloud/Spotify URL or song search query and adds it to AlexLMP.
 Future<bool> downloadAudioIntoApp({
   required String inputUrlOrQuery,
   String? customTitle,
@@ -381,12 +378,10 @@ Future<bool> downloadAudioIntoApp({
     String downloadUrl = rawInput;
     String suggestedFilename = '';
 
-    // Convert Dropbox ?dl=0 to ?dl=1 for direct binary download
     if (downloadUrl.contains('dropbox.com') && downloadUrl.contains('dl=0')) {
       downloadUrl = downloadUrl.replaceAll('dl=0', 'dl=1');
     }
 
-    // Convert Google Drive share links to direct download links
     if (downloadUrl.contains('drive.google.com/file/d/')) {
       final parts = downloadUrl.split('/file/d/');
       if (parts.length > 1) {
@@ -406,7 +401,6 @@ Future<bool> downloadAudioIntoApp({
             lower.contains('tiktok.com'));
 
     if (!isHttp) {
-      // User typed a song name like "Artist - Song" instead of a link
       downloadStatus.value = 'Searching "$rawInput"…';
       final resolved = await _resolveViaPiped(client, rawInput);
       if (resolved == null) {
@@ -414,8 +408,9 @@ Future<bool> downloadAudioIntoApp({
             'Could not resolve search query. Try pasting a direct .mp3 link or YouTube URL.';
         return false;
       }
-      downloadUrl = resolved['url']!;
-      suggestedFilename = resolved['filename'] ?? '$rawInput.m4a';
+      downloadUrl = resolved.url;
+      suggestedFilename =
+          resolved.filename.isEmpty ? '$rawInput.m4a' : resolved.filename;
     } else if (isSocialOrStreamingLink) {
       if (lower.contains('spotify.com')) {
         downloadStatus.value = 'Reading Spotify track info…';
@@ -425,8 +420,9 @@ Future<bool> downloadAudioIntoApp({
           downloadStatus.value = 'Matching "$spTitle" audio stream…';
           final resolved = await _resolveViaPiped(client, spTitle);
           if (resolved != null) {
-            downloadUrl = resolved['url']!;
-            suggestedFilename = resolved['filename'] ?? '$spTitle.m4a';
+            downloadUrl = resolved.url;
+            suggestedFilename =
+                resolved.filename.isEmpty ? '$spTitle.m4a' : resolved.filename;
           } else {
             appNotice.value =
                 'Found Spotify track "$spTitle", but stream servers were busy. Try a direct MP3 or YouTube link.';
@@ -437,14 +433,14 @@ Future<bool> downloadAudioIntoApp({
         downloadStatus.value = 'Extracting audio via Cobalt…';
         final cobalt = await _resolveViaCobalt(client, rawInput);
         if (cobalt != null) {
-          downloadUrl = cobalt['url']!;
-          suggestedFilename = cobalt['filename'] ?? '';
+          downloadUrl = cobalt.url;
+          suggestedFilename = cobalt.filename;
         } else {
           downloadStatus.value = 'Trying backup stream extractor…';
           final piped = await _resolveViaPiped(client, rawInput);
           if (piped != null) {
-            downloadUrl = piped['url']!;
-            suggestedFilename = piped['filename'] ?? '';
+            downloadUrl = piped.url;
+            suggestedFilename = piped.filename;
           } else {
             appNotice.value =
                 'Could not extract stream from that link. Try a direct .mp3 / Catbox / Discord link.';
@@ -454,7 +450,6 @@ Future<bool> downloadAudioIntoApp({
       }
     }
 
-    // Download the binary audio stream
     downloadStatus.value = 'Downloading audio to AlexLMP…';
     final uri = Uri.parse(downloadUrl);
     final req = await client.getUrl(uri);
@@ -469,7 +464,6 @@ Future<bool> downloadAudioIntoApp({
       return false;
     }
 
-    // Determine filename & extension
     String ext = '.mp3';
     final pathExt = p.extension(uri.path).toLowerCase();
     if (const ['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.opus']
@@ -519,7 +513,6 @@ Future<bool> downloadAudioIntoApp({
     await sink.close();
 
     if (received < 1024) {
-      // Too small to be an audio file
       try {
         outFile.deleteSync();
       } catch (_) {}
@@ -549,7 +542,7 @@ Future<bool> downloadAudioIntoApp({
       album: 'AlexLMP Downloads',
       durationSeconds: 0,
       artColors:
-          kArtPalettes[audioHandler.tracks.length % kArtPalettes.length],
+          kArtPalettes[audioHandler.tracks.length % kArtPalettes.length].colors,
       artStyle: kArtStyles[audioHandler.tracks.length % kArtStyles.length],
       source: savePath,
       filePath: savePath,
@@ -568,8 +561,6 @@ Future<bool> downloadAudioIntoApp({
   }
 }
 
-/// Scans `/storage/emulated/0/Download` and `/storage/emulated/0/Music` directly
-/// for any `.mp3`/`.flac`/`.wav`/`.m4a` files that Android's MediaStore missed.
 Future<int> quickImportPhoneDownloadsFolder() async {
   int count = 0;
   try {
@@ -601,7 +592,7 @@ Future<int> quickImportPhoneDownloadsFolder() async {
           artist: 'Downloads Folder',
           album: 'Phone Downloads',
           durationSeconds: 0,
-          artColors: kArtPalettes[found.length % kArtPalettes.length],
+          artColors: kArtPalettes[found.length % kArtPalettes.length].colors,
           artStyle: kArtStyles[found.length % kArtStyles.length],
           source: entity.path,
           filePath: entity.path,
@@ -753,7 +744,6 @@ class Playlist {
 class AppState extends ChangeNotifier {
   SharedPreferences? _prefs;
   String themeName = 'AMOLED';
-  // Default OFF on first launch as requested
   bool liquidGlass = false;
   bool vinylSpinMode = false;
   bool stopOnTaskClear = true;
@@ -858,8 +848,6 @@ class AppState extends ChangeNotifier {
     _prefs?.setStringList('liked_ids', liked.toList());
     notifyListeners();
   }
-
-  // ── Playlists ─────────────────────────────────────────────────────────────
 
   Playlist? playlistById(String id) {
     for (final pl in playlists) {
@@ -1001,7 +989,7 @@ class TrackItem {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Audio handler (real playback + lock screen + reliable Sonic pitch shifting)
+// Audio handler
 // ─────────────────────────────────────────────────────────────────────────────
 
 class MyAudioHandler extends BaseAudioHandler with SeekHandler {
@@ -1128,8 +1116,6 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     libraryRevision.value++;
   }
 
-  // ── Library management ────────────────────────────────────────────────────
-
   Future<void> setTracks(List<TrackItem> list) async {
     final currentId = currentTrack?.id;
     tracks = list;
@@ -1177,8 +1163,6 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     }
     _publishQueue();
   }
-
-  // ── Loading / playing ─────────────────────────────────────────────────────
 
   Future<void> _load(int i, {bool play = true}) async {
     if (i < 0 || i >= tracks.length) return;
@@ -1377,7 +1361,7 @@ Future<void> scanDeviceAudio() async {
       return;
     }
     final raw =
-        await _mediaChannel.invokeMethod<List<dynamic>>('scanDeviceAudio') ??
+        await _mediaChannel.invokeMethod('scanDeviceAudio') as List? ??
             const [];
     final scanned = <TrackItem>[];
     for (var i = 0; i < raw.length; i++) {
@@ -1394,7 +1378,7 @@ Future<void> scanDeviceAudio() async {
         artist: cleanText(m['artist'], 'Unknown Artist'),
         album: cleanText(m['album'], 'Local Album'),
         durationSeconds: (m['durationSeconds'] as num?)?.toInt() ?? 0,
-        artColors: kArtPalettes[i % kArtPalettes.length],
+        artColors: kArtPalettes[i % kArtPalettes.length].colors,
         artStyle: kArtStyles[i % kArtStyles.length],
         source: source,
         filePath: path.isEmpty ? null : path,
@@ -1432,7 +1416,7 @@ Future<void> pickLocalFiles() async {
       artist: 'Unknown Artist',
       album: 'Local Files',
       durationSeconds: 0,
-      artColors: kArtPalettes[i % kArtPalettes.length],
+      artColors: kArtPalettes[i % kArtPalettes.length].colors,
       artStyle: kArtStyles[i % kArtStyles.length],
       source: path,
       filePath: path,
@@ -1717,10 +1701,10 @@ class AlexLmpRoot extends StatefulWidget {
 }
 
 class _AlexLmpRootState extends State<AlexLmpRoot> {
-  int _tab = 0; // 0 Home, 1 Mix, 2 Library
+  int _tab = 0;
   int _dir = 1;
   String _chip = 'All';
-  int _libraryFilter = 0; // 0 Songs, 1 Playlists, 2 Artists
+  int _libraryFilter = 0;
 
   @override
   void initState() {
@@ -1923,8 +1907,6 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       ),
     );
   }
-
-  // ── Home ──────────────────────────────────────────────────────────────────
 
   Widget _homeTab(BuildContext context, AppPalette pal, List<TrackItem> tracks) {
     final header = Padding(
@@ -2246,8 +2228,6 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
-  // ── Mix ───────────────────────────────────────────────────────────────────
-
   Widget _mixTab(BuildContext context, AppPalette pal, List<TrackItem> tracks) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 185),
@@ -2362,8 +2342,6 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
-  // ── Library (With Direct URL / Cobalt Downloader Card at the Very Top!) ──
-
   Widget _libraryTab(
     BuildContext context,
     AppPalette pal,
@@ -2454,7 +2432,6 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           ],
         ),
         const SizedBox(height: 14),
-        // ── TOP OF LIBRARY: Direct URL / Cobalt / Downloads Quick Bar ──
         SquishyGesture(
           pressedScale: 0.97,
           onTap: () => showDirectUrlDownloadSheet(context),
@@ -2800,9 +2777,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     AppPalette pal,
     List<TrackItem> tracks,
   ) {
-    final Map<String, List<TrackItem>> byArtist = {};
+    final byArtist = <String, List<TrackItem>>{};
     for (final t in tracks) {
-      byArtist.putIfAbsent(t.artist, () => []).add(t);
+      byArtist.putIfAbsent(t.artist, () => <TrackItem>[]).add(t);
     }
     final entries = byArtist.entries.toList()
       ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
@@ -4349,7 +4326,7 @@ class MiniPlayer extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Now Playing (with 3-Dot Playlist Menu next to Pencil + Wavy Google Seekbar)
+// Now Playing
 // ─────────────────────────────────────────────────────────────────────────────
 
 class NowPlayingScreen extends StatelessWidget {
@@ -5106,16 +5083,16 @@ class _WavyTrackPainter extends CustomPainter {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sheets & Dialogs (Playlists, Pitch/Speed, Settings, Search, Queue)
+// Sheets & Dialogs
 // ─────────────────────────────────────────────────────────────────────────────
 
-Future<T?> _sheet<T>(
+Future<dynamic> _sheet(
   BuildContext context,
   WidgetBuilder builder, {
   bool scroll = false,
   Color? color,
 }) {
-  return showModalBottomSheet<T>(
+  return showModalBottomSheet(
     context: context,
     isScrollControlled: scroll,
     showDragHandle: true,
@@ -6364,23 +6341,31 @@ class _SearchSheetState extends State<SearchSheet> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Artwork
+// Artwork (No nested generic brackets)
 // ─────────────────────────────────────────────────────────────────────────────
 
-final Map<String, Future<Uint8List?>> _artCache = {};
+final Map<String, Object?> _artCache = {};
 
 Future<Uint8List?> loadArt(TrackItem t) {
-  return _artCache.putIfAbsent(t.id, () async {
-    if (!Platform.isAndroid) return null;
-    try {
-      return await _mediaChannel.invokeMethod<Uint8List>('getArt', {
-        'uri': t.source,
-        'path': t.filePath ?? '',
-      });
-    } catch (_) {
-      return null;
-    }
-  });
+  final existing = _artCache[t.id];
+  if (existing is Future<Uint8List?>) return existing;
+  final fut = _fetchArtFromChannel(t);
+  _artCache[t.id] = fut;
+  return fut;
+}
+
+Future<Uint8List?> _fetchArtFromChannel(TrackItem t) async {
+  if (!Platform.isAndroid) return null;
+  try {
+    final res = await _mediaChannel.invokeMethod('getArt', {
+      'uri': t.source,
+      'path': t.filePath ?? '',
+    });
+    if (res is Uint8List) return res;
+    return null;
+  } catch (_) {
+    return null;
+  }
 }
 
 class CustomAlbumArtwork extends StatelessWidget {
