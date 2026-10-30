@@ -46,7 +46,6 @@ jobs:
           mkdir -p "$RES/drawable"
           mkdir -p "$RES/mipmap-anydpi-v26"
 
-          # Adaptive Icon Background (Deep AMOLED + Indigo Radial Glow)
           cat << 'EOF' > "$RES/drawable/ic_launcher_background.xml"
           <?xml version="1.0" encoding="utf-8"?>
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -72,7 +71,6 @@ jobs:
           </vector>
           EOF
 
-          # Adaptive Icon Foreground (Neon Liquid Glass Vinyl + Equalizer Pulse)
           cat << 'EOF' > "$RES/drawable/ic_launcher_foreground.xml"
           <?xml version="1.0" encoding="utf-8"?>
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -81,7 +79,6 @@ jobs:
               android:height="108dp"
               android:viewportWidth="108"
               android:viewportHeight="108">
-              <!-- Outer glowing ring -->
               <path
                   android:pathData="M54,24A30,30 0 1,1 24,54A30,30 0 0,1 54,24Z"
                   android:strokeWidth="3.5"
@@ -99,13 +96,11 @@ jobs:
                       </gradient>
                   </aapt:attr>
               </path>
-              <!-- Inner vinyl groove -->
               <path
                   android:pathData="M54,32A22,22 0 1,1 32,54A22,22 0 0,1 54,32Z"
                   android:strokeWidth="1.5"
                   android:strokeColor="#448CD0F0"
                   android:fillColor="#00000000"/>
-              <!-- Equalizer / Music Wave Bars -->
               <path
                   android:pathData="M41,47 L41,61"
                   android:strokeWidth="4.2"
@@ -145,7 +140,6 @@ jobs:
           </adaptive-icon>
           EOF
 
-          # Also render crisp PNG mipmaps for legacy/fallback launchers using Python
           python3 - << 'PYEOF'
           import os, struct, zlib, math
 
@@ -161,16 +155,13 @@ jobs:
                       if dist > size * 0.48:
                           pixels[idx:idx+4] = bytes([0, 0, 0, 0])
                           continue
-                      # AMOLED radial background
                       t = min(1.0, dist / r_max)
                       r = int(46 * (1 - t) + 5 * t)
                       g = int(28 * (1 - t) + 5 * t)
                       b = int(89 * (1 - t) + 10 * t)
-                      # Outer neon ring
                       ring_d = abs(dist - size * 0.34)
                       if ring_d < size * 0.03:
                           r, g, b = 140, 208, 240
-                      # Equalizer bars in center
                       nx = (x - cx) / (size * 0.34)
                       ny = abs(y - cy) / (size * 0.34)
                       bars = [(-0.42, 0.35, (140,208,240)), (-0.14, 0.62, (208,188,255)), (0.14, 0.48, (240,156,226)), (0.42, 0.28, (156,240,192))]
@@ -206,13 +197,19 @@ jobs:
                   f.write(data)
           PYEOF
 
-      - name: Configure Gradle for Android SDK 35
+      - name: Configure Gradle for Android SDK 35 + Native yt-dlp Engine
         run: |
           cat << 'EOF' > app_build/android/app/build.gradle
           plugins {
               id "com.android.application"
               id "kotlin-android"
               id "dev.flutter.flutter-gradle-plugin"
+          }
+
+          repositories {
+              google()
+              mavenCentral()
+              maven { url "https://jitpack.io" }
           }
 
           android {
@@ -233,8 +230,17 @@ jobs:
                   applicationId = "com.alexlmp.app"
                   minSdk = 24
                   targetSdk = 35
-                  versionCode = 2
-                  versionName = "2.0.0"
+                  versionCode = 3
+                  versionName = "3.0.0"
+                  ndk {
+                      abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
+                  }
+              }
+
+              packagingOptions {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
               }
 
               buildTypes {
@@ -244,6 +250,12 @@ jobs:
                       shrinkResources = false
                   }
               }
+          }
+
+          dependencies {
+              implementation "io.github.junkfood02.youtubedl-android:library:0.17.2"
+              implementation "io.github.junkfood02.youtubedl-android:ffmpeg:0.17.2"
+              implementation "io.github.junkfood02.youtubedl-android:aria2c:0.17.2"
           }
 
           flutter {
