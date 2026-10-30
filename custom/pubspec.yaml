@@ -1,7 +1,7 @@
 name: alex_lmp
-description: AlexLMP Material 3 Music Player
+description: AlexLMP ArchiveTune Style Music Player
 publish_to: 'none'
-version: 5.0.0+1
+version: 6.0.0+1
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -17,8 +17,6 @@ dependencies:
   shared_preferences: ^2.3.2
   path_provider: ^2.1.4
   path: ^1.9.0
-  youtube_explode_dart: ^2.5.3
-  webview_flutter: ^4.8.0
 
 dev_dependencies:
   flutter_test:
