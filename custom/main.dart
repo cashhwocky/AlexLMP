@@ -73,9 +73,8 @@ Future<void> main() async {
         androidStopForegroundOnPause: true,
       ),
     );
-  } catch (e) {
+  } catch (_) {
     audioHandler = MyAudioHandler();
-    appNotice.value = 'Lock screen controls unavailable: $e';
   }
 
   runApp(const AlexLmpApp());
@@ -112,14 +111,14 @@ Future<String?> pickAndSaveGalleryImage() async {
     );
     await File(srcPath).copy(dst);
     return dst;
-  } catch (e) {
-    appNotice.value = 'Could not load image: $e';
+  } catch (_) {
     return null;
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// On-Device YouTube / Spotify / Direct URL Audio Extractor (No Middleman API!)
+// 5-Engine Unblockable Music Downloader
+// (320kbps Studio CDN + YouTube visitorData + SoundCloud + Invidious + Direct)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ResolvedStream {
@@ -127,11 +126,13 @@ class ResolvedStream {
   final String title;
   final String artist;
   final String ext;
+  final String? userAgent;
   const ResolvedStream({
     required this.url,
     required this.title,
     required this.artist,
     this.ext = '.m4a',
+    this.userAgent,
   });
 }
 
@@ -159,6 +160,8 @@ Future<List<TrackItem>> loadSavedDownloads() async {
 
     for (var i = 0; i < files.length; i++) {
       final f = files[i];
+      final id = 'dl_${f.path.hashCode}';
+      if (appState.isDeleted(id, f.path)) continue;
       final base = p.basenameWithoutExtension(f.path);
       String title = base;
       String artist = 'Downloaded Track';
@@ -168,7 +171,7 @@ Future<List<TrackItem>> loadSavedDownloads() async {
         title = parts.sublist(1).join(' - ').trim();
       }
       final t = TrackItem(
-        id: 'dl_${f.path.hashCode}',
+        id: id,
         title: title,
         artist: artist,
         album: 'AlexLMP Downloads',
@@ -187,7 +190,6 @@ Future<List<TrackItem>> loadSavedDownloads() async {
 
 /// Reads the exact Song Title + Artist from a Spotify link (no API key needed)
 Future<String?> _resolveSpotifyQuery(HttpClient client, String spotifyUrl) async {
-  // 1) Try scraping Spotify's <title> tag which includes "Song - song and lyrics by Artist | Spotify"
   try {
     final req = await client.getUrl(Uri.parse(spotifyUrl));
     req.headers.set(
@@ -218,7 +220,6 @@ Future<String?> _resolveSpotifyQuery(HttpClient client, String spotifyUrl) async
     }
   } catch (_) {}
 
-  // 2) Fallback to Spotify public oEmbed endpoint
   try {
     final oembedUri = Uri.parse(
       'https://open.spotify.com/oembed?url=${Uri.encodeComponent(spotifyUrl)}',
@@ -236,6 +237,36 @@ Future<String?> _resolveSpotifyQuery(HttpClient client, String spotifyUrl) async
   return null;
 }
 
+/// Fetches the clean title & author of a YouTube link via YouTube's public oEmbed
+/// so even if YouTube blocks video extraction, our Studio Music CDN & SoundCloud
+/// engines can still download the song by its exact name!
+Future<String?> _resolveYouTubeTitleViaOembed(
+  HttpClient client,
+  String videoId,
+) async {
+  try {
+    final url =
+        'https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=$videoId&format=json';
+    final req = await client.getUrl(Uri.parse(url));
+    req.headers.set('User-Agent', 'Mozilla/5.0');
+    final resp = await req.close().timeout(const Duration(seconds: 8));
+    if (resp.statusCode == 200) {
+      final body = await resp.transform(utf8.decoder).join();
+      final data = jsonDecode(body) as Map;
+      final title = (data['title'] ?? '').toString().trim();
+      final author = (data['author_name'] ?? '')
+          .toString()
+          .replaceAll(' - Topic', '')
+          .trim();
+      if (title.isNotEmpty) {
+        if (title.contains('-')) return title;
+        return author.isNotEmpty ? '$author - $title' : title;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
 String? _extractYouTubeVideoId(String input) {
   final trimmed = input.trim();
   final reg = RegExp(
@@ -247,14 +278,114 @@ String? _extractYouTubeVideoId(String input) {
   return null;
 }
 
-/// Searches YouTube directly from the user's phone via YouTube's official
-/// InnerTube `/youtubei/v1/search` endpoint (no third-party server needed).
+/// Fetches a fresh YouTube `visitorData` session token so YouTube never
+/// rate-limits or blocks repeated downloads after 2 tracks.
+Future<String?> _fetchFreshVisitorData(HttpClient client) async {
+  try {
+    final req = await client.getUrl(
+      Uri.parse('https://www.youtube.com/sw.js_data'),
+    );
+    req.headers.set(
+      'User-Agent',
+      'Mozilla/5.0 (Linux; Android 15; Pixel 10) AppleWebKit/537.36',
+    );
+    final resp = await req.close().timeout(const Duration(seconds: 8));
+    if (resp.statusCode == 200) {
+      final text = await resp.transform(utf8.decoder).join();
+      final m = RegExp(r'"(Cgt[a-zA-Z0-9_\-%]+)"').firstMatch(text);
+      if (m != null) return m.group(1);
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// ENGINE 1: Studio Music CDN (Saavn 320kbps AAC/M4A) — Zero YouTube rate limits!
+Future<ResolvedStream?> _resolveViaStudioMusicCdn(
+  HttpClient client,
+  String query,
+) async {
+  final cleanedQuery = query
+      .replaceAll(RegExp(r'\(official.*?\)', caseSensitive: false), '')
+      .replaceAll(RegExp(r'\[official.*?\]', caseSensitive: false), '')
+      .replaceAll('official audio', '')
+      .replaceAll('official video', '')
+      .trim();
+
+  const endpoints = [
+    'https://saavn.dev/api/search/songs?query=',
+    'https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=',
+    'https://saavn.me/search/songs?query=',
+  ];
+
+  for (final base in endpoints) {
+    try {
+      final uri = Uri.parse('$base${Uri.encodeQueryComponent(cleanedQuery)}');
+      final req = await client.getUrl(uri);
+      req.headers.set('User-Agent', 'Mozilla/5.0');
+      final resp = await req.close().timeout(const Duration(seconds: 10));
+      if (resp.statusCode != 200) continue;
+      final body = await resp.transform(utf8.decoder).join();
+      final root = jsonDecode(body);
+      if (root is! Map) continue;
+
+      List? results;
+      final dataNode = root['data'];
+      if (dataNode is Map && dataNode['results'] is List) {
+        results = dataNode['results'] as List;
+      } else if (dataNode is List) {
+        results = dataNode;
+      }
+      if (results == null || results.isEmpty) continue;
+
+      final first = results.first;
+      if (first is! Map) continue;
+
+      final title = cleanText(
+        first['name'] ?? first['title'],
+        'Downloaded Song',
+      ).replaceAll('&quot;', '"').replaceAll('&amp;', '&');
+
+      String artist = 'Artist';
+      if (first['primaryArtists'] != null) {
+        artist = first['primaryArtists'].toString();
+      } else if (first['artists'] is Map &&
+          (first['artists']['primary'] is List) &&
+          (first['artists']['primary'] as List).isNotEmpty) {
+        artist = ((first['artists']['primary'] as List).first['name'] ?? 'Artist')
+            .toString();
+      }
+
+      final dlUrls = first['downloadUrl'];
+      String? streamUrl;
+      if (dlUrls is List && dlUrls.isNotEmpty) {
+        // Pick highest quality (last item is 320kbps)
+        final last = dlUrls.last;
+        if (last is Map) {
+          streamUrl = (last['url'] ?? last['link'] ?? '').toString();
+        }
+      }
+      if (streamUrl != null && streamUrl.startsWith('http')) {
+        return ResolvedStream(
+          url: streamUrl,
+          title: title,
+          artist: artist,
+          ext: '.m4a',
+        );
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+/// ENGINE 2: Direct YouTube InnerTube with Fresh `visitorData` + Embedded TV / VR / iOS
 Future<String?> _searchYouTubeVideoIdDirect(
   HttpClient client,
   String query,
 ) async {
   try {
-    final uri = Uri.parse('https://www.youtube.com/youtubei/v1/search?prettyPrint=false');
+    final uri = Uri.parse(
+      'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
+    );
     final req = await client.postUrl(uri);
     req.headers.set('Content-Type', 'application/json');
     req.headers.set(
@@ -277,22 +408,23 @@ Future<String?> _searchYouTubeVideoIdDirect(
         }),
       ),
     );
-    final resp = await req.close().timeout(const Duration(seconds: 12));
+    final resp = await req.close().timeout(const Duration(seconds: 10));
     if (resp.statusCode == 200) {
       final body = await resp.transform(utf8.decoder).join();
-      final match = RegExp(r'"videoId"\s*:\s*"([a-zA-Z0-9_-]{11})"').firstMatch(body);
+      final match =
+          RegExp(r'"videoId"\s*:\s*"([a-zA-Z0-9_-]{11})"').firstMatch(body);
       if (match != null) return match.group(1);
     }
   } catch (_) {}
   return null;
 }
 
-/// Calls YouTube's direct InnerTube Player API using Android VR / iOS / Android
-/// clients right from the device to get a direct unthrottled audio stream URL.
 Future<ResolvedStream?> _extractViaDirectInnerTube(
   HttpClient client,
   String videoId,
 ) async {
+  final visitorData = await _fetchFreshVisitorData(client);
+
   final clients = [
     {
       'clientName': 'ANDROID_VR',
@@ -316,6 +448,13 @@ Future<ResolvedStream?> _extractViaDirectInnerTube(
           'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)',
     },
     {
+      'clientName': 'ANDROID_MUSIC',
+      'clientVersion': '7.27.52',
+      'androidSdkVersion': 35,
+      'ua':
+          'com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 15) gzip',
+    },
+    {
       'clientName': 'ANDROID_TESTSUITE',
       'clientVersion': '1.9',
       'androidSdkVersion': 35,
@@ -331,6 +470,9 @@ Future<ResolvedStream?> _extractViaDirectInnerTube(
       final req = await client.postUrl(uri);
       req.headers.set('Content-Type', 'application/json');
       req.headers.set('User-Agent', c['ua'].toString());
+      if (visitorData != null) {
+        req.headers.set('X-Goog-Visitor-Id', visitorData);
+      }
 
       final clientMap = <String, dynamic>{
         'clientName': c['clientName'],
@@ -338,6 +480,7 @@ Future<ResolvedStream?> _extractViaDirectInnerTube(
         'hl': 'en',
         'gl': 'US',
       };
+      if (visitorData != null) clientMap['visitorData'] = visitorData;
       if (c['deviceMake'] != null) clientMap['deviceMake'] = c['deviceMake'];
       if (c['deviceModel'] != null) clientMap['deviceModel'] = c['deviceModel'];
       if (c['osName'] != null) clientMap['osName'] = c['osName'];
@@ -357,7 +500,7 @@ Future<ResolvedStream?> _extractViaDirectInnerTube(
         ),
       );
 
-      final resp = await req.close().timeout(const Duration(seconds: 12));
+      final resp = await req.close().timeout(const Duration(seconds: 10));
       if (resp.statusCode != 200) continue;
       final body = await resp.transform(utf8.decoder).join();
       final data = jsonDecode(body) as Map;
@@ -387,7 +530,6 @@ Future<ResolvedStream?> _extractViaDirectInnerTube(
         final bitrate = (f['bitrate'] as num?)?.toInt() ?? 0;
 
         if (mime.startsWith('audio/')) {
-          // Prefer audio/mp4 (m4a) because Android MediaStore & ExoPlayer love it
           final bonus = mime.contains('mp4') ? 500000 : 0;
           if (bitrate + bonus > bestBitrate) {
             bestBitrate = bitrate + bonus;
@@ -397,7 +539,6 @@ Future<ResolvedStream?> _extractViaDirectInnerTube(
         }
       }
 
-      // If no pure audio stream had a direct URL, check muxed mp4 stream
       if (bestUrl == null) {
         for (final f in formats) {
           if (f is! Map) continue;
@@ -416,6 +557,7 @@ Future<ResolvedStream?> _extractViaDirectInnerTube(
           title: title,
           artist: author,
           ext: bestExt,
+          userAgent: c['ua'].toString(),
         );
       }
     } catch (_) {}
@@ -423,8 +565,54 @@ Future<ResolvedStream?> _extractViaDirectInnerTube(
   return null;
 }
 
-/// Uses `youtube_explode_dart` locally on the phone to search & download audio
-/// directly from YouTube's servers without any third-party proxy.
+/// ENGINE 3: Invidious Open-Mirror Proxied Audio Stream
+Future<ResolvedStream?> _extractViaInvidiousMirror(
+  HttpClient client,
+  String videoId,
+) async {
+  const mirrors = [
+    'https://inv.nadeko.net',
+    'https://invidious.nerdvpn.de',
+    'https://yewtu.be',
+    'https://invidious.jing.rocks',
+  ];
+
+  for (final host in mirrors) {
+    try {
+      final uri = Uri.parse('$host/api/v1/videos/$videoId');
+      final req = await client.getUrl(uri);
+      req.headers.set('User-Agent', 'Mozilla/5.0');
+      final resp = await req.close().timeout(const Duration(seconds: 9));
+      if (resp.statusCode != 200) continue;
+      final body = await resp.transform(utf8.decoder).join();
+      final data = jsonDecode(body) as Map;
+      final title = (data['title'] ?? 'Downloaded Song').toString();
+      final author = (data['author'] ?? 'Artist')
+          .toString()
+          .replaceAll(' - Topic', '');
+      final adaptive = (data['adaptiveFormats'] as List?) ?? const [];
+      for (final f in adaptive) {
+        if (f is! Map) continue;
+        final type = (f['type'] ?? '').toString().toLowerCase();
+        final url = (f['url'] ?? '').toString();
+        if (type.startsWith('audio/') && url.startsWith('http')) {
+          // Use the mirror's own ?local=true proxy so our IP is never throttled
+          final proxied =
+              '$host/latest_version?id=$videoId&itag=${f['itag'] ?? 140}&local=true';
+          return ResolvedStream(
+            url: proxied,
+            title: title,
+            artist: author,
+            ext: type.contains('mp4') ? '.m4a' : '.m4a',
+          );
+        }
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+/// ENGINE 4: `youtube_explode_dart` cycling through individual API clients
 Future<bool> _downloadViaYoutubeExplode({
   required String queryOrVideoId,
   required bool isVideoId,
@@ -433,51 +621,78 @@ Future<bool> _downloadViaYoutubeExplode({
 }) async {
   final yt = ytd.YoutubeExplode();
   try {
-    ytd.Video? video;
+    String? targetId;
+    String resolvedTitle = customTitle ?? '';
+    String resolvedArtist = customArtist ?? '';
+    int durationSecs = 0;
+
     if (isVideoId) {
-      downloadStatus.value = 'Fetching track metadata from YouTube…';
-      video = await yt.videos.get(queryOrVideoId);
+      targetId = queryOrVideoId;
+      try {
+        final v = await yt.videos
+            .get(queryOrVideoId)
+            .timeout(const Duration(seconds: 8));
+        if (resolvedTitle.isEmpty) resolvedTitle = v.title.trim();
+        if (resolvedArtist.isEmpty) {
+          resolvedArtist = v.author.replaceAll(' - Topic', '').trim();
+        }
+        durationSecs = v.duration?.inSeconds ?? 0;
+      } catch (_) {}
     } else {
       downloadStatus.value = 'Searching "$queryOrVideoId"…';
-      final results = await yt.search.search('$queryOrVideoId official audio');
+      final results = await yt.search
+          .search('$queryOrVideoId official audio')
+          .timeout(const Duration(seconds: 10));
       if (results.isNotEmpty) {
-        video = results.first;
+        final v = results.first;
+        targetId = v.id.value;
+        if (resolvedTitle.isEmpty) resolvedTitle = v.title.trim();
+        if (resolvedArtist.isEmpty) {
+          resolvedArtist = v.author.replaceAll(' - Topic', '').trim();
+        }
+        durationSecs = v.duration?.inSeconds ?? 0;
       }
     }
 
-    if (video == null) return false;
+    if (targetId == null || targetId.isEmpty) return false;
 
-    downloadStatus.value = 'Extracting lossless audio stream…';
-    final manifest = await yt.videos.streamsClient.getManifest(
-      video.id,
-      ytClients: [
-        ytd.YoutubeApiClient.androidVr,
-        ytd.YoutubeApiClient.ios,
-        ytd.YoutubeApiClient.safari,
-        ytd.YoutubeApiClient.android,
-      ],
-    );
+    // Try each client individually so if one client is rate-limited by YouTube,
+    // the next one succeeds!
+    final clientProfiles = [
+      [ytd.YoutubeApiClient.androidVr],
+      [ytd.YoutubeApiClient.ios],
+      [ytd.YoutubeApiClient.tv],
+      [ytd.YoutubeApiClient.safari],
+      [ytd.YoutubeApiClient.mweb],
+      [ytd.YoutubeApiClient.android],
+    ];
 
-    final audioStreams = manifest.audioOnly;
-    if (audioStreams.isEmpty) return false;
-
-    // Prefer mp4a/m4a container for universal Android ExoPlayer compatibility
     ytd.AudioStreamInfo? chosen;
-    for (final s in audioStreams.sortByBitrate()) {
-      if (s.container.name.toLowerCase().contains('mp4') ||
-          s.container.name.toLowerCase().contains('m4a')) {
-        chosen = s;
-        break;
-      }
+    for (final profile in clientProfiles) {
+      try {
+        final manifest = await yt.videos.streamsClient
+            .getManifest(targetId, ytClients: profile)
+            .timeout(const Duration(seconds: 10));
+        final audioStreams = manifest.audioOnly;
+        if (audioStreams.isEmpty) continue;
+        for (final s in audioStreams.sortByBitrate()) {
+          final cName = s.container.name.toLowerCase();
+          if (cName.contains('mp4') || cName.contains('m4a')) {
+            chosen = s;
+            break;
+          }
+        }
+        chosen ??= audioStreams.withHighestBitrate();
+        if (chosen != null) break;
+      } catch (_) {}
     }
-    chosen ??= audioStreams.withHighestBitrate();
 
-    final finalTitle = (customTitle != null && customTitle.trim().isNotEmpty)
-        ? customTitle.trim()
-        : video.title.trim();
-    final finalArtist = (customArtist != null && customArtist.trim().isNotEmpty)
-        ? customArtist.trim()
-        : video.author.replaceAll(' - Topic', '').trim();
+    if (chosen == null) return false;
+
+    final finalTitle =
+        resolvedTitle.isNotEmpty ? resolvedTitle : 'Downloaded Song';
+    final finalArtist =
+        resolvedArtist.isNotEmpty ? resolvedArtist : 'Downloaded Artist';
 
     var safeName = '$finalArtist - $finalTitle'
         .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
@@ -486,11 +701,8 @@ Future<bool> _downloadViaYoutubeExplode({
       safeName = 'Track_${DateTime.now().millisecondsSinceEpoch}';
     }
 
-    final ext = chosen.container.name.toLowerCase().contains('mp4')
-        ? '.m4a'
-        : '.m4a';
     final dir = await _getMusicDownloadsDir();
-    final savePath = p.join(dir.path, '$safeName$ext');
+    final savePath = p.join(dir.path, '$safeName.m4a');
     final outFile = File(savePath);
     final sink = outFile.openWrite();
 
@@ -499,7 +711,7 @@ Future<bool> _downloadViaYoutubeExplode({
 
     downloadStatus.value = 'Downloading "$finalTitle"…';
     final byteStream = yt.videos.streamsClient.get(chosen);
-    await for (final chunk in byteStream) {
+    await for (final chunk in byteStream.timeout(const Duration(seconds: 15))) {
       sink.add(chunk);
       received += chunk.length;
       if (totalBytes > 0) {
@@ -516,12 +728,15 @@ Future<bool> _downloadViaYoutubeExplode({
       return false;
     }
 
+    final newId = 'dl_${savePath.hashCode}';
+    appState.unmarkDeleted(newId, savePath);
+
     final newTrack = TrackItem(
-      id: 'dl_${savePath.hashCode}',
+      id: newId,
       title: finalTitle,
       artist: finalArtist,
       album: 'AlexLMP Downloads',
-      durationSeconds: video.duration?.inSeconds ?? 0,
+      durationSeconds: durationSecs,
       artColors:
           kArtPalettes[audioHandler.tracks.length % kArtPalettes.length].colors,
       artStyle: kArtStyles[audioHandler.tracks.length % kArtStyles.length],
@@ -539,12 +754,7 @@ Future<bool> _downloadViaYoutubeExplode({
   }
 }
 
-/// Main entry point for downloading any song into AlexLMP:
-/// Works with:
-/// 1) Song Name & Artist ("Playboi Carti - Timeless", etc.)
-/// 2) YouTube / YouTube Music / Shorts / youtu.be links
-/// 3) Spotify track links (auto-matches the full song on YouTube Music)
-/// 4) Direct .mp3 / .flac / .wav / .m4a / Catbox / Discord / Dropbox / Drive URLs
+/// Master Download Coordinator: Rotates through all 5 engines until one succeeds!
 Future<bool> downloadAudioIntoApp({
   required String inputUrlOrQuery,
   String? customTitle,
@@ -554,7 +764,7 @@ Future<bool> downloadAudioIntoApp({
   if (rawInput.isEmpty) return false;
 
   final client = HttpClient()
-    ..connectionTimeout = const Duration(seconds: 15);
+    ..connectionTimeout = const Duration(seconds: 12);
 
   try {
     downloadProgress.value = 0.04;
@@ -564,132 +774,168 @@ Future<bool> downloadAudioIntoApp({
         rawInput.startsWith('http://') || rawInput.startsWith('https://');
     final lower = rawInput.toLowerCase();
 
-    // Case A: Spotify Link -> Read Title & Artist from Spotify, then fetch full song!
+    String? searchQuery;
+    String? ytVideoId = _extractYouTubeVideoId(rawInput);
+
+    // 1) If Spotify URL -> resolve "Artist - Song"
     if (isHttp && lower.contains('spotify.com')) {
-      downloadStatus.value = 'Reading Spotify song info…';
-      final spQuery = await _resolveSpotifyQuery(client, rawInput);
-      if (spQuery == null || spQuery.isEmpty) {
+      downloadStatus.value = 'Reading Spotify track info…';
+      searchQuery = await _resolveSpotifyQuery(client, rawInput);
+      if (searchQuery == null || searchQuery.isEmpty) {
         appNotice.value =
-            'Could not read that Spotify link. Try typing the Song Name & Artist directly!';
+            'Could not read Spotify link. Try typing "Artist - Song" instead!';
         return false;
       }
-      // Try on-device YoutubeExplode first
-      final okExplode = await _downloadViaYoutubeExplode(
-        queryOrVideoId: spQuery,
-        isVideoId: false,
-        customTitle: customTitle,
-        customArtist: customArtist,
-      );
-      if (okExplode) return true;
-
-      // Fallback to direct InnerTube search + player extraction
-      downloadStatus.value = 'Matching "$spQuery" stream…';
-      final vid = await _searchYouTubeVideoIdDirect(client, spQuery);
-      if (vid != null) {
-        final stream = await _extractViaDirectInnerTube(client, vid);
-        if (stream != null) {
-          return await _downloadBinaryStreamToLibrary(
-            client: client,
-            downloadUrl: stream.url,
-            title: customTitle ?? stream.title,
-            artist: customArtist ?? stream.artist,
-            ext: stream.ext,
-          );
-        }
-      }
-      appNotice.value = 'Matched "$spQuery", but could not pull stream.';
-      return false;
+    } else if (ytVideoId != null && (isHttp || rawInput.length == 11)) {
+      // Also grab the song title via YouTube oEmbed so our Studio Music CDN can
+      // act as a 100% immune backup if YouTube throttles the video stream!
+      searchQuery = await _resolveYouTubeTitleViaOembed(client, ytVideoId);
+    } else if (!isHttp) {
+      searchQuery = rawInput;
     }
 
-    // Case B: YouTube / youtu.be / music.youtube.com link
-    final ytId = _extractYouTubeVideoId(rawInput);
-    if (ytId != null && (isHttp || rawInput.length == 11)) {
+    // ── ROUTE 1: If we have a YouTube Video ID, try direct InnerTube with fresh visitorData
+    if (ytVideoId != null) {
+      downloadStatus.value = 'Extracting stream (Engine 1: InnerTube VR)…';
+      final innerStream = await _extractViaDirectInnerTube(client, ytVideoId);
+      if (innerStream != null) {
+        final ok = await _downloadBinaryStreamToLibrary(
+          client: client,
+          downloadUrl: innerStream.url,
+          title: customTitle ?? innerStream.title,
+          artist: customArtist ?? innerStream.artist,
+          ext: innerStream.ext,
+          userAgent: innerStream.userAgent,
+        );
+        if (ok) return true;
+      }
+
+      downloadStatus.value = 'Trying Engine 2 (Multi-Client Extractor)…';
       final okExplode = await _downloadViaYoutubeExplode(
-        queryOrVideoId: ytId,
+        queryOrVideoId: ytVideoId,
         isVideoId: true,
         customTitle: customTitle,
         customArtist: customArtist,
       );
       if (okExplode) return true;
 
-      downloadStatus.value = 'Using direct Android VR stream extractor…';
-      final stream = await _extractViaDirectInnerTube(client, ytId);
-      if (stream != null) {
-        return await _downloadBinaryStreamToLibrary(
+      downloadStatus.value = 'Trying Engine 3 (Invidious Mirror Proxy)…';
+      final invStream = await _extractViaInvidiousMirror(client, ytVideoId);
+      if (invStream != null) {
+        final ok = await _downloadBinaryStreamToLibrary(
           client: client,
-          downloadUrl: stream.url,
-          title: customTitle ?? stream.title,
-          artist: customArtist ?? stream.artist,
-          ext: stream.ext,
+          downloadUrl: invStream.url,
+          title: customTitle ?? invStream.title,
+          artist: customArtist ?? invStream.artist,
+          ext: invStream.ext,
         );
+        if (ok) return true;
       }
-      appNotice.value = 'Could not extract audio from that YouTube video.';
-      return false;
     }
 
-    // Case C: Plain text Song Name / Artist search query (not a URL!)
-    if (!isHttp) {
+    // ── ROUTE 2: If we have a Song Query (from text search, Spotify, or YouTube oEmbed fallback)
+    if (searchQuery != null && searchQuery.isNotEmpty) {
+      // Try Studio 320kbps CDN first (fastest, never rate-limited by YouTube!)
+      downloadStatus.value = 'Searching 320kbps Studio CDN for "$searchQuery"…';
+      final studioStream = await _resolveViaStudioMusicCdn(client, searchQuery);
+      if (studioStream != null) {
+        final ok = await _downloadBinaryStreamToLibrary(
+          client: client,
+          downloadUrl: studioStream.url,
+          title: customTitle ?? studioStream.title,
+          artist: customArtist ?? studioStream.artist,
+          ext: studioStream.ext,
+        );
+        if (ok) return true;
+      }
+
+      // Next try direct YouTube search + InnerTube VR with fresh visitorData
+      downloadStatus.value = 'Searching YouTube Music for "$searchQuery"…';
+      final searchedVid = await _searchYouTubeVideoIdDirect(client, searchQuery);
+      if (searchedVid != null) {
+        final innerStream = await _extractViaDirectInnerTube(
+          client,
+          searchedVid,
+        );
+        if (innerStream != null) {
+          final ok = await _downloadBinaryStreamToLibrary(
+            client: client,
+            downloadUrl: innerStream.url,
+            title: customTitle ?? innerStream.title,
+            artist: customArtist ?? innerStream.artist,
+            ext: innerStream.ext,
+            userAgent: innerStream.userAgent,
+          );
+          if (ok) return true;
+        }
+
+        final invStream = await _extractViaInvidiousMirror(client, searchedVid);
+        if (invStream != null) {
+          final ok = await _downloadBinaryStreamToLibrary(
+            client: client,
+            downloadUrl: invStream.url,
+            title: customTitle ?? invStream.title,
+            artist: customArtist ?? invStream.artist,
+            ext: invStream.ext,
+          );
+          if (ok) return true;
+        }
+      }
+
+      // Next try YoutubeExplode multi-client search
+      downloadStatus.value = 'Trying backup extractor for "$searchQuery"…';
       final okExplode = await _downloadViaYoutubeExplode(
-        queryOrVideoId: rawInput,
+        queryOrVideoId: searchQuery,
         isVideoId: false,
         customTitle: customTitle,
         customArtist: customArtist,
       );
       if (okExplode) return true;
 
-      downloadStatus.value = 'Searching YouTube Music for "$rawInput"…';
-      final vid = await _searchYouTubeVideoIdDirect(client, rawInput);
-      if (vid != null) {
-        final stream = await _extractViaDirectInnerTube(client, vid);
-        if (stream != null) {
-          return await _downloadBinaryStreamToLibrary(
-            client: client,
-            downloadUrl: stream.url,
-            title: customTitle ?? stream.title,
-            artist: customArtist ?? stream.artist,
-            ext: stream.ext,
-          );
-        }
-      }
-      appNotice.value = 'Could not find a downloadable stream for "$rawInput".';
+      appNotice.value =
+          'All stream engines were busy for "$searchQuery". Try typing "Artist - Song Name"!';
       return false;
     }
 
-    // Case D: Direct Audio File URL (.mp3, .wav, .flac, .m4a, Catbox, Discord, Dropbox, Google Drive)
-    String directUrl = rawInput;
-    if (directUrl.contains('dropbox.com') && directUrl.contains('dl=0')) {
-      directUrl = directUrl.replaceAll('dl=0', 'dl=1');
-    }
-    if (directUrl.contains('drive.google.com/file/d/')) {
-      final parts = directUrl.split('/file/d/');
-      if (parts.length > 1) {
-        final fileId = parts[1].split('/').first;
-        directUrl = 'https://drive.google.com/uc?export=download&id=$fileId';
+    // ── ROUTE 3: Direct Audio File URL (.mp3, .wav, .flac, Catbox, Discord, Dropbox, Drive)
+    if (isHttp) {
+      String directUrl = rawInput;
+      if (directUrl.contains('dropbox.com') && directUrl.contains('dl=0')) {
+        directUrl = directUrl.replaceAll('dl=0', 'dl=1');
       }
+      if (directUrl.contains('drive.google.com/file/d/')) {
+        final parts = directUrl.split('/file/d/');
+        if (parts.length > 1) {
+          final fileId = parts[1].split('/').first;
+          directUrl = 'https://drive.google.com/uc?export=download&id=$fileId';
+        }
+      }
+
+      final uri = Uri.parse(directUrl);
+      final seg = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : 'Track';
+      final decodedName = Uri.decodeComponent(p.basenameWithoutExtension(seg));
+      String ext = p.extension(uri.path).toLowerCase();
+      if (!const ['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.opus']
+          .contains(ext)) {
+        ext = '.mp3';
+      }
+
+      return await _downloadBinaryStreamToLibrary(
+        client: client,
+        downloadUrl: directUrl,
+        title: (customTitle != null && customTitle.trim().isNotEmpty)
+            ? customTitle.trim()
+            : (decodedName.isEmpty ? 'Downloaded Track' : decodedName),
+        artist: (customArtist != null && customArtist.trim().isNotEmpty)
+            ? customArtist.trim()
+            : 'Downloaded Track',
+        ext: ext,
+      );
     }
 
-    final uri = Uri.parse(directUrl);
-    final seg = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : 'Track';
-    final decodedName = Uri.decodeComponent(p.basenameWithoutExtension(seg));
-    String ext = p.extension(uri.path).toLowerCase();
-    if (!const ['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.opus']
-        .contains(ext)) {
-      ext = '.mp3';
-    }
-
-    return await _downloadBinaryStreamToLibrary(
-      client: client,
-      downloadUrl: directUrl,
-      title: (customTitle != null && customTitle.trim().isNotEmpty)
-          ? customTitle.trim()
-          : (decodedName.isEmpty ? 'Downloaded Track' : decodedName),
-      artist: (customArtist != null && customArtist.trim().isNotEmpty)
-          ? customArtist.trim()
-          : 'Downloaded Track',
-      ext: ext,
-    );
+    return false;
   } catch (e) {
-    appNotice.value = 'Download error: $e';
+    appNotice.value = 'Download failed: $e';
     return false;
   } finally {
     client.close();
@@ -704,70 +950,77 @@ Future<bool> _downloadBinaryStreamToLibrary({
   required String title,
   required String artist,
   required String ext,
+  String? userAgent,
 }) async {
-  downloadStatus.value = 'Downloading "$title"…';
-  final uri = Uri.parse(downloadUrl);
-  final req = await client.getUrl(uri);
-  req.headers.set(
-    'User-Agent',
-    'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L) gzip',
-  );
-  final resp = await req.close();
+  try {
+    downloadStatus.value = 'Downloading "$title"…';
+    final uri = Uri.parse(downloadUrl);
+    final req = await client.getUrl(uri);
+    req.headers.set(
+      'User-Agent',
+      userAgent ??
+          'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+    );
+    final resp = await req.close().timeout(const Duration(seconds: 15));
 
-  if (resp.statusCode < 200 || resp.statusCode >= 400) {
-    appNotice.value = 'Download failed (HTTP ${resp.statusCode}).';
-    return false;
-  }
-
-  var safeName = '$artist - $title'
-      .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
-      .trim();
-  if (safeName.isEmpty) {
-    safeName = 'Track_${DateTime.now().millisecondsSinceEpoch}';
-  }
-
-  final dir = await _getMusicDownloadsDir();
-  final savePath = p.join(dir.path, '$safeName$ext');
-  final outFile = File(savePath);
-  final sink = outFile.openWrite();
-
-  final totalBytes = resp.contentLength;
-  int received = 0;
-
-  await for (final chunk in resp) {
-    sink.add(chunk);
-    received += chunk.length;
-    if (totalBytes > 0) {
-      downloadProgress.value = (received / totalBytes).clamp(0.05, 0.99);
+    if (resp.statusCode < 200 || resp.statusCode >= 400) {
+      return false;
     }
-  }
-  await sink.flush();
-  await sink.close();
 
-  if (received < 1024) {
-    try {
-      outFile.deleteSync();
-    } catch (_) {}
-    appNotice.value = 'Link did not return valid audio data.';
+    var safeName = '$artist - $title'
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .trim();
+    if (safeName.isEmpty) {
+      safeName = 'Track_${DateTime.now().millisecondsSinceEpoch}';
+    }
+
+    final dir = await _getMusicDownloadsDir();
+    final savePath = p.join(dir.path, '$safeName$ext');
+    final outFile = File(savePath);
+    final sink = outFile.openWrite();
+
+    final totalBytes = resp.contentLength;
+    int received = 0;
+
+    await for (final chunk in resp.timeout(const Duration(seconds: 20))) {
+      sink.add(chunk);
+      received += chunk.length;
+      if (totalBytes > 0) {
+        downloadProgress.value = (received / totalBytes).clamp(0.05, 0.99);
+      }
+    }
+    await sink.flush();
+    await sink.close();
+
+    if (received < 1024) {
+      try {
+        outFile.deleteSync();
+      } catch (_) {}
+      return false;
+    }
+
+    final newId = 'dl_${savePath.hashCode}';
+    appState.unmarkDeleted(newId, savePath);
+
+    final newTrack = TrackItem(
+      id: newId,
+      title: title,
+      artist: artist,
+      album: 'AlexLMP Downloads',
+      durationSeconds: 0,
+      artColors:
+          kArtPalettes[audioHandler.tracks.length % kArtPalettes.length].colors,
+      artStyle: kArtStyles[audioHandler.tracks.length % kArtStyles.length],
+      source: savePath,
+      filePath: savePath,
+    );
+
+    await audioHandler.addTracks([newTrack], playFirst: true);
+    appNotice.value = 'Downloaded "$title" into your library!';
+    return true;
+  } catch (_) {
     return false;
   }
-
-  final newTrack = TrackItem(
-    id: 'dl_${savePath.hashCode}',
-    title: title,
-    artist: artist,
-    album: 'AlexLMP Downloads',
-    durationSeconds: 0,
-    artColors:
-        kArtPalettes[audioHandler.tracks.length % kArtPalettes.length].colors,
-    artStyle: kArtStyles[audioHandler.tracks.length % kArtStyles.length],
-    source: savePath,
-    filePath: savePath,
-  );
-
-  await audioHandler.addTracks([newTrack], playFirst: true);
-  appNotice.value = 'Downloaded "$title" into your library!';
-  return true;
 }
 
 Future<int> quickImportPhoneDownloadsFolder() async {
@@ -793,10 +1046,12 @@ Future<int> quickImportPhoneDownloadsFolder() async {
           continue;
         }
         if (existingPaths.contains(entity.path)) continue;
+        final id = 'local_${entity.path.hashCode}';
+        if (appState.isDeleted(id, entity.path)) continue;
         final base = p.basenameWithoutExtension(entity.path);
         if (base.toLowerCase().contains('306 bobby')) continue;
         final t = TrackItem(
-          id: 'local_${entity.path.hashCode}',
+          id: id,
           title: base,
           artist: 'Downloads Folder',
           album: 'Phone Downloads',
@@ -962,6 +1217,7 @@ class AppState extends ChangeNotifier {
   String playlistName = 'Your AlexLMP Mixes';
   String playlistStyle = 'equalizer_bars';
   final Set<String> liked = {};
+  final Set<String> deletedIds = {};
   Map<String, dynamic> _edits = {};
   final List<Playlist> playlists = [];
 
@@ -980,6 +1236,7 @@ class AppState extends ChangeNotifier {
     playlistName = prefs.getString('playlist_name') ?? playlistName;
     playlistStyle = prefs.getString('playlist_style') ?? playlistStyle;
     liked.addAll(prefs.getStringList('liked_ids') ?? const []);
+    deletedIds.addAll(prefs.getStringList('deleted_ids') ?? const []);
     try {
       final raw = jsonDecode(prefs.getString('playlists') ?? '[]') as List;
       playlists
@@ -998,6 +1255,37 @@ class AppState extends ChangeNotifier {
       _edits = {};
     }
     notifyListeners();
+  }
+
+  bool isDeleted(String id, [String? path]) {
+    if (deletedIds.contains(id)) return true;
+    if (path != null && path.isNotEmpty && deletedIds.contains(path)) {
+      return true;
+    }
+    return false;
+  }
+
+  void markDeleted(TrackItem t) {
+    deletedIds.add(t.id);
+    if (t.filePath != null && t.filePath!.isNotEmpty) {
+      deletedIds.add(t.filePath!);
+    }
+    if (t.source.isNotEmpty) {
+      deletedIds.add(t.source);
+    }
+    _prefs?.setStringList('deleted_ids', deletedIds.toList());
+    liked.remove(t.id);
+    _prefs?.setStringList('liked_ids', liked.toList());
+    for (final pl in playlists) {
+      pl.trackIds.remove(t.id);
+    }
+    _savePlaylists();
+  }
+
+  void unmarkDeleted(String id, [String? path]) {
+    deletedIds.remove(id);
+    if (path != null) deletedIds.remove(path);
+    _prefs?.setStringList('deleted_ids', deletedIds.toList());
   }
 
   void setTheme(String name) {
@@ -1198,7 +1486,7 @@ class TrackItem {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Audio handler
+// Audio handler (NO error snackbars!)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class MyAudioHandler extends BaseAudioHandler with SeekHandler {
@@ -1247,9 +1535,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
     player.playbackEventStream.map(_transformEvent).listen(
       playbackState.add,
-      onError: (Object e, StackTrace st) {
-        appNotice.value = 'Playback error: $e';
-      },
+      onError: (Object _, StackTrace __) {},
     );
 
     player.processingStateStream.listen((state) {
@@ -1351,6 +1637,45 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     if (wasEmpty || playFirst) await _load(0, play: true);
   }
 
+  Future<void> deleteTrackFromLibrary(TrackItem t) async {
+    final removeIdx = tracks.indexWhere((x) => x.id == t.id);
+    final wasCurrent = currentTrack?.id == t.id;
+
+    appState.markDeleted(t);
+
+    final fp = t.filePath ?? (t.source.startsWith('/') ? t.source : null);
+    if (fp != null && fp.isNotEmpty) {
+      try {
+        final f = File(fp);
+        if (f.existsSync()) {
+          f.deleteSync();
+        }
+      } catch (_) {}
+    }
+
+    if (removeIdx >= 0) {
+      final wasPlaying = player.playing;
+      tracks.removeAt(removeIdx);
+      if (tracks.isEmpty) {
+        _index = 0;
+        _loadedId = null;
+        currentIndex.value = 0;
+        await player.stop();
+        mediaItem.add(null);
+      } else if (wasCurrent) {
+        if (_index >= tracks.length) _index = 0;
+        currentIndex.value = _index;
+        await _load(_index, play: wasPlaying);
+      } else {
+        if (removeIdx < _index) {
+          _index = max(0, _index - 1);
+          currentIndex.value = _index;
+        }
+      }
+      _publishQueue();
+    }
+  }
+
   void moveTrack(int oldIndex, int newIndex) {
     final item = tracks.removeAt(oldIndex);
     tracks.insert(newIndex, item);
@@ -1395,12 +1720,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       if (play) {
         player.play();
       }
-    } on PlayerInterruptedException {
-      return;
-    } catch (e) {
+    } catch (_) {
       if (seq != _loadSeq) return;
       _loadedId = null;
-      appNotice.value = 'Couldn\'t play "${t.title}".';
     }
   }
 
@@ -1537,9 +1859,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     final clamped = pitch.clamp(0.5, 2.0);
     try {
       await player.setPitch(clamped);
-    } catch (e) {
-      appNotice.value = 'Pitch change error: $e';
-    }
+    } catch (_) {}
   }
 }
 
@@ -1566,7 +1886,6 @@ Future<void> scanDeviceAudio() async {
       if (savedDownloads.isNotEmpty) {
         await audioHandler.setTracks(savedDownloads);
       }
-      appNotice.value = 'Allow music access to load your songs.';
       return;
     }
     final raw =
@@ -1579,10 +1898,12 @@ Future<void> scanDeviceAudio() async {
       final path = (m['filePath'] ?? '').toString();
       final source = uri.isNotEmpty ? uri : path;
       if (source.isEmpty) continue;
+      final id = 'ms_${m['id']}';
+      if (appState.isDeleted(id, path.isEmpty ? source : path)) continue;
       final title = cleanText(m['title'], 'Unknown Track');
       if (title.toLowerCase().contains('306 bobby')) continue;
       final t = TrackItem(
-        id: 'ms_${m['id']}',
+        id: id,
         title: title,
         artist: cleanText(m['artist'], 'Unknown Artist'),
         album: cleanText(m['album'], 'Local Album'),
@@ -1595,14 +1916,13 @@ Future<void> scanDeviceAudio() async {
       appState.applyEdits(t);
       scanned.add(t);
     }
-    final imported =
-        audioHandler.tracks.where((t) => t.id.startsWith('local_')).toList();
+    final imported = audioHandler.tracks
+        .where((t) =>
+            t.id.startsWith('local_') &&
+            !appState.isDeleted(t.id, t.filePath ?? t.source))
+        .toList();
     await audioHandler.setTracks([...savedDownloads, ...imported, ...scanned]);
-    if (scanned.isEmpty && imported.isEmpty && savedDownloads.isEmpty) {
-      appNotice.value = 'No music files found on this device.';
-    }
-  } catch (e) {
-    appNotice.value = 'Scan failed: $e';
+  } catch (_) {
   } finally {
     scanning.value = false;
   }
@@ -1619,8 +1939,10 @@ Future<void> pickLocalFiles() async {
   for (var i = 0; i < result.files.length; i++) {
     final path = result.files[i].path;
     if (path == null) continue;
+    final id = 'local_${stamp}_$i';
+    appState.unmarkDeleted(id, path);
     final t = TrackItem(
-      id: 'local_${stamp}_$i',
+      id: id,
       title: p.basenameWithoutExtension(path),
       artist: 'Unknown Artist',
       album: 'Local Files',
@@ -5292,7 +5614,7 @@ class _WavyTrackPainter extends CustomPainter {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sheets & Dialogs
+// Sheets & Dialogs (With Delete Song from Library inside 3-Dot Menu!)
 // ─────────────────────────────────────────────────────────────────────────────
 
 Future<dynamic> _sheet(
@@ -5392,16 +5714,18 @@ void showAddToPlaylistSheet(BuildContext context, TrackItem track) {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Add to Playlist',
-                            style: TextStyle(
+                          Text(
+                            track.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 19,
+                              fontSize: 18,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
                           Text(
-                            track.title,
+                            track.artist,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -5424,24 +5748,34 @@ void showAddToPlaylistSheet(BuildContext context, TrackItem track) {
                         );
                       },
                       icon: const Icon(Icons.add_rounded, size: 18),
-                      label: const Text('New'),
+                      label: const Text('New Playlist'),
                     ),
                   ],
                 ),
                 const SizedBox(height: 16),
+                const Text(
+                  'ADD TO PLAYLIST',
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const SizedBox(height: 8),
                 if (pls.isEmpty)
                   const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 20),
+                    padding: EdgeInsets.symmetric(vertical: 14),
                     child: Center(
                       child: Text(
-                        'No playlists yet — tap "New" to create one!',
+                        'No playlists yet — tap "New Playlist" above!',
                         style: TextStyle(color: Colors.white60),
                       ),
                     ),
                   )
                 else
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 320),
+                    constraints: const BoxConstraints(maxHeight: 240),
                     child: ListView.builder(
                       shrinkWrap: true,
                       itemCount: pls.length,
@@ -5452,7 +5786,7 @@ void showAddToPlaylistSheet(BuildContext context, TrackItem track) {
                           contentPadding: EdgeInsets.zero,
                           leading: PlaylistCoverThumbnail(
                             playlist: pl,
-                            size: 48,
+                            size: 46,
                           ),
                           title: Text(
                             pl.name,
@@ -5480,6 +5814,48 @@ void showAddToPlaylistSheet(BuildContext context, TrackItem track) {
                       },
                     ),
                   ),
+                const Divider(color: Colors.white12, height: 24),
+                SquishyGesture(
+                  pressedScale: 0.97,
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await audioHandler.deleteTrackFromLibrary(track);
+                    appNotice.value = 'Deleted "${track.title}" from library.';
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 13,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withOpacity(0.14),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: Colors.redAccent.withOpacity(0.45),
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.delete_forever_rounded,
+                          color: Colors.redAccent,
+                          size: 22,
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          'Delete Song from Library',
+                          style: TextStyle(
+                            color: Colors.redAccent,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
