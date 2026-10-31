@@ -1,7 +1,7 @@
 name: alex_lmp
-description: AlexLMP ArchiveTune Style Music Player
+description: AlexLMP Material You Music Player
 publish_to: 'none'
-version: 6.0.0+1
+version: 2.0.0+1
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
