@@ -1496,7 +1496,7 @@ class SearchTab extends StatefulWidget {
 class _SearchTabState extends State<SearchTab> {
   String _query = '';
 
-  static const List> kGenres = [
+  static const List kGenres = [
     {'title': '1960s Classics', 'color': Color(0xFF388E3C), 'style': 'sound_wave'},
     {'title': 'Underground Rap', 'color': Color(0xFF7B1FA2), 'style': 'cyber_neon'},
     {'title': '2000s Hits', 'color': Color(0xFF1976D2), 'style': 'vinyl_record'},
