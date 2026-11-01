@@ -6495,7 +6495,11 @@ Future<Uint8List?> _fetchArtFromUrl(String url) async {
     final req = await client.getUrl(Uri.parse(url));
     final res = await req.close();
     if (res.statusCode != 200) return null;
-    return await consolidateHttpClientResponseBytes(res);
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in res) {
+      builder.add(chunk);
+    }
+    return builder.takeBytes();
   } catch (_) {
     return null;
   } finally {
