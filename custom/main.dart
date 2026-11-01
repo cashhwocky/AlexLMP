@@ -76,6 +76,13 @@ Future<void> main() async {
     audioHandler = MyAudioHandler();
   }
 
+  // Adaptive theme: follow the current song's album art colours.
+  audioHandler.currentIndex.addListener(updateAdaptiveTheme);
+  audioHandler.libraryRevision.addListener(updateAdaptiveTheme);
+  appState.addListener(() {
+    if (appState.isAdaptive) updateAdaptiveTheme();
+  });
+
   // Bring back liked / playlisted YouTube Music songs from last time.
   try {
     audioHandler.restoreTracks(appState.savedYouTubeTracks());
@@ -217,7 +224,54 @@ class AppPalette {
     playerOnAccent: Color(0xFF261059),
   );
 
-  static const all = [classicBlue, emerald, sunsetPeach, cyberpunk, amoled];
+  /// Builds a full dark palette from one seed colour (used for the extra
+  /// themes and the Adaptive album-art theme).
+  static AppPalette fromSeed(String name, Color seed, {double vivid = 1.0}) {
+    final hsl = HSLColor.fromColor(seed);
+    final h = hsl.hue;
+    final sat =
+        (hsl.saturation.clamp(0.45, 1.0) * vivid).clamp(0.0, 1.0).toDouble();
+    Color c(double s, double l) =>
+        HSLColor.fromAHSL(
+            1, h, s.clamp(0.0, 1.0).toDouble(), l.clamp(0.0, 1.0).toDouble())
+            .toColor();
+    return AppPalette(
+      name: name,
+      accent: c(sat * 0.95, 0.74),
+      onAccent: c(sat, 0.14),
+      container: c(sat * 0.45, 0.20),
+      bg: c(sat * 0.45, 0.065),
+      surface: c(sat * 0.40, 0.11),
+      playerBg: c(sat * 0.55, 0.08),
+      playerSurface: c(sat * 0.45, 0.16),
+      playerButton: c(sat * 0.50, 0.26),
+      playerAccent: c(sat * 0.95, 0.74),
+      playerOnAccent: c(sat, 0.14),
+    );
+  }
+
+  static final List<AppPalette> extra = [
+    fromSeed('Ocean', const Color(0xFF2E9BFF)),
+    fromSeed('Teal', const Color(0xFF2EE6C8)),
+    fromSeed('Lime', const Color(0xFF9BE15D)),
+    fromSeed('Sunflower', const Color(0xFFFFC94D)),
+    fromSeed('Tangerine', const Color(0xFFFF8A3D)),
+    fromSeed('Crimson', const Color(0xFFFF4D5E)),
+    fromSeed('Rose', const Color(0xFFFF6FAE)),
+    fromSeed('Lavender', const Color(0xFFB79CFF)),
+  ];
+
+  static final List<AppPalette> all = [
+    classicBlue,
+    emerald,
+    sunsetPeach,
+    cyberpunk,
+    amoled,
+    ...extra,
+  ];
+
+  /// Special theme name: colours follow the current song's album art.
+  static const adaptiveName = 'Adaptive';
 
   static AppPalette byName(String name) =>
       all.firstWhere((p) => p.name == name, orElse: () => classicBlue);
@@ -258,6 +312,11 @@ class AppState extends ChangeNotifier {
   bool vinylSpinMode = false;
   bool stopOnTaskClear = true;
   bool linkSpeedAndPitch = false;
+  bool swipeRightForNext = true;
+  bool animatedBackground = true;
+  bool artBackdrop = true;
+  AppPalette? _adaptivePalette;
+  Color? _adaptiveSeed;
   double speed = 1.0;
   double pitch = 1.0;
   String playlistName = 'Your AlexLMP Mixes';
@@ -270,7 +329,38 @@ class AppState extends ChangeNotifier {
   // Stored so they survive restarts (the library itself is rebuilt from the device).
   final Map<String, Map<String, dynamic>> _ytSaved = {};
 
-  AppPalette get palette => AppPalette.byName(themeName);
+  AppPalette get palette => themeName == AppPalette.adaptiveName
+      ? (_adaptivePalette ?? AppPalette.amoled)
+      : AppPalette.byName(themeName);
+
+  bool get isAdaptive => themeName == AppPalette.adaptiveName;
+
+  void refresh() => notifyListeners();
+
+  void setAdaptiveSeed(Color seed) {
+    if (_adaptiveSeed == seed) return;
+    _adaptiveSeed = seed;
+    _adaptivePalette = AppPalette.fromSeed(AppPalette.adaptiveName, seed);
+    if (isAdaptive) notifyListeners();
+  }
+
+  void setSwipeRightForNext(bool v) {
+    swipeRightForNext = v;
+    _prefs?.setBool('swipe_right_next', v);
+    notifyListeners();
+  }
+
+  void setAnimatedBackground(bool v) {
+    animatedBackground = v;
+    _prefs?.setBool('animated_bg', v);
+    notifyListeners();
+  }
+
+  void setArtBackdrop(bool v) {
+    artBackdrop = v;
+    _prefs?.setBool('art_backdrop', v);
+    notifyListeners();
+  }
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -280,6 +370,9 @@ class AppState extends ChangeNotifier {
     vinylSpinMode = prefs.getBool('vinyl_spin_mode') ?? false;
     stopOnTaskClear = prefs.getBool('stop_on_task_clear') ?? true;
     linkSpeedAndPitch = prefs.getBool('link_speed_pitch') ?? false;
+    swipeRightForNext = prefs.getBool('swipe_right_next') ?? true;
+    animatedBackground = prefs.getBool('animated_bg') ?? true;
+    artBackdrop = prefs.getBool('art_backdrop') ?? true;
     speed = prefs.getDouble('playback_speed') ?? 1.0;
     pitch = prefs.getDouble('playback_pitch') ?? 1.0;
     playlistName = prefs.getString('playlist_name') ?? playlistName;
@@ -712,6 +805,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       if (isPlaying) {
         _applySpeedAndPitch();
       }
+      _setKeepAwake(isPlaying);
     });
 
     player.durationStream.listen((d) {
@@ -720,6 +814,16 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         mediaItem.add(item.copyWith(duration: d));
       }
     });
+  }
+
+  bool? _keepAwake;
+
+  /// Holds a CPU wake lock + Wi-Fi lock while playing, so streaming (and loading
+  /// the next song) keeps working with the app in the background / screen off.
+  void _setKeepAwake(bool on) {
+    if (_keepAwake == on || !Platform.isAndroid) return;
+    _keepAwake = on;
+    _ytChannel.invokeMethod('setKeepAwake', {'on': on}).catchError((_) {});
   }
 
   Future<void> _applySpeedAndPitch() async {
@@ -1107,6 +1211,38 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     await _load(prev, play: true);
   }
 
+  /// The song a "next" swipe would play, or null if unknown (shuffle) / none.
+  TrackItem? get peekNext {
+    if (tracks.length < 2 || _shuffle) return null;
+    final n = _index + 1;
+    if (n < tracks.length) return tracks[n];
+    return tracks[0];
+  }
+
+  /// The song a "previous" swipe would play, or null if unknown / none.
+  TrackItem? get peekPrevious {
+    if (tracks.length < 2) return null;
+    if (_shuffle) {
+      return _history.isNotEmpty && _history.last < tracks.length
+          ? tracks[_history.last]
+          : null;
+    }
+    return tracks[(_index - 1 + tracks.length) % tracks.length];
+  }
+
+  /// Like skipToPrevious, but always goes to the previous song (never just
+  /// restarts the current one). Used by the swipe carousel.
+  Future<void> skipToPreviousTrack() async {
+    if (tracks.isEmpty) return;
+    int prev;
+    if (_shuffle && _history.isNotEmpty) {
+      prev = _history.removeLast();
+    } else {
+      prev = (_index - 1 + tracks.length) % tracks.length;
+    }
+    await _load(prev, play: true);
+  }
+
   @override
   Future<void> skipToQueueItem(int i) => playIndex(i);
 
@@ -1243,6 +1379,57 @@ Future<void> pickLocalFiles() async {
     added.add(t);
   }
   if (added.isNotEmpty) await audioHandler.addTracks(added, playFirst: true);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Adaptive theme (colours from album art)
+// ─────────────────────────────────────────────────────────────────────────────
+
+String? _adaptiveTrackId;
+
+Future<void> updateAdaptiveTheme() async {
+  if (!appState.isAdaptive) return;
+  final t = audioHandler.currentTrack;
+  if (t == null || t.id == _adaptiveTrackId) return;
+  _adaptiveTrackId = t.id;
+  Color seed = t.artColors.first;
+  try {
+    final bytes = await loadArt(t);
+    if (bytes != null && bytes.isNotEmpty) {
+      seed = await _dominantColor(bytes) ?? seed;
+    }
+  } catch (_) {}
+  if (audioHandler.currentTrack?.id != t.id) return; // song changed meanwhile
+  appState.setAdaptiveSeed(seed);
+}
+
+/// Picks the most vivid colour from an image by averaging hues, weighted
+/// towards saturated, mid-brightness pixels.
+Future<Color?> _dominantColor(Uint8List bytes) async {
+  final codec =
+      await ui.instantiateImageCodec(bytes, targetWidth: 32, targetHeight: 32);
+  final frame = await codec.getNextFrame();
+  final data = await frame.image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  frame.image.dispose();
+  if (data == null) return null;
+  double sx = 0, sy = 0, sw = 0, satSum = 0;
+  for (var i = 0; i + 3 < data.lengthInBytes; i += 4) {
+    final c = Color.fromARGB(
+        255, data.getUint8(i), data.getUint8(i + 1), data.getUint8(i + 2));
+    final hsl = HSLColor.fromColor(c);
+    final w = hsl.saturation * (1 - (hsl.lightness - 0.5).abs() * 2);
+    if (w <= 0.05) continue;
+    final rad = hsl.hue * pi / 180;
+    sx += cos(rad) * w;
+    sy += sin(rad) * w;
+    sw += w;
+    satSum += hsl.saturation * w;
+  }
+  if (sw < 0.5) return null; // mostly grey art: keep the fallback colour
+  var hue = atan2(sy, sx) * 180 / pi;
+  if (hue < 0) hue += 360;
+  final sat = (satSum / sw).clamp(0.45, 1.0).toDouble();
+  return HSLColor.fromAHSL(1, hue, sat, 0.55).toColor();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1532,7 +1719,9 @@ class _AuroraPlasmaBackgroundState extends State<AuroraPlasmaBackground>
 
   @override
   Widget build(BuildContext context) {
-    if (!appState.liquidGlass) return const SizedBox.shrink();
+    if (!appState.liquidGlass && !appState.animatedBackground) {
+      return const SizedBox.shrink();
+    }
     return IgnorePointer(
       child: AnimatedBuilder(
         animation: _c,
@@ -3880,9 +4069,11 @@ class Interactive3DArtwork extends StatefulWidget {
   State<Interactive3DArtwork> createState() => _Interactive3DArtworkState();
 }
 
+/// Album art face: vinyl spin mode + double-tap to toggle it. (Dragging no
+/// longer tilts the art; horizontal swipes belong to the carousel and vertical
+/// swipes to swipe-down-to-close.)
 class _Interactive3DArtworkState extends State<Interactive3DArtwork>
     with SingleTickerProviderStateMixin {
-  Offset _tilt = Offset.zero;
   late final AnimationController _spinCtrl;
 
   @override
@@ -3911,108 +4102,237 @@ class _Interactive3DArtworkState extends State<Interactive3DArtwork>
     super.dispose();
   }
 
-  void _onPanUpdate(DragUpdateDetails d, Size size) {
-    final nx = ((d.localPosition.dx / size.width) - 0.5) * 2;
-    final ny = ((d.localPosition.dy / size.height) - 0.5) * 2;
-    setState(() {
-      _tilt = Offset(ny.clamp(-1.0, 1.0) * -0.22, nx.clamp(-1.0, 1.0) * 0.22);
-    });
+  @override
+  Widget build(BuildContext context) {
+    final spinMode = appState.vinylSpinMode;
+    return GestureDetector(
+      onDoubleTap: () {
+        HapticFeedback.mediumImpact();
+        appState.setVinylSpinMode(!spinMode);
+      },
+      child: AnimatedBuilder(
+        animation: _spinCtrl,
+        builder: (context, artChild) {
+          if (!spinMode) return artChild!;
+          return Transform.rotate(
+            angle: _spinCtrl.value * 2 * pi,
+            child: ClipOval(
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  artChild!,
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.82),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white38, width: 2),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+        child: CustomAlbumArtwork(track: widget.track),
+      ),
+    );
+  }
+}
+
+/// Swipeable album-art carousel for Now Playing.
+///
+/// By default swiping RIGHT plays the next song and swiping LEFT the previous
+/// one (Settings can flip this). The art follows your finger, the neighbouring
+/// song's art slides in, and skips from the buttons/notification animate too.
+class SwipeArtCarousel extends StatefulWidget {
+  final TrackItem track;
+  final bool playing;
+  final double radius;
+
+  const SwipeArtCarousel({
+    super.key,
+    required this.track,
+    required this.playing,
+    required this.radius,
+  });
+
+  @override
+  State<SwipeArtCarousel> createState() => _SwipeArtCarouselState();
+}
+
+class _SwipeArtCarouselState extends State<SwipeArtCarousel>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _dx; // horizontal offset in pixels
+  double _width = 1;
+  bool _busy = false;
+  // Which side the *incoming* art comes from during a programmatic change.
+  String? _lastTrackId;
+  TrackItem? _outgoing;
+  double _outgoingSide = 0; // -1 = left, +1 = right
+
+  @override
+  void initState() {
+    super.initState();
+    _dx = AnimationController.unbounded(vsync: this, value: 0);
+    _lastTrackId = widget.track.id;
   }
 
-  void _resetTilt() {
-    setState(() => _tilt = Offset.zero);
+  @override
+  void didUpdateWidget(covariant SwipeArtCarousel old) {
+    super.didUpdateWidget(old);
+    final newId = widget.track.id;
+    if (newId != _lastTrackId) {
+      final prevTrack = old.track;
+      _lastTrackId = newId;
+      if (!_busy) {
+        // Changed from a button / notification / auto-advance: slide it in.
+        // "Next" content enters from the side a next-swipe pulls from.
+        final forward = !_wasPrevious(prevTrack, widget.track);
+        final nextFromLeft = appState.swipeRightForNext;
+        final enterSide = forward
+            ? (nextFromLeft ? -1.0 : 1.0)
+            : (nextFromLeft ? 1.0 : -1.0);
+        _outgoing = prevTrack;
+        _outgoingSide = -enterSide;
+        _dx.value = enterSide * _width;
+        _springTo(0).whenComplete(() {
+          if (mounted) setState(() => _outgoing = null);
+        });
+      }
+    }
+  }
+
+  bool _wasPrevious(TrackItem from, TrackItem to) {
+    final tracks = audioHandler.tracks;
+    final a = tracks.indexWhere((t) => t.id == from.id);
+    final b = tracks.indexWhere((t) => t.id == to.id);
+    if (a < 0 || b < 0) return false;
+    return b == a - 1 || (a == 0 && b == tracks.length - 1 && tracks.length > 2);
+  }
+
+  @override
+  void dispose() {
+    _dx.dispose();
+    super.dispose();
+  }
+
+  TickerFuture _springTo(double target, [double velocity = 0]) {
+    return _dx.animateWith(SpringSimulation(
+      const SpringDescription(mass: 1, stiffness: 420, damping: 34),
+      _dx.value,
+      target,
+      velocity,
+    ));
+  }
+
+  void _onUpdate(DragUpdateDetails d) {
+    if (_busy) return;
+    _outgoing = null;
+    _dx.value += d.delta.dx;
+  }
+
+  Future<void> _onEnd(DragEndDetails d) async {
+    if (_busy) return;
+    final v = d.velocity.pixelsPerSecond.dx;
+    final x = _dx.value;
+    final commit = x.abs() > _width * 0.22 || v.abs() > 650;
+    if (!commit || x == 0) {
+      _springTo(0, v);
+      return;
+    }
+    final dir = x > 0 ? 1.0 : -1.0; // +1 = finger moved right
+    final goNext = appState.swipeRightForNext ? dir > 0 : dir < 0;
+    _busy = true;
+    HapticFeedback.selectionClick();
+    // Fly the current art out the way it was thrown...
+    await _dx.animateTo(
+      dir * _width,
+      duration: const Duration(milliseconds: 170),
+      curve: Curves.easeOutCubic,
+    );
+    // ...then bring the new song in from the opposite side.
+    _lastTrackId = null; // let didUpdateWidget accept the change silently
+    if (goNext) {
+      audioHandler.skipToNext();
+    } else {
+      audioHandler.skipToPreviousTrack();
+    }
+    _dx.value = -dir * _width;
+    await _springTo(0);
+    _busy = false;
+    if (mounted) _lastTrackId = widget.track.id;
+  }
+
+  Widget _face(TrackItem t, {bool live = false}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(widget.radius),
+      child: live
+          ? Interactive3DArtwork(track: t, playing: widget.playing)
+          : CustomAlbumArtwork(track: t),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final spinMode = appState.vinylSpinMode;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final sz = Size(constraints.maxWidth, constraints.maxHeight);
-        return GestureDetector(
-          onPanUpdate: (d) => _onPanUpdate(d, sz),
-          onPanEnd: (_) => _resetTilt(),
-          onPanCancel: _resetTilt,
-          onDoubleTap: () {
-            HapticFeedback.mediumImpact();
-            appState.setVinylSpinMode(!spinMode);
-          },
-          child: TweenAnimationBuilder<Offset>(
-            tween: Tween<Offset>(begin: Offset.zero, end: _tilt),
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            builder: (context, t, child) {
-              final matrix = Matrix4.identity()
-                ..setEntry(3, 2, 0.0014)
-                ..rotateX(t.dx)
-                ..rotateY(t.dy);
-              return Transform(
-                alignment: Alignment.center,
-                transform: matrix,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    child!,
-                    IgnorePointer(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(
-                            spinMode ? 999 : 28,
-                          ),
-                          gradient: RadialGradient(
-                            center: Alignment(
-                              (-t.dy * 3.0).clamp(-1.0, 1.0),
-                              (-t.dx * 3.0).clamp(-1.0, 1.0),
-                            ),
-                            radius: 1.1,
-                            colors: [
-                              Colors.white.withOpacity(
-                                (t.distance * 0.65).clamp(0.0, 0.28),
-                              ),
-                              Colors.transparent,
-                            ],
-                          ),
-                        ),
+    return LayoutBuilder(builder: (context, c) {
+      _width = c.maxWidth + 24;
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: _onUpdate,
+        onHorizontalDragEnd: _onEnd,
+        onHorizontalDragCancel: () => _springTo(0),
+        child: AnimatedBuilder(
+          animation: _dx,
+          builder: (context, _) {
+            final x = _dx.value;
+            final p = (x.abs() / _width).clamp(0.0, 1.0).toDouble();
+            // Neighbour revealed while dragging (swipe direction decides which).
+            TrackItem? neighbour;
+            double neighbourSide = 0;
+            if (_outgoing != null) {
+              neighbour = _outgoing;
+              neighbourSide = _outgoingSide;
+            } else if (x != 0 && !_busy) {
+              final fingerRight = x > 0;
+              final wantsNext = appState.swipeRightForNext ? fingerRight : !fingerRight;
+              neighbour = wantsNext
+                  ? audioHandler.peekNext
+                  : audioHandler.peekPrevious;
+              neighbourSide = fingerRight ? -1 : 1;
+            }
+            return Stack(
+              clipBehavior: Clip.none,
+              children: [
+                if (neighbour != null)
+                  Positioned.fill(
+                    child: Transform.translate(
+                      offset: Offset(x + neighbourSide * _width, 0),
+                      child: Opacity(
+                        opacity: (0.35 + 0.65 * p).clamp(0.0, 1.0).toDouble(),
+                        child: _face(neighbour),
                       ),
                     ),
-                  ],
-                ),
-              );
-            },
-            child: AnimatedBuilder(
-              animation: _spinCtrl,
-              builder: (context, artChild) {
-                if (!spinMode) return artChild!;
-                return Transform.rotate(
-                  angle: _spinCtrl.value * 2 * pi,
-                  child: ClipOval(
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        artChild!,
-                        Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.82),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Colors.white38,
-                              width: 2,
-                            ),
-                          ),
-                        ),
-                      ],
+                  ),
+                Positioned.fill(
+                  child: Transform.translate(
+                    offset: Offset(x, 0),
+                    child: Transform.rotate(
+                      angle: (x / _width) * 0.12,
+                      child: Transform.scale(
+                        scale: 1 - 0.08 * p,
+                        child: _face(widget.track, live: true),
+                      ),
                     ),
                   ),
-                );
-              },
-              child: CustomAlbumArtwork(track: widget.track),
-            ),
-          ),
-        );
-      },
-    );
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    });
   }
 }
 
@@ -4080,6 +4400,149 @@ class _EqBarsState extends State<EqBars> with SingleTickerProviderStateMixin {
   }
 }
 
+class ThemeChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final List<Color> swatch;
+  final Color accent;
+  final Color onAccent;
+  final VoidCallback onTap;
+
+  const ThemeChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.swatch,
+    required this.accent,
+    required this.onAccent,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    return SquishyGesture(
+      pressedScale: 0.92,
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 260),
+        curve: kEmphasized,
+        padding: const EdgeInsets.fromLTRB(6, 6, 12, 6),
+        decoration: BoxDecoration(
+          color: selected ? accent : pal.container,
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: selected
+              ? [BoxShadow(color: accent.withOpacity(0.45), blurRadius: 14)]
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 26,
+              height: 26,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white38, width: 1),
+                gradient: SweepGradient(colors: [...swatch, swatch.first]),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? onAccent : Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Blurred, slowly drifting album art behind the Now Playing screen.
+/// Cross-fades when the song changes.
+class AlbumArtBackdrop extends StatefulWidget {
+  final TrackItem track;
+  const AlbumArtBackdrop({super.key, required this.track});
+
+  @override
+  State<AlbumArtBackdrop> createState() => _AlbumArtBackdropState();
+}
+
+class _AlbumArtBackdropState extends State<AlbumArtBackdrop>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _drift;
+
+  @override
+  void initState() {
+    super.initState();
+    _drift = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 24),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _drift.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    return IgnorePointer(
+      child: RepaintBoundary(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 800),
+              switchInCurve: Curves.easeOut,
+              child: AnimatedBuilder(
+                key: ValueKey(widget.track.id),
+                animation: _drift,
+                builder: (context, child) {
+                  final a = _drift.value * 2 * pi;
+                  return Transform.translate(
+                    offset: Offset(18 * cos(a), 24 * sin(a)),
+                    child: Transform.scale(
+                      scale: 1.45 + 0.05 * sin(a * 2),
+                      child: child,
+                    ),
+                  );
+                },
+                child: ImageFiltered(
+                  imageFilter: ui.ImageFilter.blur(sigmaX: 46, sigmaY: 46),
+                  child: CustomAlbumArtwork(track: widget.track),
+                ),
+              ),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    pal.playerBg.withOpacity(0.35),
+                    pal.playerBg.withOpacity(0.55),
+                    pal.playerBg.withOpacity(0.92),
+                  ],
+                  stops: const [0.0, 0.45, 1.0],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class SwipeDownDismiss extends StatefulWidget {
   final Widget child;
   const SwipeDownDismiss({super.key, required this.child});
@@ -4125,7 +4588,7 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
     if (_dismissing) return;
     final v = d.velocity.pixelsPerSecond.dy;
     final h = MediaQuery.of(context).size.height;
-    if (_c.value > h * 0.16 || v > 900) {
+    if (_c.value > h * 0.08 || v > 450) {
       HapticFeedback.lightImpact();
       setState(() => _dismissing = true);
       _c
@@ -4595,6 +5058,8 @@ class NowPlayingScreen extends StatelessWidget {
                 backgroundColor: pal.playerBg,
                 body: Stack(
                   children: [
+                    if (appState.artBackdrop)
+                      Positioned.fill(child: AlbumArtBackdrop(track: track)),
                     AuroraPlasmaBackground(
                       accent: pal.accent,
                       secondary: track.artColors.first,
@@ -4726,36 +5191,12 @@ class NowPlayingScreen extends StatelessWidget {
                                           tag: 'now_playing_art',
                                           createRectTween: _arcTween,
                                           flightShuttleBuilder: _artShuttle,
-                                          child: ClipRRect(
-                                            borderRadius: BorderRadius.circular(
-                                              appState.vinylSpinMode ? 999 : 28,
-                                            ),
-                                            child: AnimatedSwitcher(
-                                              duration: const Duration(
-                                                milliseconds: 450,
-                                              ),
-                                              switchInCurve: kEmphasizedDecel,
-                                              transitionBuilder: (c, a) =>
-                                                  FadeTransition(
-                                                opacity: a,
-                                                child: ScaleTransition(
-                                                  scale: Tween<double>(
-                                                    begin: 0.92,
-                                                    end: 1.0,
-                                                  ).animate(a),
-                                                  child: c,
-                                                ),
-                                              ),
-                                              child: KeyedSubtree(
-                                                key: ValueKey(
-                                                  '${track.id}_${track.artStyle}',
-                                                ),
-                                                child: Interactive3DArtwork(
-                                                  track: track,
-                                                  playing: playing,
-                                                ),
-                                              ),
-                                            ),
+                                          child: SwipeArtCarousel(
+                                            track: track,
+                                            playing: playing,
+                                            radius: appState.vinylSpinMode
+                                                ? 999
+                                                : 28,
                                           ),
                                         ),
                                       ),
@@ -4769,7 +5210,32 @@ class NowPlayingScreen extends StatelessWidget {
                               child: Row(
                                 children: [
                                   Expanded(
-                                    child: Column(
+                                    child: AnimatedSwitcher(
+                                      duration:
+                                          const Duration(milliseconds: 380),
+                                      switchInCurve: kEmphasizedDecel,
+                                      switchOutCurve: Curves.easeIn,
+                                      layoutBuilder: (current, previous) =>
+                                          Stack(
+                                        alignment: Alignment.centerLeft,
+                                        children: [
+                                          ...previous,
+                                          if (current != null) current,
+                                        ],
+                                      ),
+                                      transitionBuilder: (c, a) =>
+                                          FadeTransition(
+                                        opacity: a,
+                                        child: SlideTransition(
+                                          position: Tween<Offset>(
+                                            begin: const Offset(0, 0.35),
+                                            end: Offset.zero,
+                                          ).animate(a),
+                                          child: c,
+                                        ),
+                                      ),
+                                      child: Column(
+                                      key: ValueKey('title_${track.id}'),
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
@@ -4796,6 +5262,7 @@ class NowPlayingScreen extends StatelessWidget {
                                           ),
                                         ),
                                       ],
+                                    ),
                                     ),
                                   ),
                                   const SizedBox(width: 10),
@@ -4840,8 +5307,9 @@ class NowPlayingScreen extends StatelessWidget {
                                         height: 52,
                                         child: AnimatedSwitcher(
                                           duration: const Duration(
-                                            milliseconds: 220,
+                                            milliseconds: 520,
                                           ),
+                                          switchInCurve: Curves.elasticOut,
                                           transitionBuilder: (c, a) =>
                                               ScaleTransition(
                                             scale: a,
@@ -5902,64 +6370,90 @@ void showSettingsSheet(BuildContext context) {
                   ),
                   const SizedBox(height: 20),
                   const Text(
-                    'Color Theme (Includes True AMOLED)',
+                    'Color Theme',
                     style: TextStyle(
                       color: Colors.white70,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Row(
-                    children: AppPalette.all.map((t) {
-                      final selected = appState.themeName == t.name;
-                      return Expanded(
-                        child: SquishyGesture(
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ThemeChip(
+                        label: 'Adaptive',
+                        selected: appState.isAdaptive,
+                        swatch: const [
+                          Color(0xFFFF6FAE),
+                          Color(0xFFFFC94D),
+                          Color(0xFF2EE6C8),
+                          Color(0xFF2E9BFF),
+                        ],
+                        accent: pal.accent,
+                        onAccent: pal.onAccent,
+                        onTap: () => appState.setTheme(AppPalette.adaptiveName),
+                      ),
+                      for (final t in AppPalette.all)
+                        ThemeChip(
+                          label: t.name.split(' ').first,
+                          selected: appState.themeName == t.name,
+                          swatch: [t.accent, t.playerButton, t.bg],
+                          accent: t.accent,
+                          onAccent: t.onAccent,
                           onTap: () => appState.setTheme(t.name),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 250),
-                            margin: const EdgeInsets.symmetric(horizontal: 3),
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            decoration: BoxDecoration(
-                              color: selected ? t.accent : pal.container,
-                              borderRadius: BorderRadius.circular(14),
-                              border: t.name == 'AMOLED'
-                                  ? Border.all(
-                                      color: Colors.white30,
-                                      width: 1,
-                                    )
-                                  : null,
-                            ),
-                            child: Column(
-                              children: [
-                                Container(
-                                  width: 14,
-                                  height: 14,
-                                  decoration: BoxDecoration(
-                                    color: t.name == 'AMOLED'
-                                        ? Colors.black
-                                        : (selected ? t.onAccent : t.accent),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: Colors.white38,
-                                      width: 1,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  t.name.split(' ').first,
-                                  style: TextStyle(
-                                    color: selected ? t.onAccent : Colors.white,
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
                         ),
-                      );
-                    }).toList(),
+                    ],
+                  ),
+                  if (appState.isAdaptive)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Colors change to match the album art of what\'s playing.',
+                        style: TextStyle(color: pal.accent, fontSize: 12.5),
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Animated color backgrounds',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: const Text(
+                      'Slowly moving color glow behind the app and player',
+                    ),
+                    value: appState.animatedBackground,
+                    activeColor: pal.accent,
+                    onChanged: appState.setAnimatedBackground,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Album art background in player',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: const Text(
+                      'Blurred cover art fills the Now Playing screen',
+                    ),
+                    value: appState.artBackdrop,
+                    activeColor: pal.accent,
+                    onChanged: appState.setArtBackdrop,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Swipe right for next song',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      appState.swipeRightForNext
+                          ? 'On the album art: swipe right = next, left = previous'
+                          : 'On the album art: swipe left = next, right = previous',
+                    ),
+                    value: appState.swipeRightForNext,
+                    activeColor: pal.accent,
+                    onChanged: appState.setSwipeRightForNext,
                   ),
                   const SizedBox(height: 16),
                   SwitchListTile(
@@ -6031,6 +6525,26 @@ void showSettingsSheet(BuildContext context) {
                     () {
                       Navigator.pop(ctx);
                       scanDeviceAudio();
+                    },
+                  ),
+                  FutureBuilder<bool>(
+                    future: Permission.ignoreBatteryOptimizations.isGranted,
+                    builder: (context, snap) {
+                      final ok = snap.data ?? false;
+                      return _sheetTile(
+                        pal,
+                        ok
+                            ? Icons.battery_charging_full_rounded
+                            : Icons.battery_alert_rounded,
+                        'Background playback',
+                        ok
+                            ? 'Battery optimization is off for AlexLMP'
+                            : 'Tap to stop Android pausing music in the background',
+                        () async {
+                          await Permission.ignoreBatteryOptimizations.request();
+                          appState.refresh();
+                        },
+                      );
                     },
                   ),
                 ],
