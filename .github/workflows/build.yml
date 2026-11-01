@@ -46,10 +46,10 @@ jobs:
         run: |
           # NewPipeExtractor needs core library desugaring with desugar_jdk_libs_nio,
           # which needs a newer Android Gradle Plugin than the Flutter 3.24 template ships.
-          sed -i -E 's/(id "com\.android\.application" version ")[^"]+(")/\18.6.1\2/' settings.gradle
+          sed -i -E 's/(id "com\.android\.application" version ")[^"]+(")/\18.3.2\2/' settings.gradle
           sed -i -E 's/(id "org\.jetbrains\.kotlin\.android" version ")[^"]+(")/\11.9.24\2/' settings.gradle
-          sed -i -E 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-all.zip#' gradle/wrapper/gradle-wrapper.properties
-          printf '\nkotlin.jvm.target.validation.mode=warning\n' >> gradle.properties
+          sed -i -E 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.4-all.zip#' gradle/wrapper/gradle-wrapper.properties
+          printf '\nkotlin.jvm.target.validation.mode=warning\nandroid.suppressUnsupportedCompileSdk=35\n' >> gradle.properties
           printf '\nallprojects {\n    repositories {\n        maven { url "https://jitpack.io" }\n    }\n}\n' >> build.gradle
           echo "--- settings.gradle"; cat settings.gradle
           echo "--- gradle-wrapper.properties"; cat gradle/wrapper/gradle-wrapper.properties
@@ -199,7 +199,7 @@ jobs:
           }
 
           dependencies {
-              coreLibraryDesugaring "com.android.tools:desugar_jdk_libs_nio:2.1.5"
+              coreLibraryDesugaring "com.android.tools:desugar_jdk_libs_nio:2.0.4"
               implementation "com.github.teamnewpipe:NewPipeExtractor:v0.26.5"
           }
           EOF
