@@ -37,6 +37,8 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, YtMusicBridge.CHANNEL)
+            .setMethodCallHandler { call, result -> YtMusicBridge.handle(call, result) }
     }
 
     private fun loadArt(uriStr: String?, path: String?): ByteArray? {
