@@ -37,6 +37,7 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+        YtMusicBridge.init(applicationContext)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, YtMusicBridge.CHANNEL)
             .setMethodCallHandler { call, result -> YtMusicBridge.handle(call, result) }
     }
