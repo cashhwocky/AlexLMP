@@ -59,6 +59,13 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".YtLoginActivity"
+            android:label="Sign in to YouTube Music"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
