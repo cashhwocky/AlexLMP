@@ -108,8 +108,19 @@ object YtMusicBridge {
         }
     }
 
-    private fun describe(e: Throwable): String =
-        "${e.javaClass.simpleName}: ${e.message ?: ""}".take(400)
+    private fun describe(e: Throwable): String {
+        val parts = ArrayList<String>()
+        var cur: Throwable? = e
+        var depth = 0
+        while (depth < 4) {
+            val c = cur ?: break
+            parts.add("${c.javaClass.simpleName}: ${c.message ?: ""}")
+            val next = c.cause
+            cur = if (next === c) null else next
+            depth++
+        }
+        return parts.joinToString(" <- ").take(600)
+    }
 
     // ── NewPipeExtractor ────────────────────────────────────────────────────
 
@@ -128,11 +139,32 @@ object YtMusicBridge {
     private val VIDEO_ID = Regex("^[A-Za-z0-9_-]{11}$")
     private val VIDEO_ID_IN_URL = Regex("[?&]v=([A-Za-z0-9_-]{11})")
 
+    /**
+     * Tries YouTube Music's song search first. If that endpoint fails, falls back to
+     * regular YouTube video search so the user still gets results. If both fail,
+     * the error contains both causes so we can see what went wrong.
+     */
     private fun search(query: String): List<Map<String, Any?>> {
         ensureInit()
+        val musicError = try {
+            return searchWith(query, YoutubeSearchQueryHandlerFactory.MUSIC_SONGS)
+        } catch (e: Throwable) {
+            e
+        }
+        try {
+            return searchWith(query, YoutubeSearchQueryHandlerFactory.VIDEOS)
+        } catch (e: Throwable) {
+            throw IOException(
+                "music: ${describe(musicError)} | videos: ${describe(e)}",
+                e,
+            )
+        }
+    }
+
+    private fun searchWith(query: String, filter: String): List<Map<String, Any?>> {
         val extractor = ServiceList.YouTube.getSearchExtractor(
             query,
-            listOf(YoutubeSearchQueryHandlerFactory.MUSIC_SONGS),
+            listOf(filter),
             "",
         )
         extractor.fetchPage()
