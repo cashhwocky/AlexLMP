@@ -1,6 +1,9 @@
 package com.alexlmp.app
 
+import android.content.Context
 import android.net.Uri
+import android.net.wifi.WifiManager
+import android.os.PowerManager
 import android.os.Handler
 import android.os.Looper
 import io.flutter.plugin.common.MethodCall
@@ -79,10 +82,53 @@ object YtMusicBridge {
     private val cache = ConcurrentHashMap<String, Resolved>()
     private val resolveLocks = ConcurrentHashMap<String, Any>()
 
+    // ── Keep CPU + Wi-Fi awake while music plays ────────────────────────────
+    //
+    // Without these, Android can put the CPU to sleep / throttle Wi-Fi once the app is
+    // in the background, so streaming stalls (especially between songs, when the next
+    // track has to be fetched) until the app is opened again.
+
+    @Volatile private var appContext: Context? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+    }
+
+    @Synchronized
+    @Suppress("DEPRECATION")
+    private fun setKeepAwake(on: Boolean) {
+        val ctx = appContext ?: return
+        try {
+            if (on) {
+                val wl = wakeLock ?: (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager)
+                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AlexLMP:playback")
+                    .apply { setReferenceCounted(false) }
+                    .also { wakeLock = it }
+                // Timeout is a safety net; it's renewed every time playback (re)starts.
+                wl.acquire(4 * 60 * 60 * 1000L)
+                val wifi = wifiLock ?: (ctx.getSystemService(Context.WIFI_SERVICE) as WifiManager)
+                    .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "AlexLMP:stream")
+                    .apply { setReferenceCounted(false) }
+                    .also { wifiLock = it }
+                if (!wifi.isHeld) wifi.acquire()
+            } else {
+                wakeLock?.let { if (it.isHeld) it.release() }
+                wifiLock?.let { if (it.isHeld) it.release() }
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
     // ── MethodChannel entry point ───────────────────────────────────────────
 
     fun handle(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "setKeepAwake" -> {
+                setKeepAwake(call.argument<Boolean>("on") ?: false)
+                result.success(null)
+            }
             "ytSearch" -> {
                 val query = (call.argument<String>("query") ?: "").trim()
                 workers.execute {
