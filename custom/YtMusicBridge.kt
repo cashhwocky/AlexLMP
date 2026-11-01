@@ -8,6 +8,10 @@ import io.flutter.plugin.common.MethodChannel
 import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.channel.ChannelInfo
+import org.schabi.newpipe.extractor.channel.ChannelInfoItem
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
@@ -104,7 +108,35 @@ object YtMusicBridge {
                     }
                 }
             }
+            "ytSearchArtists", "ytSearchAlbums" -> {
+                val query = (call.argument<String>("query") ?: "").trim()
+                val artists = call.method == "ytSearchArtists"
+                runAsync(result, "YT_SEARCH") {
+                    if (query.isEmpty()) emptyList<Any>()
+                    else if (artists) searchArtists(query) else searchAlbums(query)
+                }
+            }
+            "ytAlbum" -> {
+                val url = call.argument<String>("url") ?: ""
+                runAsync(result, "YT_ALBUM") { album(url) }
+            }
+            "ytArtist" -> {
+                val url = call.argument<String>("url") ?: ""
+                val name = call.argument<String>("name") ?: ""
+                runAsync(result, "YT_ARTIST") { artist(url, name) }
+            }
             else -> result.notImplemented()
+        }
+    }
+
+    private fun runAsync(result: MethodChannel.Result, code: String, block: () -> Any?) {
+        workers.execute {
+            try {
+                val value = block()
+                main.post { result.success(value) }
+            } catch (e: Throwable) {
+                main.post { result.error(code, describe(e), null) }
+            }
         }
     }
 
@@ -191,6 +223,125 @@ object YtMusicBridge {
     private fun upscaleThumb(url: String?): String? {
         if (url == null) return null
         return url.replace(Regex("=w\\d+-h\\d+[^&?/]*$"), "=w544-h544-l90-rj")
+    }
+
+    // ── Artists & albums ────────────────────────────────────────────────────
+
+    private fun cleanArtist(name: String?): String =
+        (name ?: "").removeSuffix(" - Topic").trim()
+
+    private fun songMap(item: StreamInfoItem, fallbackArtist: String? = null, fallbackThumb: String? = null): Map<String, Any?>? {
+        val id = VIDEO_ID_IN_URL.find(item.url)?.groupValues?.get(1) ?: return null
+        val artist = cleanArtist(item.uploaderName).ifEmpty { fallbackArtist ?: "" }
+        return mapOf(
+            "videoId" to id,
+            "title" to (item.name ?: ""),
+            "artist" to artist,
+            "durationSeconds" to item.duration.coerceAtLeast(0).toInt(),
+            "thumbnail" to (fallbackThumb ?: upscaleThumb(item.thumbnails.maxByOrNull { it.height }?.url)),
+        )
+    }
+
+    private fun searchArtists(query: String): List<Map<String, Any?>> {
+        ensureInit()
+        val ex = ServiceList.YouTube.getSearchExtractor(
+            query, listOf(YoutubeSearchQueryHandlerFactory.MUSIC_ARTISTS), "",
+        )
+        ex.fetchPage()
+        return ex.initialPage.items.filterIsInstance<ChannelInfoItem>().take(12).map {
+            mapOf(
+                "url" to it.url,
+                "name" to (it.name ?: ""),
+                "thumbnail" to upscaleThumb(it.thumbnails.maxByOrNull { t -> t.height }?.url),
+                "subscribers" to it.subscriberCount,
+            )
+        }
+    }
+
+    private fun albumItemMap(it: PlaylistInfoItem): Map<String, Any?> = mapOf(
+        "url" to it.url,
+        "title" to (it.name ?: ""),
+        "artist" to cleanArtist(it.uploaderName),
+        "thumbnail" to upscaleThumb(it.thumbnails.maxByOrNull { t -> t.height }?.url),
+        "trackCount" to it.streamCount,
+    )
+
+    private fun searchAlbums(query: String): List<Map<String, Any?>> {
+        ensureInit()
+        val ex = ServiceList.YouTube.getSearchExtractor(
+            query, listOf(YoutubeSearchQueryHandlerFactory.MUSIC_ALBUMS), "",
+        )
+        ex.fetchPage()
+        return ex.initialPage.items.filterIsInstance<PlaylistInfoItem>().take(15).map { albumItemMap(it) }
+    }
+
+    /** YT Music album links are playlists; the regular YouTube playlist page parses most reliably. */
+    private fun normalizePlaylistUrl(url: String): String {
+        val list = Regex("[?&]list=([A-Za-z0-9_-]+)").find(url)?.groupValues?.get(1)
+        return if (list != null) "https://www.youtube.com/playlist?list=$list" else url
+    }
+
+    private fun album(url: String): Map<String, Any?> {
+        ensureInit()
+        val info = PlaylistInfo.getInfo(ServiceList.YouTube, normalizePlaylistUrl(url))
+        val cover = upscaleThumb(info.thumbnails.maxByOrNull { it.height }?.url)
+        val artist = cleanArtist(info.uploaderName)
+        val tracks = info.relatedItems.mapNotNull { songMap(it, artist, cover) }
+        return mapOf(
+            "title" to (info.name ?: "").removePrefix("Album - ").trim(),
+            "artist" to artist,
+            "thumbnail" to cover,
+            "tracks" to tracks,
+        )
+    }
+
+    private fun artist(url: String, name: String): Map<String, Any?> {
+        ensureInit()
+        var artistName = name
+        var avatar: String? = null
+        var banner: String? = null
+        var subscribers = -1L
+        try {
+            val info = ChannelInfo.getInfo(ServiceList.YouTube, url)
+            artistName = cleanArtist(info.name).ifEmpty { name }
+            avatar = upscaleThumb(info.avatars.maxByOrNull { it.height }?.url)
+            banner = info.banners.maxByOrNull { it.width }?.url
+            subscribers = info.subscriberCount
+        } catch (_: Throwable) {
+            // Header info is a nice-to-have; songs and albums below still work without it.
+        }
+
+        val songsF = java.util.concurrent.CompletableFuture.supplyAsync({
+            runCatching {
+                val ex = ServiceList.YouTube.getSearchExtractor(
+                    artistName, listOf(YoutubeSearchQueryHandlerFactory.MUSIC_SONGS), "",
+                )
+                ex.fetchPage()
+                val all = ex.initialPage.items.filterIsInstance<StreamInfoItem>()
+                val mine = all.filter { cleanArtist(it.uploaderName).contains(artistName, ignoreCase = true) }
+                (if (mine.size >= 3) mine else all).take(20).mapNotNull { songMap(it) }
+            }.getOrDefault(emptyList())
+        }, workers)
+        val albumsF = java.util.concurrent.CompletableFuture.supplyAsync({
+            runCatching {
+                val ex = ServiceList.YouTube.getSearchExtractor(
+                    artistName, listOf(YoutubeSearchQueryHandlerFactory.MUSIC_ALBUMS), "",
+                )
+                ex.fetchPage()
+                val all = ex.initialPage.items.filterIsInstance<PlaylistInfoItem>()
+                val mine = all.filter { cleanArtist(it.uploaderName).contains(artistName, ignoreCase = true) }
+                (if (mine.isNotEmpty()) mine else all).take(20).map { albumItemMap(it) }
+            }.getOrDefault(emptyList())
+        }, workers)
+
+        return mapOf(
+            "name" to artistName,
+            "thumbnail" to avatar,
+            "banner" to banner,
+            "subscribers" to subscribers,
+            "songs" to songsF.get(),
+            "albums" to albumsF.get(),
+        )
     }
 
     private fun resolve(videoId: String, force: Boolean): Resolved {
