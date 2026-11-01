@@ -792,12 +792,13 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         player.play();
       }
       _prefetchNextYouTube();
-    } catch (_) {
+    } catch (e) {
       if (seq != _loadSeq) return;
       _loadedId = null;
       if (t.isYouTube) {
+        final detail = e is PlatformException ? (e.message ?? e.code) : '$e';
         appNotice.value =
-            'Couldn\'t load "${t.title}" from YouTube Music. Check your connection and try again.';
+            'Couldn\'t load "${t.title}" from YouTube Music. ($detail)';
       }
     }
   }
@@ -6307,11 +6308,12 @@ class _SearchSheetState extends State<SearchSheet> {
         _ytResults = results;
         _ytLoading = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted || seq != _ytSeq) return;
+      final detail = e is PlatformException ? (e.message ?? e.code) : '$e';
       setState(() {
         _ytLoading = false;
-        _ytError = 'Couldn\'t reach YouTube Music. Check your connection.';
+        _ytError = 'Couldn\'t reach YouTube Music.\n\nDetails: $detail';
       });
     }
   }
@@ -6340,7 +6342,7 @@ class _SearchSheetState extends State<SearchSheet> {
   Widget _note(String text) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 2),
-      child: Text(text, style: const TextStyle(color: Colors.white54)),
+      child: SelectableText(text, style: const TextStyle(color: Colors.white54)),
     );
   }
 
