@@ -1,7 +1,17 @@
 package com.alexlmp.app
 
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.os.Bundle
+import android.webkit.CookieManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import org.json.JSONArray
+import org.json.JSONObject
+import java.lang.ref.WeakReference
+import java.security.MessageDigest
 import android.net.wifi.WifiManager
 import android.os.PowerManager
 import android.os.Handler
@@ -94,6 +104,12 @@ object YtMusicBridge {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        Account.bind(context)
+    }
+
+    private var activityRef: WeakReference<Activity>? = null
+    fun attachActivity(activity: Activity) {
+        activityRef = WeakReference(activity)
     }
 
     @Synchronized
@@ -125,6 +141,31 @@ object YtMusicBridge {
 
     fun handle(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "ytAccount" -> runAsync(result, "YT_ACCOUNT") { Account.status() }
+            "ytSignIn" -> {
+                val act = activityRef?.get()
+                if (act == null) {
+                    result.error("YT_SIGNIN", "App window not available", null)
+                } else {
+                    Account.pendingSignIn?.let { main.post { it.success(false) } }
+                    Account.pendingSignIn = result
+                    act.startActivity(Intent(act, YtLoginActivity::class.java))
+                }
+            }
+            "ytSignOut" -> {
+                Account.signOut()
+                result.success(null)
+            }
+            "ytLibraryPlaylists" -> runAsync(result, "YT_LIBRARY") { Account.libraryPlaylists() }
+            "ytPlaylistTracks" -> {
+                val id = call.argument<String>("playlistId") ?: ""
+                val auth = call.argument<Boolean>("auth") ?: true
+                runAsync(result, "YT_PLAYLIST") { Account.playlistTracks(id, auth) }
+            }
+            "ytTrackLinks" -> {
+                val id = call.argument<String>("videoId") ?: ""
+                runAsync(result, "YT_LINKS") { Account.trackLinks(id) }
+            }
             "setKeepAwake" -> {
                 setKeepAwake(call.argument<Boolean>("on") ?: false)
                 result.success(null)
@@ -752,3 +793,442 @@ object YtMusicBridge {
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YouTube Music account (read-only): sign-in cookies + InnerTube browse calls.
+// Separate from the NewPipe streaming code above — playback never uses this.
+// ─────────────────────────────────────────────────────────────────────────────
+
+object Account {
+    private const val YTM = "https://music.youtube.com"
+    private const val CLIENT_VERSION = "1.20251020.01.00"
+    private const val DESKTOP_UA =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    const val LOGIN_URL =
+        "https://accounts.google.com/ServiceLogin?ltmpl=music&service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F"
+
+    @Volatile var pendingSignIn: MethodChannel.Result? = null
+    @Volatile private var context: Context? = null
+
+    fun bind(ctx: Context) { context = ctx.applicationContext }
+
+    private fun prefs() = context?.getSharedPreferences("yt_account", Context.MODE_PRIVATE)
+
+    fun cookies(): String? = prefs()?.getString("cookies", null)?.takeIf { it.contains("SAPISID=") }
+
+    fun saveCookies(c: String) {
+        prefs()?.edit()?.putString("cookies", c)?.apply()
+    }
+
+    fun signOut() {
+        prefs()?.edit()?.clear()?.apply()
+        try {
+            CookieManager.getInstance().removeAllCookies(null)
+            CookieManager.getInstance().flush()
+        } catch (_: Throwable) {
+        }
+    }
+
+    fun finishSignIn(success: Boolean) {
+        val r = pendingSignIn ?: return
+        pendingSignIn = null
+        Handler(Looper.getMainLooper()).post { r.success(success) }
+    }
+
+    // ── InnerTube ───────────────────────────────────────────────────────────
+
+    private fun sapisidHash(cookies: String): String? {
+        val sapisid = Regex("(?:^|;\\s*)SAPISID=([^;]+)").find(cookies)?.groupValues?.get(1)
+            ?: Regex("(?:^|;\\s*)__Secure-3PAPISID=([^;]+)").find(cookies)?.groupValues?.get(1)
+            ?: return null
+        val ts = System.currentTimeMillis() / 1000
+        val digest = MessageDigest.getInstance("SHA-1")
+            .digest("$ts $sapisid $YTM".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        return "SAPISIDHASH ${ts}_$digest"
+    }
+
+    private fun call(endpoint: String, body: JSONObject, auth: Boolean): JSONObject {
+        val locale = Locale.getDefault()
+        val client = JSONObject()
+            .put("clientName", "WEB_REMIX")
+            .put("clientVersion", CLIENT_VERSION)
+            .put("hl", locale.language.ifEmpty { "en" })
+            .put("gl", locale.country.takeIf { it.length == 2 } ?: "US")
+        body.put("context", JSONObject().put("client", client).put("user", JSONObject()))
+
+        val conn = URL("$YTM/youtubei/v1/$endpoint?prettyPrint=false").openConnection() as HttpURLConnection
+        try {
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 30_000
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("User-Agent", DESKTOP_UA)
+            conn.setRequestProperty("Origin", YTM)
+            conn.setRequestProperty("X-Origin", YTM)
+            conn.setRequestProperty("Referer", "$YTM/")
+            conn.setRequestProperty("X-YouTube-Client-Name", "67")
+            conn.setRequestProperty("X-YouTube-Client-Version", CLIENT_VERSION)
+            if (auth) {
+                val c = cookies() ?: throw IOException("Not signed in to YouTube Music")
+                conn.setRequestProperty("Cookie", c)
+                sapisidHash(c)?.let { conn.setRequestProperty("Authorization", it) }
+                conn.setRequestProperty("X-Goog-AuthUser", "0")
+            }
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            val code = conn.responseCode
+            val raw = (if (code >= 400) conn.errorStream else conn.inputStream)
+            val text = raw?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
+            if (code !in 200..299) {
+                if (auth && (code == 401 || code == 403)) {
+                    throw IOException("YouTube rejected the sign-in (HTTP $code). Sign out and sign in again.")
+                }
+                throw IOException("YouTube Music HTTP $code: ${text.take(200)}")
+            }
+            return JSONObject(text)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    // ── JSON helpers (walk the response instead of hard-coding paths) ──────
+
+    private fun collect(node: Any?, key: String, out: MutableList<JSONObject>) {
+        when (node) {
+            is JSONObject -> {
+                val keys = node.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    val v = node.opt(k)
+                    if (k == key && v is JSONObject) out.add(v) else collect(v, key, out)
+                }
+            }
+            is JSONArray -> for (i in 0 until node.length()) collect(node.opt(i), key, out)
+        }
+    }
+
+    private fun all(node: Any?, key: String): List<JSONObject> =
+        ArrayList<JSONObject>().also { collect(node, key, it) }
+
+    private fun firstString(node: Any?, key: String): String? {
+        when (node) {
+            is JSONObject -> {
+                val direct = node.opt(key)
+                if (direct is String && direct.isNotEmpty()) return direct
+                val keys = node.keys()
+                while (keys.hasNext()) {
+                    firstString(node.opt(keys.next()), key)?.let { return it }
+                }
+            }
+            is JSONArray -> for (i in 0 until node.length()) {
+                firstString(node.opt(i), key)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun text(o: JSONObject?): String {
+        if (o == null) return ""
+        o.optString("simpleText").takeIf { it.isNotEmpty() }?.let { return it }
+        val runs = o.optJSONArray("runs") ?: return ""
+        val sb = StringBuilder()
+        for (i in 0 until runs.length()) sb.append(runs.optJSONObject(i)?.optString("text") ?: "")
+        return sb.toString()
+    }
+
+    private fun lastThumb(node: Any?): String? {
+        val lists = ArrayList<JSONArray>()
+        fun find(n: Any?) {
+            when (n) {
+                is JSONObject -> {
+                    val keys = n.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        val v = n.opt(k)
+                        if (k == "thumbnails" && v is JSONArray) lists.add(v) else find(v)
+                    }
+                }
+                is JSONArray -> for (i in 0 until n.length()) find(n.opt(i))
+            }
+        }
+        find(node)
+        val arr = lists.firstOrNull() ?: return null
+        val url = arr.optJSONObject(arr.length() - 1)?.optString("url") ?: return null
+        val fixed = if (url.startsWith("//")) "https:$url" else url
+        return fixed.replace(Regex("=w\\d+-h\\d+[^&?/]*$"), "=w544-h544-l90-rj")
+    }
+
+    private fun pageType(run: JSONObject?): String? =
+        run?.optJSONObject("navigationEndpoint")
+            ?.optJSONObject("browseEndpoint")
+            ?.optJSONObject("browseEndpointContextSupportedConfigs")
+            ?.optJSONObject("browseEndpointContextMusicConfig")
+            ?.optString("pageType")
+
+    private fun browseId(run: JSONObject?): String? =
+        run?.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
+            ?.optString("browseId")?.takeIf { it.isNotEmpty() }
+
+    private fun parseDuration(s: String?): Int {
+        if (s.isNullOrBlank()) return 0
+        val parts = s.trim().split(":").mapNotNull { it.toIntOrNull() }
+        if (parts.isEmpty() || parts.size > 3) return 0
+        return parts.fold(0) { acc, v -> acc * 60 + v }
+    }
+
+    // ── Parsers ─────────────────────────────────────────────────────────────
+
+    private fun parseSong(r: JSONObject): Map<String, Any?>? {
+        if (r.optString("musicItemRendererDisplayPolicy").contains("GREY_OUT")) return null
+        val cols = r.optJSONArray("flexColumns") ?: return null
+        fun col(i: Int): JSONObject? = cols.optJSONObject(i)
+            ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")?.optJSONObject("text")
+        val videoId = r.optJSONObject("playlistItemData")?.optString("videoId")?.takeIf { it.isNotEmpty() }
+            ?: firstString(r.optJSONObject("overlay"), "videoId")
+            ?: firstString(col(0), "videoId")
+            ?: return null
+        val title = text(col(0)).ifEmpty { return null }
+
+        var artist = ""
+        var artistId: String? = null
+        var album = ""
+        var albumId: String? = null
+        for (c in 1 until cols.length()) {
+            val runs = col(c)?.optJSONArray("runs") ?: continue
+            for (i in 0 until runs.length()) {
+                val run = runs.optJSONObject(i)
+                when (pageType(run)) {
+                    "MUSIC_PAGE_TYPE_ARTIST", "MUSIC_PAGE_TYPE_USER_CHANNEL" -> {
+                        if (artistId == null) artistId = browseId(run)
+                        val name = run?.optString("text") ?: ""
+                        artist = if (artist.isEmpty()) name else "$artist, $name"
+                    }
+                    "MUSIC_PAGE_TYPE_ALBUM" -> if (albumId == null) {
+                        albumId = browseId(run)
+                        album = run?.optString("text") ?: ""
+                    }
+                }
+            }
+        }
+        if (artist.isEmpty()) artist = text(col(1)).split(" • ").firstOrNull() ?: ""
+
+        val fixed = r.optJSONArray("fixedColumns")?.optJSONObject(0)
+            ?.optJSONObject("musicResponsiveListItemFixedColumnRenderer")?.optJSONObject("text")
+        var duration = parseDuration(text(fixed))
+        if (duration == 0) {
+            val m = Regex("(\\d+:)?\\d{1,2}:\\d{2}").findAll(text(col(1))).lastOrNull()
+            duration = parseDuration(m?.value)
+        }
+        return mapOf(
+            "videoId" to videoId,
+            "title" to title,
+            "artist" to artist,
+            "album" to album,
+            "albumId" to albumId,
+            "artistId" to artistId,
+            "durationSeconds" to duration,
+            "thumbnail" to lastThumb(r.optJSONObject("thumbnail")),
+        )
+    }
+
+    private fun continuationToken(node: Any?): String? {
+        all(node, "continuationCommand").firstOrNull()?.optString("token")
+            ?.takeIf { it.isNotEmpty() }?.let { return it }
+        return all(node, "nextContinuationData").firstOrNull()?.optString("continuation")
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    // ── Public calls ────────────────────────────────────────────────────────
+
+    fun status(): Map<String, Any?> {
+        if (cookies() == null) return mapOf("signedIn" to false)
+        var name: String? = null
+        var photo: String? = null
+        try {
+            val r = call("account/account_menu", JSONObject(), auth = true)
+            name = all(r, "accountName").firstOrNull()?.let { text(it) }?.ifEmpty { null }
+            photo = all(r, "accountPhoto").firstOrNull()?.let { lastThumb(it) }
+        } catch (_: Throwable) {
+        }
+        return mapOf("signedIn" to true, "name" to name, "photo" to photo)
+    }
+
+    fun libraryPlaylists(): List<Map<String, Any?>> {
+        val r = call("browse", JSONObject().put("browseId", "FEmusic_liked_playlists"), auth = true)
+        val out = ArrayList<Map<String, Any?>>()
+        val seen = HashSet<String>()
+        // Grid layout
+        for (t in all(r, "musicTwoRowItemRenderer")) {
+            val id = t.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
+                ?.optString("browseId") ?: continue
+            if (!id.startsWith("VL")) continue
+            val pid = id.removePrefix("VL")
+            if (!seen.add(pid)) continue
+            out.add(mapOf(
+                "playlistId" to pid,
+                "title" to text(t.optJSONObject("title")),
+                "subtitle" to text(t.optJSONObject("subtitle")),
+                "thumbnail" to lastThumb(t.optJSONObject("thumbnailRenderer")),
+            ))
+        }
+        // List layout
+        for (t in all(r, "musicResponsiveListItemRenderer")) {
+            val id = t.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
+                ?.optString("browseId") ?: continue
+            if (!id.startsWith("VL")) continue
+            val pid = id.removePrefix("VL")
+            if (!seen.add(pid)) continue
+            val cols = t.optJSONArray("flexColumns")
+            fun col(i: Int): JSONObject? = cols?.optJSONObject(i)
+                ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")?.optJSONObject("text")
+            out.add(mapOf(
+                "playlistId" to pid,
+                "title" to text(col(0)),
+                "subtitle" to text(col(1)),
+                "thumbnail" to lastThumb(t.optJSONObject("thumbnail")),
+            ))
+        }
+        return out
+    }
+
+    fun playlistTracks(playlistId: String, auth: Boolean): Map<String, Any?> {
+        require(playlistId.isNotBlank()) { "Missing playlist id" }
+        val first = call("browse", JSONObject().put("browseId", "VL$playlistId"), auth = auth && cookies() != null)
+        // Only the playlist's own shelf (skips "Suggestions" sections in your own playlists).
+        val shelf: Any = all(first, "musicPlaylistShelfRenderer").firstOrNull() ?: first
+        val tracks = ArrayList<Map<String, Any?>>()
+        val seen = HashSet<String>()
+        fun addFrom(node: Any?) {
+            for (r in all(node, "musicResponsiveListItemRenderer")) {
+                val song = parseSong(r) ?: continue
+                if (seen.add(song["videoId"] as String)) tracks.add(song)
+            }
+        }
+        addFrom(shelf)
+        var token = continuationToken(shelf)
+        var pages = 0
+        while (token != null && pages < 30) {
+            pages++
+            val next = call("browse", JSONObject().put("continuation", token), auth = auth && cookies() != null)
+            val before = tracks.size
+            addFrom(next)
+            token = continuationToken(next)
+            if (tracks.size == before) break
+        }
+        val header = all(first, "musicResponsiveHeaderRenderer").firstOrNull()
+            ?: all(first, "musicDetailHeaderRenderer").firstOrNull()
+        return mapOf(
+            "title" to header?.let { text(it.optJSONObject("title")) },
+            "thumbnail" to header?.let { lastThumb(it.optJSONObject("thumbnail")) },
+            "tracks" to tracks,
+        )
+    }
+
+    /** Artist + album for a song (used by "Go to artist" / "Go to album"). */
+    fun trackLinks(videoId: String): Map<String, Any?> {
+        val r = call(
+            "next",
+            JSONObject().put("videoId", videoId).put("isAudioOnly", true),
+            auth = false,
+        )
+        val panel = all(r, "playlistPanelVideoRenderer")
+            .firstOrNull { it.optString("videoId") == videoId }
+            ?: all(r, "playlistPanelVideoRenderer").firstOrNull()
+        val runs = panel?.optJSONObject("longBylineText")?.optJSONArray("runs")
+        var artistId: String? = null
+        var artistName: String? = null
+        var albumId: String? = null
+        var albumTitle: String? = null
+        if (runs != null) {
+            for (i in 0 until runs.length()) {
+                val run = runs.optJSONObject(i)
+                when (pageType(run)) {
+                    "MUSIC_PAGE_TYPE_ARTIST", "MUSIC_PAGE_TYPE_USER_CHANNEL" -> if (artistId == null) {
+                        artistId = browseId(run)
+                        artistName = run?.optString("text")
+                    }
+                    "MUSIC_PAGE_TYPE_ALBUM" -> if (albumId == null) {
+                        albumId = browseId(run)
+                        albumTitle = run?.optString("text")
+                    }
+                }
+            }
+        }
+        var albumPlaylist: String? = null
+        var albumThumb: String? = null
+        if (albumId != null) {
+            try {
+                val a = call("browse", JSONObject().put("browseId", albumId), auth = false)
+                albumPlaylist = firstString(a, "audioPlaylistId")
+                    ?: Regex("\"(OLAK5uy_[A-Za-z0-9_-]+)\"").find(a.toString())?.groupValues?.get(1)
+                albumThumb = all(a, "musicResponsiveHeaderRenderer").firstOrNull()
+                    ?.let { lastThumb(it.optJSONObject("thumbnail")) }
+                    ?: all(a, "musicDetailHeaderRenderer").firstOrNull()
+                        ?.let { lastThumb(it.optJSONObject("thumbnail")) }
+            } catch (_: Throwable) {
+            }
+        }
+        return mapOf(
+            "artistUrl" to artistId?.let { "https://www.youtube.com/channel/$it" },
+            "artistName" to artistName,
+            "albumUrl" to albumPlaylist?.let { "https://www.youtube.com/playlist?list=$it" },
+            "albumTitle" to albumTitle,
+            "albumThumbnail" to albumThumb,
+        )
+    }
+}
+
+/** Google sign-in page in a WebView; saves the YouTube Music cookies when done. */
+class YtLoginActivity : Activity() {
+    private lateinit var web: WebView
+    private var done = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        title = "Sign in to YouTube Music"
+        Account.bind(this)
+        val cm = CookieManager.getInstance()
+        cm.setAcceptCookie(true)
+        web = WebView(this)
+        cm.setAcceptThirdPartyCookies(web, true)
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                if (url != null && url.startsWith("https://music.youtube.com")) {
+                    val cookies = cm.getCookie("https://music.youtube.com")
+                    if (cookies != null && cookies.contains("SAPISID=")) {
+                        cm.flush()
+                        Account.saveCookies(cookies)
+                        finishWith(true)
+                    }
+                }
+            }
+        }
+        setContentView(web)
+        web.loadUrl(Account.LOGIN_URL)
+    }
+
+    private fun finishWith(success: Boolean) {
+        if (done) return
+        done = true
+        Account.finishSignIn(success)
+        finish()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (::web.isInitialized && web.canGoBack()) web.goBack() else finishWith(false)
+    }
+
+    override fun onDestroy() {
+        if (!done) {
+            done = true
+            Account.finishSignIn(false)
+        }
+        super.onDestroy()
+    }
+}
+
