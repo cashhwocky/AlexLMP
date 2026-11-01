@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -24,6 +25,7 @@ final AppState appState = AppState();
 final ValueNotifier<String?> appNotice = ValueNotifier<String?>(null);
 final ValueNotifier<bool> scanning = ValueNotifier<bool>(false);
 const MethodChannel _mediaChannel = MethodChannel('com.alexlmp.app/media');
+const MethodChannel _ytChannel = MethodChannel('com.alexlmp.app/ytmusic');
 
 const List<String> kArtStyles = [
   'vinyl_record',
@@ -486,6 +488,8 @@ class TrackItem {
   String artStyle;
   final String source;
   final String? filePath;
+  final String? ytVideoId;
+  final String? artworkUrl;
 
   TrackItem({
     required this.id,
@@ -497,7 +501,11 @@ class TrackItem {
     required this.source,
     this.artStyle = 'vinyl_record',
     this.filePath,
+    this.ytVideoId,
+    this.artworkUrl,
   });
+
+  bool get isYouTube => ytVideoId != null;
 
   Uri get playbackUri {
     final fp = filePath;
@@ -520,6 +528,7 @@ class TrackItem {
       artist: artist,
       album: album,
       duration: durationSeconds > 0 ? Duration(seconds: durationSeconds) : null,
+      artUri: artworkUrl != null ? Uri.tryParse(artworkUrl!) : null,
     );
   }
 }
@@ -543,6 +552,12 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   bool _shuffle = false;
   AudioServiceRepeatMode _repeat = AudioServiceRepeatMode.none;
   final List<int> _history = [];
+
+  // YouTube Music stream recovery state
+  bool _ytRecovering = false;
+  String? _ytRecoverId;
+  int _ytRecoverCount = 0;
+  Duration _lastGoodPosition = Duration.zero;
 
   final ValueNotifier<int> currentIndex = ValueNotifier<int>(0);
   final ValueNotifier<int> libraryRevision = ValueNotifier<int>(0);
@@ -577,8 +592,14 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
     player.playbackEventStream.map(_transformEvent).listen(
       playbackState.add,
-      onError: (Object _, StackTrace __) {},
+      onError: (Object _, StackTrace __) {
+        _recoverYouTubeStream();
+      },
     );
+
+    player.positionStream.listen((p) {
+      if (p > Duration.zero) _lastGoodPosition = p;
+    });
 
     player.processingStateStream.listen((state) {
       if (state == ProcessingState.ready) {
@@ -747,14 +768,22 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     currentIndex.value = i;
     final t = tracks[i];
     mediaItem.add(t.toMediaItem());
+    _lastGoodPosition = Duration.zero;
+    _ytRecoverId = null;
+    _ytRecoverCount = 0;
     try {
-      try {
-        await player.setAudioSource(AudioSource.uri(t.playbackUri));
-      } catch (_) {
-        final fallbackUri = t.source.startsWith('content://')
-            ? Uri.parse(t.source)
-            : Uri.file(t.source);
-        await player.setAudioSource(AudioSource.uri(fallbackUri));
+      if (t.isYouTube) {
+        await _setYouTubeSource(t, seq);
+        if (seq != _loadSeq) return;
+      } else {
+        try {
+          await player.setAudioSource(AudioSource.uri(t.playbackUri));
+        } catch (_) {
+          final fallbackUri = t.source.startsWith('content://')
+              ? Uri.parse(t.source)
+              : Uri.file(t.source);
+          await player.setAudioSource(AudioSource.uri(fallbackUri));
+        }
       }
       if (seq != _loadSeq) return;
       _loadedId = t.id;
@@ -762,9 +791,88 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       if (play) {
         player.play();
       }
+      _prefetchNextYouTube();
     } catch (_) {
       if (seq != _loadSeq) return;
       _loadedId = null;
+      if (t.isYouTube) {
+        appNotice.value =
+            'Couldn\'t load "${t.title}" from YouTube Music. Check your connection and try again.';
+      }
+    }
+  }
+
+  /// Resolves the song through the native bridge and loads it. If the first
+  /// attempt fails (stale/expired stream), it re-resolves once and tries again.
+  Future<void> _setYouTubeSource(TrackItem t, int seq) async {
+    final id = t.ytVideoId!;
+    try {
+      final uri = await YouTubeMusic.prepare(id);
+      if (seq != _loadSeq) return;
+      await player.setAudioSource(AudioSource.uri(uri, tag: t.id));
+    } catch (e) {
+      if (seq != _loadSeq || e is PlayerInterruptedException) rethrow;
+      final uri = await YouTubeMusic.prepare(id, refresh: true);
+      if (seq != _loadSeq) return;
+      await player.setAudioSource(AudioSource.uri(uri, tag: t.id));
+    }
+  }
+
+  /// Called when just_audio reports a playback error. For YouTube Music
+  /// tracks, fetch a fresh stream and resume from where it stopped.
+  Future<void> _recoverYouTubeStream() async {
+    final t = currentTrack;
+    if (t == null || !t.isYouTube || _ytRecovering) return;
+    if (_loadedId != t.id) return; // still loading — _load handles its own errors
+    if (_ytRecoverId != t.id) {
+      _ytRecoverId = t.id;
+      _ytRecoverCount = 0;
+    }
+    if (_ytRecoverCount >= 3) {
+      appNotice.value = 'Playback of "${t.title}" was interrupted.';
+      return;
+    }
+    _ytRecoverCount++;
+    _ytRecovering = true;
+    final seq = _loadSeq;
+    final resumeAt = player.position > _lastGoodPosition
+        ? player.position
+        : _lastGoodPosition;
+    try {
+      final uri = await YouTubeMusic.prepare(t.ytVideoId!, refresh: true);
+      if (seq != _loadSeq) return;
+      await player.setAudioSource(
+        AudioSource.uri(uri, tag: t.id),
+        initialPosition: resumeAt,
+      );
+      if (seq != _loadSeq) return;
+      await _applySpeedAndPitch();
+      player.play();
+    } catch (_) {
+    } finally {
+      _ytRecovering = false;
+    }
+  }
+
+  /// Warm up the next YouTube Music track so skipping to it starts quickly.
+  void _prefetchNextYouTube() {
+    if (_shuffle) return;
+    final n = _index + 1;
+    if (n < tracks.length && tracks[n].isYouTube) {
+      unawaited(
+        YouTubeMusic.prepare(tracks[n].ytVideoId!).then((_) {}, onError: (_) {}),
+      );
+    }
+  }
+
+  /// Plays a YouTube Music result. If it's already in the queue it just
+  /// plays it; otherwise it's added to the front of the queue.
+  Future<void> playYouTubeTrack(TrackItem t) async {
+    final existing = tracks.indexWhere((x) => x.id == t.id);
+    if (existing >= 0) {
+      await playIndex(existing);
+    } else {
+      await addTracks([t], playFirst: true);
     }
   }
 
@@ -956,7 +1064,7 @@ Future<void> scanDeviceAudio() async {
     }
     final imported = audioHandler.tracks
         .where((t) =>
-            t.id.startsWith('local_') &&
+            (t.id.startsWith('local_') || t.id.startsWith('yt_')) &&
             !appState.isDeleted(t.id, t.filePath ?? t.source))
         .toList();
     await audioHandler.setTracks([...imported, ...scanned]);
@@ -993,6 +1101,63 @@ Future<void> pickLocalFiles() async {
     added.add(t);
   }
   if (added.isNotEmpty) await audioHandler.addTracks(added, playFirst: true);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YouTube Music (native bridge: android/.../YtMusicBridge.kt)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class YouTubeMusic {
+  static int _palette = 0;
+
+  /// Searches YouTube Music songs. Throws on network/extraction errors.
+  static Future<List<TrackItem>> search(String query) async {
+    if (!Platform.isAndroid) return const [];
+    final raw = await _ytChannel.invokeMethod('ytSearch', {'query': query})
+            as List? ??
+        const [];
+    final out = <TrackItem>[];
+    for (final e in raw) {
+      final m = Map<String, dynamic>.from(e as Map);
+      final videoId = (m['videoId'] ?? '').toString();
+      if (videoId.isEmpty) continue;
+      final id = 'yt_$videoId';
+      // Reuse the queued instance so edits/likes/active state line up.
+      final existing = audioHandler.trackById(id);
+      if (existing != null) {
+        out.add(existing);
+        continue;
+      }
+      final i = _palette++;
+      final t = TrackItem(
+        id: id,
+        title: cleanText(m['title'], 'Unknown Track'),
+        artist: cleanText(m['artist'], 'Unknown Artist'),
+        album: 'YouTube Music',
+        durationSeconds: (m['durationSeconds'] as num?)?.toInt() ?? 0,
+        artColors: kArtPalettes[i % kArtPalettes.length].colors,
+        artStyle: kArtStyles[i % kArtStyles.length],
+        source: 'https://music.youtube.com/watch?v=$videoId',
+        ytVideoId: videoId,
+        artworkUrl: m['thumbnail'] as String?,
+      );
+      appState.applyEdits(t);
+      out.add(t);
+    }
+    return out;
+  }
+
+  /// Resolves a song and returns the local URL the player should load.
+  static Future<Uri> prepare(String videoId, {bool refresh = false}) async {
+    final url = await _ytChannel.invokeMethod<String>('ytPrepare', {
+      'videoId': videoId,
+      'refresh': refresh,
+    });
+    if (url == null || url.isEmpty) {
+      throw Exception('No stream URL for $videoId');
+    }
+    return Uri.parse(url);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6101,6 +6266,83 @@ class SearchSheet extends StatefulWidget {
 
 class _SearchSheetState extends State<SearchSheet> {
   String _query = '';
+  Timer? _debounce;
+  int _ytSeq = 0;
+  bool _ytLoading = false;
+  String? _ytError;
+  List<TrackItem> _ytResults = const [];
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onQueryChanged(String v) {
+    setState(() => _query = v);
+    _debounce?.cancel();
+    final q = v.trim();
+    if (q.length < 2) {
+      _ytSeq++;
+      setState(() {
+        _ytLoading = false;
+        _ytError = null;
+        _ytResults = const [];
+      });
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 450), () => _searchYt(q));
+  }
+
+  Future<void> _searchYt(String q) async {
+    final seq = ++_ytSeq;
+    setState(() {
+      _ytLoading = true;
+      _ytError = null;
+    });
+    try {
+      final results = await YouTubeMusic.search(q);
+      if (!mounted || seq != _ytSeq) return;
+      setState(() {
+        _ytResults = results;
+        _ytLoading = false;
+      });
+    } catch (_) {
+      if (!mounted || seq != _ytSeq) return;
+      setState(() {
+        _ytLoading = false;
+        _ytError = 'Couldn\'t reach YouTube Music. Check your connection.';
+      });
+    }
+  }
+
+  Widget _header(AppPalette pal, IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 14, 2, 6),
+      child: Row(
+        children: [
+          Icon(icon, color: pal.accent, size: 18),
+          const SizedBox(width: 8),
+          Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _note(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 2),
+      child: Text(text, style: const TextStyle(color: Colors.white54)),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -6108,10 +6350,81 @@ class _SearchSheetState extends State<SearchSheet> {
     final tracks = audioHandler.tracks;
     final q = _query.toLowerCase();
     final filtered = tracks.where((t) {
+      if (t.isYouTube) return false; // shown in the YouTube Music section
       return t.title.toLowerCase().contains(q) ||
           t.artist.toLowerCase().contains(q) ||
           t.album.toLowerCase().contains(q);
     }).toList();
+    final showYt = _query.trim().length >= 2 && Platform.isAndroid;
+
+    final children = <Widget>[];
+    if (filtered.isNotEmpty) {
+      if (showYt) {
+        children.add(_header(pal, Icons.library_music_rounded, 'Your library'));
+      }
+      for (final t in filtered) {
+        children.add(TrackRow(
+          track: t,
+          palette: pal,
+          active: audioHandler.currentTrack?.id == t.id,
+          onTap: () {
+            final idx = tracks.indexOf(t);
+            Navigator.pop(context);
+            playAndOpen(widget.parentContext, idx);
+          },
+          onMore: () => showAddToPlaylistSheet(context, t),
+        ));
+      }
+    } else if (!showYt) {
+      children.add(const Padding(
+        padding: EdgeInsets.only(top: 40),
+        child: Center(
+          child: Text(
+            'No songs found.',
+            style: TextStyle(color: Colors.white54),
+          ),
+        ),
+      ));
+    }
+
+    if (showYt) {
+      children.add(_header(pal, Icons.play_circle_fill_rounded, 'YouTube Music'));
+      if (_ytLoading && _ytResults.isEmpty) {
+        children.add(Padding(
+          padding: const EdgeInsets.symmetric(vertical: 18),
+          child: Center(
+            child: SizedBox(
+              width: 26,
+              height: 26,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: pal.accent,
+              ),
+            ),
+          ),
+        ));
+      } else if (_ytError != null) {
+        children.add(_note(_ytError!));
+      } else if (_ytResults.isEmpty && !_ytLoading) {
+        children.add(_note('No YouTube Music results.'));
+      } else {
+        for (final t in _ytResults) {
+          children.add(TrackRow(
+            track: t,
+            palette: pal,
+            active: audioHandler.currentTrack?.id == t.id,
+            onTap: () {
+              Navigator.pop(context);
+              audioHandler.playYouTubeTrack(t);
+              openPlayer(widget.parentContext);
+            },
+            onMore: audioHandler.trackById(t.id) == null
+                ? null
+                : () => showAddToPlaylistSheet(context, t),
+          ));
+        }
+      }
+    }
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
@@ -6125,7 +6438,7 @@ class _SearchSheetState extends State<SearchSheet> {
                 autofocus: true,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  hintText: 'Search songs & artists...',
+                  hintText: 'Search your library & YouTube Music...',
                   hintStyle: const TextStyle(color: Colors.white54),
                   prefixIcon: Icon(Icons.search, color: pal.accent),
                   filled: true,
@@ -6135,34 +6448,23 @@ class _SearchSheetState extends State<SearchSheet> {
                     borderSide: BorderSide.none,
                   ),
                 ),
-                onChanged: (v) => setState(() => _query = v),
+                textInputAction: TextInputAction.search,
+                onChanged: _onQueryChanged,
+                onSubmitted: (v) {
+                  final q = v.trim();
+                  if (q.length >= 2) {
+                    _debounce?.cancel();
+                    _searchYt(q);
+                  }
+                },
               ),
               const SizedBox(height: 12),
               Expanded(
-                child: filtered.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No songs found.',
-                          style: TextStyle(color: Colors.white54),
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: filtered.length,
-                        itemBuilder: (_, i) {
-                          final t = filtered[i];
-                          return TrackRow(
-                            track: t,
-                            palette: pal,
-                            active: audioHandler.currentTrack?.id == t.id,
-                            onTap: () {
-                              final idx = tracks.indexOf(t);
-                              Navigator.pop(context);
-                              playAndOpen(widget.parentContext, idx);
-                            },
-                            onMore: () => showAddToPlaylistSheet(context, t),
-                          );
-                        },
-                      ),
+                child: ListView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  children: children,
+                ),
               ),
             ],
           ),
@@ -6181,9 +6483,24 @@ final Map<String, Object?> _artCache = {};
 Future<Uint8List?> loadArt(TrackItem t) {
   final existing = _artCache[t.id];
   if (existing is Future<Uint8List?>) return existing;
-  final fut = _fetchArtFromChannel(t);
+  final url = t.artworkUrl;
+  final fut = url != null ? _fetchArtFromUrl(url) : _fetchArtFromChannel(t);
   _artCache[t.id] = fut;
   return fut;
+}
+
+Future<Uint8List?> _fetchArtFromUrl(String url) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  try {
+    final req = await client.getUrl(Uri.parse(url));
+    final res = await req.close();
+    if (res.statusCode != 200) return null;
+    return await consolidateHttpClientResponseBytes(res);
+  } catch (_) {
+    return null;
+  } finally {
+    client.close();
+  }
 }
 
 Future<Uint8List?> _fetchArtFromChannel(TrackItem t) async {
