@@ -699,9 +699,34 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool isLiked(String id) => liked.contains(id);
+  // Songs liked on YouTube Music (track ids "yt_<videoId>"). Filled from your
+  // "Liked Music" playlist and updated right away when you tap the heart.
+  Set<String>? _ytLikedCache;
+  Set<String> get _ytLiked => _ytLikedCache ??= {
+        ...?_prefs?.getStringList('yt_liked_ids'),
+      };
+
+  void _saveYtLiked() {
+    _prefs?.setStringList('yt_liked_ids', _ytLiked.toList());
+  }
+
+  /// Replace the YouTube likes with what YouTube Music says (LM playlist).
+  void syncYtLikes(Iterable<String> ids) {
+    _ytLikedCache = {...ids};
+    _saveYtLiked();
+    notifyListeners();
+  }
+
+  bool isLiked(String id) => liked.contains(id) || _ytLiked.contains(id);
 
   void toggleLike(String id) {
+    // Streamed songs go to your YouTube Music likes when you're signed in.
+    final vid = audioHandler.trackById(id)?.ytVideoId ??
+        (id.startsWith('yt_') ? id.substring(3) : null);
+    if (vid != null && ytAccount.value.signedIn) {
+      _toggleYtLike(id, vid);
+      return;
+    }
     if (!liked.remove(id)) {
       liked.add(id);
       _rememberIfYt(id);
@@ -710,6 +735,48 @@ class AppState extends ChangeNotifier {
     }
     _prefs?.setStringList('liked_ids', liked.toList());
     notifyListeners();
+  }
+
+  void _toggleYtLike(String id, String videoId) {
+    final wasLiked = isLiked(id);
+    final hadLocal = liked.contains(id);
+    // Update the heart right away; undo if YouTube Music says no.
+    if (wasLiked) {
+      _ytLiked.remove(id);
+      if (liked.remove(id)) {
+        _forgetYtIfUnused(id);
+        _prefs?.setStringList('liked_ids', liked.toList());
+      }
+    } else {
+      _ytLiked.add(id);
+      _rememberIfYt(id);
+    }
+    _saveYtLiked();
+    notifyListeners();
+    _ytChannel
+        .invokeMethod('ytRate', {'videoId': videoId, 'like': !wasLiked})
+        .then((_) {
+      // Liked Music changed: reload it next time it's shown.
+      YouTubeMusic.prefs?.remove('ytpl_LM');
+      _AlexLmpRootState._ytLikedFuture = null;
+      appNotice.value = wasLiked
+          ? 'Removed from your YouTube Music likes.'
+          : 'Added to your YouTube Music likes.';
+    }).catchError((Object e) {
+      if (wasLiked) {
+        _ytLiked.add(id);
+        if (hadLocal) {
+          liked.add(id);
+          _prefs?.setStringList('liked_ids', liked.toList());
+        }
+      } else {
+        _ytLiked.remove(id);
+      }
+      _saveYtLiked();
+      notifyListeners();
+      final detail = e is PlatformException ? (e.message ?? e.code) : '$e';
+      appNotice.value = 'Couldn\'t update your YouTube Music likes: $detail';
+    });
   }
 
   Playlist? playlistById(String id) {
@@ -2332,6 +2399,11 @@ class YouTubeMusic {
     try {
       prefs?.setString('ytpl_$playlistId', jsonEncode(raw));
     } catch (_) {}
+    if (playlistId == 'LM') {
+      try {
+        appState.syncYtLikes(_tracks(m['tracks']).map((t) => t.id));
+      } catch (_) {}
+    }
     final name = title ?? cleanText(m['title'], 'Playlist');
     return YtAlbumPage(
       name,
@@ -18941,7 +19013,7 @@ class _SetupScreenState extends State<SetupScreen> {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.4.0';
+const String kAppVersion = '2.5.0';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
