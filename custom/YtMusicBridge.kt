@@ -191,6 +191,25 @@ object YtMusicBridge {
                 }
                 result.success(null)
             }
+            "ytSaveOffline" -> {
+                val id = call.argument<String>("videoId") ?: ""
+                runAsync(result, "YT_OFFLINE") {
+                    require(VIDEO_ID.matches(id)) { "Bad videoId" }
+                    Proxy.saveOffline(id)
+                }
+            }
+            "ytOfflineProgress" -> {
+                result.success(Proxy.offlineProgress(call.argument<String>("videoId") ?: ""))
+            }
+            "ytDeleteOffline" -> {
+                val id = call.argument<String>("videoId") ?: ""
+                if (VIDEO_ID.matches(id)) Proxy.deleteOffline(id)
+                result.success(null)
+            }
+            "ytDeleteAllOffline" -> {
+                Proxy.deleteAllOffline()
+                result.success(null)
+            }
             "ytClearCache" -> {
                 cache.clear()
                 Proxy.clearCache()
@@ -802,6 +821,71 @@ object YtMusicBridge {
             val d = File(ctx.cacheDir, "yt_audio")
             if (!d.exists()) d.mkdirs()
             return d
+        }
+
+        // ── Offline saves: kept in app storage until the user deletes them ──
+
+        private val offline = java.util.concurrent.ConcurrentHashMap<String, Download>()
+
+        private fun offlineDir(): File? {
+            val ctx = appContext ?: return null
+            val d = File(ctx.filesDir, "offline")
+            if (!d.exists()) d.mkdirs()
+            return d
+        }
+
+        private fun extFor(mime: String) = if (mime.contains("webm")) "webm" else "m4a"
+
+        private fun offlineFile(videoId: String): File? =
+            offlineDir()?.listFiles()?.firstOrNull {
+                it.name.startsWith("$videoId.") && !it.name.endsWith(".part")
+            }
+
+        /** Downloads a whole song into app storage (blocking). */
+        fun saveOffline(videoId: String): Map<String, Any?> {
+            offlineFile(videoId)?.let {
+                return mapOf("path" to it.absolutePath, "bytes" to it.length())
+            }
+            val dir = offlineDir() ?: throw IOException("No app storage available")
+            // Already fully in the playback cache? Just copy it.
+            val cached = synchronized(downloads) { downloads[videoId] }
+            if (cached != null && cached.done && cached.failed == null && cached.file.exists()) {
+                val out = File(dir, "$videoId.${extFor(cached.mime)}")
+                cached.file.copyTo(out, overwrite = true)
+                return mapOf("path" to out.absolutePath, "bytes" to out.length())
+            }
+            val d = Download(videoId, File(dir, "$videoId.part"))
+            offline[videoId] = d
+            try {
+                runDownload(d)
+                d.failed?.let { throw it }
+                val out = File(dir, "$videoId.${extFor(d.mime)}")
+                if (!d.file.renameTo(out)) {
+                    d.file.copyTo(out, overwrite = true)
+                    d.file.delete()
+                }
+                return mapOf("path" to out.absolutePath, "bytes" to out.length())
+            } catch (e: Throwable) {
+                d.file.delete()
+                throw e
+            } finally {
+                offline.remove(videoId)
+            }
+        }
+
+        /** 0..1 while a save is running, -1 if none. */
+        fun offlineProgress(videoId: String): Double {
+            val d = offline[videoId] ?: return -1.0
+            return if (d.total > 0) d.downloaded.toDouble() / d.total else 0.0
+        }
+
+        fun deleteOffline(videoId: String) {
+            offlineDir()?.listFiles()?.filter { it.name.startsWith("$videoId.") }
+                ?.forEach { it.delete() }
+        }
+
+        fun deleteAllOffline() {
+            offlineDir()?.listFiles()?.forEach { it.delete() }
         }
 
         /** Deletes downloaded songs that aren't playing right now. */
