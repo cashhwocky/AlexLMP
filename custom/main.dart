@@ -21113,7 +21113,12 @@ class SimpPlayerView extends StatelessWidget {
 class PrestigeBackdrop extends StatefulWidget {
   final TrackItem? track;
   final double dim;
-  const PrestigeBackdrop({super.key, this.track, this.dim = 0.5});
+
+  /// Drift slowly (Home). The player keeps it still so all the phone's
+  /// power goes to the artwork and controls.
+  final bool animate;
+  const PrestigeBackdrop(
+      {super.key, this.track, this.dim = 0.5, this.animate = true});
 
   @override
   State<PrestigeBackdrop> createState() => _PrestigeBackdropState();
@@ -21121,9 +21126,14 @@ class PrestigeBackdrop extends StatefulWidget {
 
 class _PrestigeBackdropState extends State<PrestigeBackdrop>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: const Duration(seconds: 40))
-        ..repeat();
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(seconds: 40), value: 0.12);
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.animate) _c.repeat();
+  }
 
   @override
   void dispose() {
@@ -21955,48 +21965,59 @@ class _RingLightPainter extends CustomPainter {
   final bool on;
   _RingLightPainter(this.t, this.color, this.radius, this.on);
 
+  // The ring's outline is measured once per size, not every frame.
+  static Size? _cachedSize;
+  static double? _cachedRadius;
+  static ui.PathMetric? _metric;
+  static Path? _path;
+
   @override
   void paint(Canvas canvas, Size size) {
     const gap = 9.0;
-    final rect = Rect.fromLTWH(-gap, -gap, size.width + gap * 2, size.height + gap * 2);
-    final rr = RRect.fromRectAndRadius(
-        rect, Radius.circular(min(radius + gap, rect.shortestSide / 2)));
-    final shader = SweepGradient(
-      transform: GradientRotation(2 * pi * t),
-      colors: [
-        color.withOpacity(0),
-        color,
-        Colors.white,
-        color,
-        color.withOpacity(0),
-        color.withOpacity(0),
-      ],
-      stops: const [0, 0.1, 0.16, 0.22, 0.34, 1],
-    ).createShader(rect);
-    final k = on ? 1.0 : 0.45;
-    canvas.drawRRect(
-      rr,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 9
-        ..shader = shader
-        ..color = Colors.white.withOpacity(0.55 * k)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-    );
-    canvas.drawRRect(
-      rr,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..shader = shader,
-    );
-    canvas.drawRRect(
-      rr,
+    if (_cachedSize != size || _cachedRadius != radius || _metric == null) {
+      final rect = Rect.fromLTWH(
+          -gap, -gap, size.width + gap * 2, size.height + gap * 2);
+      final rr = RRect.fromRectAndRadius(
+          rect, Radius.circular(min(radius + gap, rect.shortestSide / 2)));
+      _path = Path()..addRRect(rr);
+      _metric = _path!.computeMetrics().first;
+      _cachedSize = size;
+      _cachedRadius = radius;
+    }
+    final m = _metric!;
+    // Faint static outline.
+    canvas.drawPath(
+      _path!,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1
         ..color = Colors.white.withOpacity(0.08),
     );
+    // A small light with a fading tail travelling around the outline.
+    // Plain circles only (no blur filters), so it costs almost nothing.
+    final k = on ? 1.0 : 0.5;
+    final len = m.length;
+    final head = t * len;
+    final glowAt = m.getTangentForOffset(head)!.position;
+    canvas.drawCircle(
+      glowAt,
+      18,
+      Paint()
+        ..shader = RadialGradient(colors: [
+          color.withOpacity(0.55 * k),
+          color.withOpacity(0),
+        ]).createShader(Rect.fromCircle(center: glowAt, radius: 18)),
+    );
+    final dot = Paint();
+    for (var i = 0; i < 16; i++) {
+      var d = head - i * 5.0;
+      if (d < 0) d += len;
+      final p = m.getTangentForOffset(d)!.position;
+      final f = 1 - i / 16;
+      dot.color = Color.lerp(color, Colors.white, f * 0.8)!
+          .withOpacity(f * 0.95 * k);
+      canvas.drawCircle(p, 1.2 + 1.8 * f, dot);
+    }
   }
 
   @override
@@ -22087,7 +22108,7 @@ class PrestigePlayerView extends StatelessWidget {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          PrestigeBackdrop(track: track, dim: 0.3),
+          PrestigeBackdrop(track: track, dim: 0.3, animate: false),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -22205,12 +22226,14 @@ class PrestigePlayerView extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  PrestigeGlass(
+                  RepaintBoundary(
+                   child: PrestigeGlass(
                     radius: 30,
                     padding: const EdgeInsets.fromLTRB(18, 10, 18, 6),
                     child: Column(
                       children: [
-                        PlayerSeek(
+                        RepaintBoundary(
+                         child: PlayerSeek(
                           fallbackSeconds: track.durationSeconds,
                           height: 26,
                           timeStyle: const TextStyle(
@@ -22267,6 +22290,7 @@ class PrestigePlayerView extends StatelessWidget {
                               );
                             },
                           ),
+                        ),
                         ),
                         const SizedBox(height: 4),
                         Row(
@@ -22360,6 +22384,7 @@ class PrestigePlayerView extends StatelessWidget {
                         ),
                       ],
                     ),
+                  ),
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -23942,7 +23967,7 @@ class _BreathingArtState extends State<BreathingArt>
       curve: Curves.easeOutBack,
       child: AnimatedBuilder(
         animation: _c,
-        child: widget.child,
+        child: RepaintBoundary(child: widget.child),
         builder: (_, child) => Transform.scale(
           scale: 1 + 0.018 * (0.5 - 0.5 * cos(2 * pi * _c.value)),
           child: child,
