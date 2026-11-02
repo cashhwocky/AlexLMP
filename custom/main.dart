@@ -1573,7 +1573,8 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     if (dur == null || dur.inSeconds < 20) return;
     final secs = appState.d('crossfade_secs', 6.0);
     final left = dur - pos;
-    if (left > Duration(milliseconds: (secs * 1000).round()) ||
+    // Start a little early: the second player needs a moment to get ready.
+    if (left > Duration(milliseconds: ((secs + 2.5) * 1000).round()) ||
         left < const Duration(milliseconds: 800)) {
       return;
     }
@@ -1616,27 +1617,51 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     try {
       await _killGhost();
       _ghost = ghost;
-      await ghost.setAudioSource(AudioSource.uri(src.uri),
-          initialPosition: player.position);
+      // 1. Load the current song in a second, silent player.
+      await ghost.setAudioSource(AudioSource.uri(src.uri));
       try {
         await ghost.setSpeed(player.speed);
         await ghost.setPitch(appState.pitch.clamp(0.5, 2.0));
       } catch (_) {}
-      await ghost.setVolume(base);
+      await ghost.setVolume(0);
+      // 2. Line it up with where the song is *now* (not where it was before
+      //    loading, which is what caused the skip back) and start it.
+      await ghost.seek(player.position + const Duration(milliseconds: 200));
       ghost.play();
+      final sw = Stopwatch()..start();
+      final p0 = ghost.position;
+      while (sw.elapsedMilliseconds < 2500 &&
+          (ghost.position <= p0 ||
+              ghost.processingState != ProcessingState.ready)) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+      // Fine-tune: keep the two players within ~80 ms of each other.
+      final drift = player.position - ghost.position;
+      if (drift.inMilliseconds.abs() > 80) {
+        await ghost.seek(player.position + const Duration(milliseconds: 60));
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+      }
+      if (!player.playing || !identical(_ghost, ghost)) return;
+      // 3. Swap at the same spot: no jump, no gap.
+      crossfadingNow.value = true;
+      await ghost.setVolume(base);
       await player.setVolume(0);
+      // 4. Next song starts; one fades out while the other fades in.
+      final left = (player.duration ?? Duration.zero) - player.position;
+      final fade = max(0.8, min(secs, left.inMilliseconds / 1000 - 0.2));
       await skipToNext();
       await Future.wait([
-        _rampVolume(ghost, base, 0, secs),
-        _rampVolume(player, 0, base, secs),
+        _rampVolume(ghost, base, 0, fade),
+        _rampVolume(player, 0, base, fade),
       ]);
     } catch (_) {
-      try {
-        await player.setVolume(base);
-      } catch (_) {}
     } finally {
+      try {
+        if (player.volume < base) await player.setVolume(base);
+      } catch (_) {}
       if (identical(_ghost, ghost)) await _killGhost();
       _crossfading = false;
+      crossfadingNow.value = false;
     }
   }
 
@@ -2723,6 +2748,147 @@ class GlassRimPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant GlassRimPainter old) =>
       old.strength != strength || old.tint != tint || old.radius != radius;
+}
+
+/// True while two songs are blending (shows the "Crossfading" tag).
+final ValueNotifier<bool> crossfadingNow = ValueNotifier<bool>(false);
+
+/// Animated "Crossfading" tag shown over the player while songs blend.
+class CrossfadeTag extends StatefulWidget {
+  const CrossfadeTag({super.key});
+
+  @override
+  State<CrossfadeTag> createState() => _CrossfadeTagState();
+}
+
+class _CrossfadeTagState extends State<CrossfadeTag>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _a = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1600),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    crossfadingNow.addListener(_sync);
+    _sync();
+  }
+
+  void _sync() {
+    if (crossfadingNow.value) {
+      if (!_a.isAnimating) _a.repeat();
+    } else {
+      // Let the tag finish fading out before the animation stops.
+      Future.delayed(const Duration(milliseconds: 1200), () {
+        if (mounted && !crossfadingNow.value) _a.stop();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    crossfadingNow.removeListener(_sync);
+    _a.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    return ValueListenableBuilder<bool>(
+      valueListenable: crossfadingNow,
+      builder: (context, on, _) {
+        return IgnorePointer(
+          child: AnimatedOpacity(
+            opacity: on ? 1 : 0,
+            duration: Duration(milliseconds: on ? 350 : 1100),
+            curve: Curves.easeOut,
+            child: AnimatedScale(
+              scale: on ? 1 : 0.85,
+              duration: Duration(milliseconds: on ? 450 : 1100),
+              curve: on ? Curves.easeOutBack : Curves.easeIn,
+              child: Material(
+                type: MaterialType.transparency,
+                child: AnimatedBuilder(
+                  animation: _a,
+                  builder: (context, _) {
+                    final t = _a.value;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(22),
+                        gradient: LinearGradient(
+                          begin: Alignment(-1 + 2 * t, -1),
+                          end: Alignment(1 + 2 * t, 1),
+                          colors: [
+                            pal.accent.withOpacity(0.85),
+                            Color.lerp(pal.accent, Colors.white, 0.45)!
+                                .withOpacity(0.9),
+                            pal.accent.withOpacity(0.85),
+                          ],
+                          tileMode: TileMode.mirror,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: pal.accent
+                                .withOpacity(0.35 + 0.2 * sin(t * 2 * pi)),
+                            blurRadius: 18,
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Two bars swapping heights: one song fading out,
+                          // the next fading in.
+                          SizedBox(
+                            width: 18,
+                            height: 16,
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                for (final h in [
+                                  0.5 + 0.5 * cos(t * 2 * pi),
+                                  0.5 + 0.5 * sin(t * 2 * pi),
+                                  0.5 - 0.5 * cos(t * 2 * pi),
+                                ])
+                                  Container(
+                                    width: 4,
+                                    height: 4 + 12 * h,
+                                    decoration: BoxDecoration(
+                                      color: pal.onAccent,
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Crossfading',
+                            style: TextStyle(
+                              color: pal.onAccent,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.3,
+                              decoration: TextDecoration.none,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
 /// True while the full-screen player is open: the glass bars underneath are
@@ -10388,7 +10554,20 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
             ),
           );
         },
-        child: HeroMode(enabled: !_dismissing, child: widget.child),
+        child: HeroMode(
+          enabled: !_dismissing,
+          child: Stack(
+            children: [
+              widget.child,
+              Positioned(
+                left: 0,
+                right: 0,
+                top: MediaQuery.of(context).padding.top + 64,
+                child: const Center(child: CrossfadeTag()),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
