@@ -15,6 +15,56 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : AudioServiceActivity() {
     private val channelName = "com.alexlmp.app/media"
 
+    // Launcher icons (activity-aliases in AndroidManifest.xml).
+    private val appIcons = listOf(
+        "classic", "midnight", "sunset", "aurora", "neon",
+        "mint", "ember", "gold", "ocean",
+    )
+
+    private fun iconAlias(key: String) = android.content.ComponentName(
+        packageName,
+        "com.alexlmp.app.Icon" + key.replaceFirstChar { it.uppercase() },
+    )
+
+    private fun currentAppIcon(): String {
+        val pm = packageManager
+        for (k in appIcons) {
+            if (k == "classic") continue
+            val st = pm.getComponentEnabledSetting(iconAlias(k))
+            if (st == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return k
+        }
+        return "classic"
+    }
+
+    /** Turns on the chosen icon, reopens the app through it, then turns the
+     *  others off. The music engine is shared, so playback keeps going. */
+    private fun switchAppIcon(key: String) {
+        val pm = packageManager
+        val on = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        val off = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        val keep = android.content.pm.PackageManager.DONT_KILL_APP
+        val target = iconAlias(key)
+        pm.setComponentEnabledSetting(target, on, keep)
+        val relaunch = android.content.Intent(android.content.Intent.ACTION_MAIN)
+            .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+            .setComponent(target)
+            .addFlags(
+                android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                    android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
+            )
+        startActivity(relaunch)
+        val app = applicationContext
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            for (k in appIcons) {
+                if (k != key) {
+                    try {
+                        app.packageManager.setComponentEnabledSetting(iconAlias(k), off, keep)
+                    } catch (_: Exception) {}
+                }
+            }
+        }, 900)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
@@ -53,6 +103,22 @@ class MainActivity : AudioServiceActivity() {
                             }
                         } else {
                             result.success(0)
+                        }
+                    }
+                    "getAppIcon" -> result.success(currentAppIcon())
+                    "setAppIcon" -> {
+                        val key = call.argument<String>("key") ?: "classic"
+                        if (key !in appIcons) {
+                            result.error("ICON", "Unknown icon: $key", null)
+                        } else {
+                            result.success(null)
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                try {
+                                    switchAppIcon(key)
+                                } catch (e: Exception) {
+                                    android.util.Log.e("AlexLMP", "setAppIcon failed", e)
+                                }
+                            }, 150)
                         }
                     }
                     "updateWidget" -> {
