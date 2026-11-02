@@ -13003,23 +13003,36 @@ class SettingsScreen extends StatelessWidget {
 
   static Widget _dropdown<T>(AppPalette pal, IconData icon, String title,
       String subtitle, T value, Map<T, String> options, ValueChanged<T> onChanged) {
+    // The menu sits under the description so long option names never squeeze
+    // the title into a thin column.
     return ListTile(
       leading: _lead(pal, icon),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(subtitle),
-      trailing: DropdownButton<T>(
-        value: value,
-        dropdownColor: pal.surface,
-        borderRadius: BorderRadius.circular(16),
-        underline: const SizedBox.shrink(),
-        style: TextStyle(color: pal.accent, fontWeight: FontWeight.w700),
-        items: [
-          for (final e in options.entries)
-            DropdownMenuItem<T>(value: e.key, child: Text(e.value)),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(subtitle),
+          DropdownButton<T>(
+            value: value,
+            isExpanded: true,
+            dropdownColor: pal.surface,
+            borderRadius: BorderRadius.circular(16),
+            underline: const SizedBox.shrink(),
+            style: TextStyle(
+                color: pal.accent, fontWeight: FontWeight.w700, fontSize: 15),
+            items: [
+              for (final e in options.entries)
+                DropdownMenuItem<T>(
+                  value: e.key,
+                  child: Text(e.value,
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+            ],
+            onChanged: (v) {
+              if (v != null) onChanged(v);
+            },
+          ),
         ],
-        onChanged: (v) {
-          if (v != null) onChanged(v);
-        },
       ),
     );
   }
@@ -15762,14 +15775,14 @@ class AmPlayerView extends StatelessWidget {
         pressedScale: 0.88,
         onTap: onTap,
         child: Container(
-          width: 46,
-          height: 46,
+          width: 38,
+          height: 38,
           decoration: BoxDecoration(
             color: filled ? Colors.white : Colors.white.withOpacity(0.2),
             shape: BoxShape.circle,
           ),
           child: Icon(icon,
-              size: 26, color: filled ? const Color(0xFF3A2A2E) : Colors.white),
+              size: 21, color: filled ? const Color(0xFF3A2A2E) : Colors.white),
         ),
       );
     }
@@ -15779,14 +15792,14 @@ class AmPlayerView extends StatelessWidget {
         pressedScale: 0.85,
         onTap: onTap,
         child: Container(
-          width: 56,
-          height: 44,
+          width: 48,
+          height: 38,
           decoration: BoxDecoration(
             color: on ? Colors.white.withOpacity(0.2) : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
           ),
           child: Icon(icon,
-              size: 28, color: on ? Colors.white : Colors.white.withOpacity(0.7)),
+              size: 23, color: on ? Colors.white : Colors.white.withOpacity(0.7)),
         ),
       );
     }
@@ -15865,7 +15878,7 @@ class AmPlayerView extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 23,
+                                fontSize: 20,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -15876,7 +15889,7 @@ class AmPlayerView extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 color: Colors.white.withOpacity(0.62),
-                                fontSize: 21,
+                                fontSize: 17,
                               ),
                             ),
                           ],
@@ -15909,10 +15922,10 @@ class AmPlayerView extends StatelessWidget {
                         pressedScale: 0.8,
                         onTap: audioHandler.skipToPrevious,
                         child: const SizedBox(
-                          width: 84,
-                          height: 84,
+                          width: 70,
+                          height: 70,
                           child: Icon(Icons.fast_rewind_rounded,
-                              color: Colors.white, size: 62),
+                              color: Colors.white, size: 46),
                         ),
                       ),
                       SquishyGesture(
@@ -15920,8 +15933,8 @@ class AmPlayerView extends StatelessWidget {
                         onTap: () =>
                             playing ? audioHandler.pause() : audioHandler.play(),
                         child: SizedBox(
-                          width: 118,
-                          height: 118,
+                          width: 90,
+                          height: 90,
                           child: loading
                               ? const Center(
                                   child: SizedBox(
@@ -15941,7 +15954,7 @@ class AmPlayerView extends StatelessWidget {
                                         : Icons.play_arrow_rounded,
                                     key: ValueKey(playing),
                                     color: Colors.white,
-                                    size: 76,
+                                    size: 60,
                                   ),
                                 ),
                         ),
@@ -15950,10 +15963,10 @@ class AmPlayerView extends StatelessWidget {
                         pressedScale: 0.8,
                         onTap: audioHandler.skipToNext,
                         child: const SizedBox(
-                          width: 84,
-                          height: 84,
+                          width: 70,
+                          height: 70,
                           child: Icon(Icons.fast_forward_rounded,
-                              color: Colors.white, size: 62),
+                              color: Colors.white, size: 46),
                         ),
                       ),
                     ],
@@ -16595,15 +16608,15 @@ class ModernPlayerView extends StatelessWidget {
           pressedScale: 0.9,
           onTap: onTap,
           child: Container(
-            width: 58,
-            height: 58,
+            width: 46,
+            height: 46,
             decoration: const BoxDecoration(color: surface, shape: BoxShape.circle),
-            child: Icon(icon, color: Colors.white, size: 28),
+            child: Icon(icon, color: Colors.white, size: 23),
           ),
         );
 
     Widget pill(Widget child, Color color, VoidCallback onTap,
-            {double radius = 46, double height = 98}) =>
+            {double radius = 36, double height = 72}) =>
         SquishyGesture(
           pressedScale: 0.94,
           onTap: onTap,
@@ -16627,13 +16640,13 @@ class ModernPlayerView extends StatelessWidget {
           onTap: onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
-            height: 70,
+            height: 50,
             decoration: BoxDecoration(
               color: on ? pal.accent : const Color(0xFF3A383C),
               borderRadius: radius,
             ),
             child: Icon(icon,
-                size: 28, color: on ? pal.onAccent : const Color(0xFFD8D5DA)),
+                size: 22, color: on ? pal.onAccent : const Color(0xFFD8D5DA)),
           ),
         ),
       );
@@ -16643,7 +16656,7 @@ class ModernPlayerView extends StatelessWidget {
       backgroundColor: const Color(0xFF141215),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 22),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -16652,7 +16665,7 @@ class ModernPlayerView extends StatelessWidget {
                 children: [
                   roundBtn(Icons.keyboard_arrow_down_rounded,
                       () => Navigator.of(context).pop()),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 12),
                   const Expanded(
                     child: Text(
                       'Now Playing',
@@ -16660,9 +16673,9 @@ class ModernPlayerView extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 28,
+                        fontSize: 21,
                         fontWeight: FontWeight.w600,
-                        letterSpacing: -0.4,
+                        letterSpacing: -0.3,
                       ),
                     ),
                   ),
@@ -16675,7 +16688,7 @@ class ModernPlayerView extends StatelessWidget {
               ),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 6),
                   child: Center(
                     child: AspectRatio(
                       aspectRatio: 1,
@@ -16688,7 +16701,7 @@ class ModernPlayerView extends StatelessWidget {
                           createRectTween: _arcTween,
                           flightShuttleBuilder: _artShuttle,
                           child: SwipeArtCarousel(
-                              track: track, playing: playing, radius: 34),
+                              track: track, playing: playing, radius: 26),
                         ),
                       ),
                     ),
@@ -16706,16 +16719,16 @@ class ModernPlayerView extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 30,
+                                fontSize: 22,
                                 fontWeight: FontWeight.w600,
-                                letterSpacing: -0.4)),
+                                letterSpacing: -0.3)),
                         const SizedBox(height: 2),
                         Text(track.artist,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                                 color: Colors.white.withOpacity(0.6),
-                                fontSize: 25,
+                                fontSize: 17,
                                 fontWeight: FontWeight.w500)),
                       ],
                     ),
@@ -16739,23 +16752,23 @@ class ModernPlayerView extends StatelessWidget {
                               : Icons.favorite_border_rounded,
                           key: ValueKey(liked),
                           color: liked ? pal.accent : Colors.white70,
-                          size: 40,
+                          size: 28,
                         ),
                       ),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 10),
               PlayerSeek(
                 fallbackSeconds: track.durationSeconds,
                 timeStyle: TextStyle(
                     color: Colors.white.withOpacity(0.72),
-                    fontSize: 18,
+                    fontSize: 13.5,
                     fontWeight: FontWeight.w500),
                 track: (v, dragging) => LayoutBuilder(builder: (_, k) {
                   final w = k.maxWidth;
-                  final thumb = dragging ? 30.0 : 26.0;
+                  final thumb = dragging ? 22.0 : 18.0;
                   final x = v * (w - thumb);
                   return Stack(
                     alignment: Alignment.centerLeft,
@@ -16803,7 +16816,7 @@ class ModernPlayerView extends StatelessWidget {
                   Expanded(
                     child: pill(
                         const Icon(Icons.fast_rewind_rounded,
-                            color: Colors.white, size: 40),
+                            color: Colors.white, size: 30),
                         surface,
                         audioHandler.skipToPrevious),
                   ),
@@ -16821,17 +16834,17 @@ class ModernPlayerView extends StatelessWidget {
                                   ? Icons.pause_rounded
                                   : Icons.play_arrow_rounded,
                               color: Colors.black,
-                              size: 54),
+                              size: 40),
                       const Color(0xFFF2F1F3),
                       () => playing ? audioHandler.pause() : audioHandler.play(),
-                      radius: playing ? 34 : 49,
+                      radius: playing ? 26 : 36,
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: pill(
                         const Icon(Icons.fast_forward_rounded,
-                            color: Colors.white, size: 40),
+                            color: Colors.white, size: 30),
                         surface,
                         audioHandler.skipToNext),
                   ),
@@ -16840,11 +16853,11 @@ class ModernPlayerView extends StatelessWidget {
               const SizedBox(height: 14),
               Center(
                 child: Container(
-                  width: 360,
-                  padding: const EdgeInsets.all(10),
+                  width: 280,
+                  padding: const EdgeInsets.all(7),
                   decoration: BoxDecoration(
                     color: const Color(0xFF2A282C),
-                    borderRadius: BorderRadius.circular(46),
+                    borderRadius: BorderRadius.circular(34),
                   ),
                   child: Row(
                     children: [
@@ -16854,8 +16867,8 @@ class ModernPlayerView extends StatelessWidget {
                             : AudioServiceShuffleMode.all);
                       },
                           radius: const BorderRadius.horizontal(
-                              left: Radius.circular(36),
-                              right: Radius.circular(10))),
+                              left: Radius.circular(26),
+                              right: Radius.circular(8))),
                       const SizedBox(width: 4),
                       segment(
                           repeat == AudioServiceRepeatMode.one
@@ -16868,8 +16881,8 @@ class ModernPlayerView extends StatelessWidget {
                       segment(Icons.more_horiz_rounded, false,
                           () => showAddToPlaylistSheet(context, track),
                           radius: const BorderRadius.horizontal(
-                              left: Radius.circular(10),
-                              right: Radius.circular(36))),
+                              left: Radius.circular(8),
+                              right: Radius.circular(26))),
                     ],
                   ),
                 ),
@@ -16953,20 +16966,20 @@ class ExpressivePlayerView extends StatelessWidget {
             pressedScale: 0.95,
             onTap: onTap,
             child: Container(
-              height: 64,
+              height: 50,
               decoration: BoxDecoration(
                 color: cs.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(18),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(icon, color: cs.onSurface, size: 26),
-                  const SizedBox(width: 10),
+                  Icon(icon, color: cs.onSurface, size: 21),
+                  const SizedBox(width: 8),
                   Text(label,
                       style: TextStyle(
                           color: cs.onSurface,
-                          fontSize: 18,
+                          fontSize: 15,
                           fontWeight: FontWeight.w500)),
                 ],
               ),
@@ -16988,7 +17001,7 @@ class ExpressivePlayerView extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
               GestureDetector(
                 onTap: () => Navigator.of(context).pop(),
                 child: Center(
@@ -16997,21 +17010,21 @@ class ExpressivePlayerView extends StatelessWidget {
                       Text('Now Playing',
                           style: TextStyle(
                               color: cs.onSurface,
-                              fontSize: 21,
-                              fontWeight: FontWeight.w500)),
-                      const SizedBox(height: 4),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
                       Text(source,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              color: cs.onSurfaceVariant, fontSize: 19)),
+                              color: cs.onSurfaceVariant, fontSize: 13.5)),
                     ],
                   ),
                 ),
               ),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
                   child: Center(
                     child: AspectRatio(
                       aspectRatio: 1,
@@ -17020,7 +17033,7 @@ class ExpressivePlayerView extends StatelessWidget {
                         createRectTween: _arcTween,
                         flightShuttleBuilder: _artShuttle,
                         child: SwipeArtCarousel(
-                            track: track, playing: playing, radius: 24),
+                            track: track, playing: playing, radius: 20),
                       ),
                     ),
                   ),
@@ -17037,55 +17050,55 @@ class ExpressivePlayerView extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                                 color: cs.onSurface,
-                                fontSize: 28,
+                                fontSize: 21,
                                 fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 6),
+                        const SizedBox(height: 2),
                         Text(track.artist,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                                 color: cs.onSurface.withOpacity(0.85),
-                                fontSize: 20)),
+                                fontSize: 15.5)),
                       ],
                     ),
                   ),
                   const SizedBox(width: 10),
-                  tonal(Icon(Icons.share_outlined, color: cs.onSurface, size: 26),
+                  tonal(Icon(Icons.share_outlined, color: cs.onSurface, size: 20),
                       cs.surfaceContainerHigh, () => shareTrack(track),
-                      w: 54, h: 54, r: 16),
-                  const SizedBox(width: 10),
+                      w: 44, h: 44, r: 14),
+                  const SizedBox(width: 8),
                   tonal(
                     Icon(
                         liked
                             ? Icons.favorite_rounded
                             : Icons.favorite_border_rounded,
                         color: liked ? light : cs.onSurface,
-                        size: 28),
+                        size: 22),
                     liked ? cs.primaryContainer : cs.surfaceContainerHigh,
                     () {
                       HapticFeedback.lightImpact();
                       appState.toggleLike(track.id);
                     },
-                    w: 54,
-                    h: 54,
-                    r: liked ? 27 : 16,
+                    w: 44,
+                    h: 44,
+                    r: liked ? 22 : 14,
                   ),
-                  const SizedBox(width: 10),
-                  tonal(Icon(Icons.more_horiz_rounded, color: cs.onSurface, size: 28),
+                  const SizedBox(width: 8),
+                  tonal(Icon(Icons.more_horiz_rounded, color: cs.onSurface, size: 22),
                       cs.surfaceContainerHigh,
                       () => showAddToPlaylistSheet(context, track),
-                      w: 54, h: 54, r: 16),
+                      w: 44, h: 44, r: 14),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
               PlayerSeek(
                 fallbackSeconds: track.durationSeconds,
-                height: 60,
-                timeStyle: TextStyle(color: cs.onSurface, fontSize: 16),
+                height: 40,
+                timeStyle: TextStyle(color: cs.onSurface, fontSize: 13),
                 track: (v, dragging) => LayoutBuilder(builder: (_, k) {
                   final w = k.maxWidth;
-                  const gap = 7.0;
-                  const handleW = 5.0;
+                  const gap = 5.0;
+                  const handleW = 4.0;
                   final x = v * (w - handleW);
                   return Stack(
                     alignment: Alignment.centerLeft,
@@ -17095,11 +17108,11 @@ class ExpressivePlayerView extends StatelessWidget {
                           left: 0,
                           width: x - gap,
                           child: Container(
-                            height: 18,
+                            height: 12,
                             decoration: BoxDecoration(
                               color: light,
                               borderRadius: BorderRadius.horizontal(
-                                left: const Radius.circular(9),
+                                left: const Radius.circular(6),
                                 right: Radius.circular(dragging ? 3 : 4),
                               ),
                             ),
@@ -17110,19 +17123,19 @@ class ExpressivePlayerView extends StatelessWidget {
                           left: x + handleW + gap,
                           right: 0,
                           child: Container(
-                            height: 18,
+                            height: 12,
                             decoration: BoxDecoration(
                               color: cs.surfaceContainerHighest,
                               borderRadius: const BorderRadius.horizontal(
                                 left: Radius.circular(4),
-                                right: Radius.circular(9),
+                                right: Radius.circular(6),
                               ),
                             ),
                             alignment: Alignment.centerRight,
-                            padding: const EdgeInsets.only(right: 6),
+                            padding: const EdgeInsets.only(right: 4),
                             child: Container(
-                              width: 6,
-                              height: 6,
+                              width: 4,
+                              height: 4,
                               decoration: BoxDecoration(
                                   color: light, shape: BoxShape.circle),
                             ),
@@ -17133,7 +17146,7 @@ class ExpressivePlayerView extends StatelessWidget {
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
                           width: dragging ? 3 : handleW,
-                          height: 56,
+                          height: 36,
                           decoration: BoxDecoration(
                             color: light,
                             borderRadius: BorderRadius.circular(3),
@@ -17144,23 +17157,23 @@ class ExpressivePlayerView extends StatelessWidget {
                   );
                 }),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
                   color: cs.surfaceContainer,
-                  borderRadius: BorderRadius.circular(40),
+                  borderRadius: BorderRadius.circular(30),
                 ),
                 child: Row(
                   children: [
                     Expanded(
                       child: tonal(
                           Icon(Icons.fast_rewind_rounded,
-                              color: cs.onPrimaryContainer, size: 34),
+                              color: cs.onPrimaryContainer, size: 27),
                           cs.primaryContainer,
                           audioHandler.skipToPrevious,
-                          h: 74,
-                          r: 30),
+                          h: 56,
+                          r: 24),
                     ),
                     const SizedBox(width: 8),
                     tonal(
@@ -17175,39 +17188,40 @@ class ExpressivePlayerView extends StatelessWidget {
                                   ? Icons.pause_rounded
                                   : Icons.play_arrow_rounded,
                               color: Colors.black,
-                              size: 50),
+                              size: 38),
                       light,
                       () => playing ? audioHandler.pause() : audioHandler.play(),
-                      w: 118,
-                      h: 92,
-                      r: playing ? 28 : 46,
+                      w: 92,
+                      h: 70,
+                      r: playing ? 22 : 35,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: tonal(
                           Icon(Icons.fast_forward_rounded,
-                              color: cs.onPrimaryContainer, size: 34),
+                              color: cs.onPrimaryContainer, size: 27),
                           cs.primaryContainer,
                           audioHandler.skipToNext,
-                          h: 74,
-                          r: 30),
+                          h: 56,
+                          r: 24),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   tonal(
                       Icon(Icons.shuffle_rounded,
+                          size: 20,
                           color: shuffle ? cs.onPrimary : cs.onSurfaceVariant),
                       shuffle ? cs.primary : cs.surfaceContainerHigh, () {
                     audioHandler.setShuffleMode(shuffle
                         ? AudioServiceShuffleMode.none
                         : AudioServiceShuffleMode.all);
-                  }, w: 52, h: 52, r: 26),
-                  const SizedBox(width: 16),
+                  }, w: 42, h: 42, r: 21),
+                  const SizedBox(width: 12),
                   tonal(
                       Icon(
                           repeat == AudioServiceRepeatMode.one
@@ -17220,12 +17234,12 @@ class ExpressivePlayerView extends StatelessWidget {
                           ? cs.primary
                           : cs.surfaceContainerHigh,
                       () => audioHandler.setRepeatMode(_nextRepeat(repeat)),
-                      w: 52,
-                      h: 52,
-                      r: 26),
+                      w: 42,
+                      h: 42,
+                      r: 21),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   bottomPill(Icons.format_list_bulleted_rounded, 'Queue',
@@ -17235,12 +17249,13 @@ class ExpressivePlayerView extends StatelessWidget {
                     valueListenable: audioHandler.sleepLabel,
                     builder: (_, label, __) => tonal(
                         Icon(Icons.bedtime_outlined,
+                            size: 21,
                             color: label != null ? cs.onPrimary : cs.onSurface),
                         label != null ? cs.primary : cs.surfaceContainerHigh,
                         () => showSleepTimerSheet(context),
-                        w: 64,
-                        h: 64,
-                        r: 32),
+                        w: 50,
+                        h: 50,
+                        r: 25),
                   ),
                   const SizedBox(width: 12),
                   bottomPill(Icons.lyrics_outlined, 'Lyrics',
