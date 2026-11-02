@@ -37,6 +37,9 @@ import org.schabi.newpipe.extractor.stream.DeliveryMethod
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import java.io.BufferedInputStream
+import java.io.File
+import java.io.RandomAccessFile
+import java.util.concurrent.atomic.AtomicInteger
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -189,6 +192,9 @@ object YtMusicBridge {
                         require(VIDEO_ID.matches(videoId)) { "Bad videoId" }
                         resolve(videoId, force = refresh)
                         val port = Proxy.ensureStarted()
+                        // Download the whole song in the background so playback never
+                        // depends on fetching the last part at the last moment.
+                        Proxy.prefetch(videoId, restartIfFailed = refresh)
                         main.post { result.success("http://127.0.0.1:$port/yt/$videoId") }
                     } catch (e: Throwable) {
                         main.post { result.error("YT_PREPARE", describe(e), null) }
@@ -614,7 +620,9 @@ object YtMusicBridge {
                     if (method != "GET" && method != "HEAD") {
                         writeStatus(out, 405, "Method Not Allowed"); return
                     }
-                    stream(videoId, rangeHeader, method == "HEAD", out)
+                    if (!serveCached(videoId, rangeHeader, method == "HEAD", out)) {
+                        stream(videoId, rangeHeader, method == "HEAD", out)
+                    }
                 } catch (_: ClientGone) {
                     // Player closed the connection (seek, skip, stop) — normal.
                 } catch (_: Throwable) {
@@ -665,7 +673,19 @@ object YtMusicBridge {
             head.append("Connection: close\r\n\r\n")
             writeRaw(out, head.toString())
             if (headOnly) { first.conn.disconnect(); return }
+            pipeUpstream(videoId, res, start, end, first, out)
+        }
 
+        /** Streams bytes [start, end] straight from YouTube in range chunks. */
+        private fun pipeUpstream(
+            videoId: String,
+            initial: Resolved,
+            start: Long,
+            end: Long,
+            first: Chunk?,
+            out: OutputStream,
+        ) {
+            var res = initial
             var pos = start
             var pending: Chunk? = first
             var emptyStreak = 0
@@ -720,6 +740,251 @@ object YtMusicBridge {
                 }
             }
             try { out.flush() } catch (_: IOException) {}
+        }
+
+        // ── Full-song download cache ────────────────────────────────────────
+        //
+        // Each prepared song is downloaded to a temp file from start to finish in
+        // the background (with retries + fresh links). The player reads from that
+        // file, so the end of a song never depends on a last-second request to
+        // YouTube. Far seeks into a part that isn't downloaded yet fall back to
+        // streaming directly.
+
+        private const val DL_CHUNK = 512L * 1024
+        private const val FAR_AHEAD = 3L * 1024 * 1024
+
+        private class Download(val videoId: String, val file: File) {
+            val lock = Object()
+            @Volatile var total = -1L
+            @Volatile var mime = "audio/mp4"
+            @Volatile var downloaded = 0L
+            @Volatile var done = false
+            @Volatile var failed: Throwable? = null
+            val users = AtomicInteger(0)
+            @Volatile var lastUsed = System.currentTimeMillis()
+        }
+
+        private val downloads = LinkedHashMap<String, Download>()
+        @Volatile private var cacheCleared = false
+
+        private fun cacheDir(): File? {
+            val ctx = appContext ?: return null
+            val d = File(ctx.cacheDir, "yt_audio")
+            if (!d.exists()) d.mkdirs()
+            return d
+        }
+
+        fun prefetch(videoId: String, restartIfFailed: Boolean) {
+            obtain(videoId, restartIfFailed)
+        }
+
+        private fun obtain(videoId: String, restartIfFailed: Boolean = false): Download? {
+            val dir = cacheDir() ?: return null
+            synchronized(downloads) {
+                if (!cacheCleared) {
+                    cacheCleared = true
+                    dir.listFiles()?.forEach { it.delete() }
+                }
+                val existing = downloads[videoId]
+                if (existing != null) {
+                    if (!(restartIfFailed && existing.failed != null)) {
+                        existing.lastUsed = System.currentTimeMillis()
+                        return existing
+                    }
+                    downloads.remove(videoId)
+                    if (existing.users.get() == 0) existing.file.delete()
+                }
+                // Keep the cache small: drop the least recently used idle songs.
+                while (downloads.size >= 6) {
+                    val victim = downloads.values
+                        .filter { it.users.get() == 0 }
+                        .minByOrNull { it.lastUsed } ?: break
+                    downloads.remove(victim.videoId)
+                    victim.file.delete()
+                }
+                val d = Download(videoId, File(dir, "$videoId.${System.nanoTime()}.part"))
+                downloads[videoId] = d
+                workers.execute { runDownload(d) }
+                return d
+            }
+        }
+
+        private fun runDownload(d: Download) {
+            try {
+                var res = resolve(d.videoId, force = false)
+                d.mime = res.mimeType
+                RandomAccessFile(d.file, "rw").use { raf ->
+                    val buf = ByteArray(64 * 1024)
+                    var pos = 0L
+                    var fails = 0
+                    while (d.total < 0 || pos < d.total) {
+                        val to = if (d.total > 0) minOf(d.total - 1, pos + DL_CHUNK - 1)
+                        else pos + DL_CHUNK - 1
+                        var got = 0L
+                        var reachedEnd = false
+                        try {
+                            val c = openChunk(d.videoId, res, pos, to)
+                            res = c.resolved
+                            if (c.status == 416) {
+                                c.conn.disconnect()
+                                if (d.total < 0) d.total = pos
+                                reachedEnd = true
+                            } else {
+                                // YouTube's own size (Content-Range) is the source of truth.
+                                val upstreamTotal = when {
+                                    c.total > 0 -> c.total
+                                    c.status == 200 -> c.conn.contentLengthLong
+                                    else -> -1L
+                                }
+                                if (upstreamTotal > 0) {
+                                    synchronized(d.lock) {
+                                        d.total = upstreamTotal
+                                        d.lock.notifyAll()
+                                    }
+                                }
+                                try {
+                                    c.conn.inputStream.use { ins ->
+                                        if (c.status == 200 && pos > 0) {
+                                            var toSkip = pos
+                                            while (toSkip > 0) {
+                                                val sk = ins.skip(toSkip)
+                                                if (sk <= 0) break
+                                                toSkip -= sk
+                                            }
+                                        }
+                                        raf.seek(pos)
+                                        while (true) {
+                                            val n = ins.read(buf)
+                                            if (n < 0) break
+                                            raf.write(buf, 0, n)
+                                            pos += n
+                                            got += n
+                                            synchronized(d.lock) {
+                                                d.downloaded = pos
+                                                d.lock.notifyAll()
+                                            }
+                                            if (d.total > 0 && pos >= d.total) break
+                                            if (pos > to) break
+                                        }
+                                    }
+                                } finally {
+                                    c.conn.disconnect()
+                                }
+                            }
+                        } catch (_: IOException) {
+                            // handled below as a failed attempt
+                        }
+                        if (reachedEnd) break
+                        if (got == 0L) {
+                            fails++
+                            if (fails > 10) throw IOException("Download stalled at $pos/${d.total}")
+                            try { Thread.sleep(minOf(4000L, 300L * fails)) } catch (_: InterruptedException) {}
+                            if (fails % 3 == 0) {
+                                try { res = resolve(d.videoId, force = true) } catch (_: Throwable) {}
+                            }
+                        } else {
+                            fails = 0
+                        }
+                    }
+                }
+                d.done = true
+            } catch (e: Throwable) {
+                d.failed = e
+            } finally {
+                synchronized(d.lock) { d.lock.notifyAll() }
+            }
+        }
+
+        /** Serves a request from the download cache. Returns false to fall back. */
+        private fun serveCached(
+            videoId: String,
+            rangeHeader: String?,
+            headOnly: Boolean,
+            out: OutputStream,
+        ): Boolean {
+            val d = obtain(videoId) ?: return false
+            d.users.incrementAndGet()
+            try {
+                synchronized(d.lock) {
+                    val deadline = System.currentTimeMillis() + 20_000
+                    while (d.total <= 0 && d.failed == null && !d.done &&
+                        System.currentTimeMillis() < deadline
+                    ) {
+                        d.lock.wait(500)
+                    }
+                }
+                val total = d.total
+                if (total <= 0) return false
+
+                var start = 0L
+                var requestedEnd = -1L
+                if (rangeHeader != null) {
+                    val m = Regex("bytes=(\\d*)-(\\d*)").find(rangeHeader)
+                    if (m != null) {
+                        start = m.groupValues[1].toLongOrNull() ?: 0L
+                        requestedEnd = m.groupValues[2].toLongOrNull() ?: -1L
+                    }
+                }
+                if (start >= total) {
+                    writeRaw(out, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */$total\r\nConnection: close\r\n\r\n")
+                    return true
+                }
+                // A far seek into a part that isn't downloaded yet: stream it directly.
+                if (!d.done && start > d.downloaded + FAR_AHEAD) return false
+                val end = if (requestedEnd in 0 until total) requestedEnd else total - 1
+
+                val head = StringBuilder()
+                if (rangeHeader != null) {
+                    head.append("HTTP/1.1 206 Partial Content\r\n")
+                    head.append("Content-Range: bytes $start-$end/$total\r\n")
+                    head.append("Content-Length: ${end - start + 1}\r\n")
+                } else {
+                    head.append("HTTP/1.1 200 OK\r\n")
+                    head.append("Content-Length: ${total - start}\r\n")
+                }
+                head.append("Content-Type: ${d.mime}\r\n")
+                head.append("Accept-Ranges: bytes\r\n")
+                head.append("Connection: close\r\n\r\n")
+                writeRaw(out, head.toString())
+                if (headOnly) return true
+
+                RandomAccessFile(d.file, "r").use { raf ->
+                    val buf = ByteArray(64 * 1024)
+                    var pos = start
+                    while (pos <= end) {
+                        var avail: Long
+                        synchronized(d.lock) {
+                            while (d.downloaded <= pos && d.failed == null && !d.done) {
+                                d.lock.wait(1000)
+                            }
+                            avail = d.downloaded
+                        }
+                        if (avail <= pos) {
+                            // The download gave up: fetch the rest straight from YouTube.
+                            pipeUpstream(videoId, resolve(videoId, force = true), pos, end, null, out)
+                            return true
+                        }
+                        val upto = minOf(end, avail - 1)
+                        raf.seek(pos)
+                        while (pos <= upto) {
+                            val want = minOf(buf.size.toLong(), upto - pos + 1).toInt()
+                            val n = raf.read(buf, 0, want)
+                            if (n <= 0) break
+                            try {
+                                out.write(buf, 0, n)
+                            } catch (e: IOException) {
+                                throw ClientGone()
+                            }
+                            pos += n
+                        }
+                    }
+                }
+                try { out.flush() } catch (_: IOException) {}
+                return true
+            } finally {
+                d.users.decrementAndGet()
+                d.lastUsed = System.currentTimeMillis()
+            }
         }
 
         private class Chunk(
