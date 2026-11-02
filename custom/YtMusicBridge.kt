@@ -165,6 +165,10 @@ object YtMusicBridge {
                 val auth = call.argument<Boolean>("auth") ?: true
                 runAsync(result, "YT_PLAYLIST") { Account.playlistTracks(id, auth) }
             }
+            "ytAlbumPage" -> {
+                val ref = call.argument<String>("ref") ?: ""
+                runAsync(result, "YT_ALBUM") { Account.albumPage(ref) }
+            }
             "ytTrackLinks" -> {
                 val id = call.argument<String>("videoId") ?: ""
                 runAsync(result, "YT_LINKS") { Account.trackLinks(id) }
@@ -1403,6 +1407,108 @@ object Account {
         )
     }
 
+    // ── Album pages (public, no sign-in needed) ────────────────────────────
+
+    /** Finds an album's MPREb_ browse id from its OLAK playlist id (same trick ytmusicapi uses). */
+    private fun albumBrowseId(listId: String): String? {
+        val conn = URL("$YTM/playlist?list=$listId").openConnection() as HttpURLConnection
+        try {
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 20_000
+            conn.setRequestProperty("User-Agent", DESKTOP_UA)
+            conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+            conn.setRequestProperty("Cookie", "SOCS=CAI") // skip the EU consent page
+            if (conn.responseCode != 200) return null
+            val html = conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            return Regex("MPREb_[A-Za-z0-9_-]+").find(html)?.value
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    fun albumPage(ref: String): Map<String, Any?> {
+        val albumBrowse = if (ref.startsWith("MPREb_")) ref else {
+            val list = Regex("[?&]list=([A-Za-z0-9_-]+)").find(ref)?.groupValues?.get(1)
+                ?: ref.takeIf { it.startsWith("OLAK") }
+                ?: throw IOException("Not an album link")
+            albumBrowseId(list) ?: throw IOException("Couldn't find the album page")
+        }
+        val r = call("browse", JSONObject().put("browseId", albumBrowse), auth = false)
+        val header = all(r, "musicResponsiveHeaderRenderer").firstOrNull()
+            ?: all(r, "musicDetailHeaderRenderer").firstOrNull()
+        val title = text(header?.optJSONObject("title"))
+        val subtitle = text(header?.optJSONObject("subtitle"))          // e.g. "Album • 2021"
+        val second = text(header?.optJSONObject("secondSubtitle"))      // e.g. "12 songs • 41 minutes"
+        var artist = text(header?.optJSONObject("straplineTextOne"))
+        var artistId: String? = header?.optJSONObject("straplineTextOne")?.optJSONArray("runs")
+            ?.optJSONObject(0)?.let { browseId(it) }
+        if (artist.isEmpty()) {
+            val runs = header?.optJSONObject("subtitle")?.optJSONArray("runs")
+            if (runs != null) for (i in 0 until runs.length()) {
+                val run = runs.optJSONObject(i)
+                if (pageType(run) == "MUSIC_PAGE_TYPE_ARTIST") {
+                    artist = run?.optString("text") ?: ""
+                    artistId = browseId(run)
+                    break
+                }
+            }
+        }
+        val description = all(header, "musicDescriptionShelfRenderer").firstOrNull()
+            ?.let { text(it.optJSONObject("description")) }
+            ?: text(header?.optJSONObject("description")).ifEmpty { null }
+        val cover = lastThumb(header?.optJSONObject("thumbnail"))
+        val year = Regex("\\b(19|20)\\d{2}\\b").find(subtitle)?.value
+        val kind = subtitle.split(" • ").firstOrNull()?.trim()?.ifEmpty { null }
+
+        // Track list: the album's own shelf.
+        val shelf: Any = all(r, "musicShelfRenderer").firstOrNull() ?: r
+        val tracks = ArrayList<Map<String, Any?>>()
+        val seen = HashSet<String>()
+        for (item in all(shelf, "musicResponsiveListItemRenderer")) {
+            val song = parseSong(item) ?: continue
+            if (!seen.add(song["videoId"] as String)) continue
+            val m = HashMap(song)
+            if ((m["artist"] as? String).isNullOrEmpty()) m["artist"] = artist
+            if (m["thumbnail"] == null) m["thumbnail"] = cover
+            m["album"] = title
+            tracks.add(m)
+        }
+
+        // "More by artist" / "Other versions" carousels.
+        val shelves = ArrayList<Map<String, Any?>>()
+        for (c in all(r, "musicCarouselShelfRenderer")) {
+            val shelfTitle = all(c, "musicCarouselShelfBasicHeaderRenderer").firstOrNull()
+                ?.let { text(it.optJSONObject("title")) } ?: ""
+            val items = ArrayList<Map<String, Any?>>()
+            for (t in all(c, "musicTwoRowItemRenderer")) {
+                val id = t.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
+                    ?.optString("browseId") ?: continue
+                if (!id.startsWith("MPREb_")) continue
+                items.add(mapOf(
+                    "url" to id,
+                    "title" to text(t.optJSONObject("title")),
+                    "artist" to text(t.optJSONObject("subtitle")),
+                    "thumbnail" to lastThumb(t.optJSONObject("thumbnailRenderer")),
+                    "trackCount" to -1,
+                ))
+            }
+            if (items.isNotEmpty()) shelves.add(mapOf("title" to shelfTitle, "items" to items))
+        }
+
+        return mapOf(
+            "title" to title,
+            "artist" to artist,
+            "artistUrl" to artistId?.let { "https://www.youtube.com/channel/$it" },
+            "thumbnail" to cover,
+            "year" to year,
+            "kind" to kind,
+            "info" to second.ifEmpty { null },
+            "description" to description,
+            "tracks" to tracks,
+            "shelves" to shelves,
+        )
+    }
+
     /** Artist + album for a song (used by "Go to artist" / "Go to album"). */
     fun trackLinks(videoId: String): Map<String, Any?> {
         val r = call(
@@ -1451,6 +1557,7 @@ object Account {
             "artistUrl" to artistId?.let { "https://www.youtube.com/channel/$it" },
             "artistName" to artistName,
             "albumUrl" to albumPlaylist?.let { "https://www.youtube.com/playlist?list=$it" },
+            "albumBrowseId" to albumId,
             "albumTitle" to albumTitle,
             "albumThumbnail" to albumThumb,
         )
