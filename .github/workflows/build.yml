@@ -181,13 +181,30 @@ jobs:
                   applicationId = "com.alexlmp.app"
                   minSdk = 24
                   targetSdk = 35
-                  versionCode = 2
-                  versionName = "2.0.0"
+                  // Filled in by the workflow: build number + kAppVersion from main.dart.
+                  versionCode = (System.getenv("VERSION_CODE") ?: "2").toInteger()
+                  versionName = System.getenv("VERSION_NAME") ?: "2.0.0"
+              }
+
+              // One permanent key (from GitHub secrets) so every update installs
+              // over the last one and Play Protect learns to recognise the app.
+              signingConfigs {
+                  release {
+                      def ks = file("release.jks")
+                      if (ks.exists()) {
+                          storeFile = ks
+                          storePassword = System.getenv("KEYSTORE_PASSWORD")
+                          keyAlias = System.getenv("KEY_ALIAS")
+                          keyPassword = System.getenv("KEY_PASSWORD")
+                      }
+                  }
               }
 
               buildTypes {
                   release {
-                      signingConfig = signingConfigs.debug
+                      signingConfig = file("release.jks").exists()
+                          ? signingConfigs.release
+                          : signingConfigs.debug
                       minifyEnabled = false
                       shrinkResources = false
                   }
@@ -204,8 +221,27 @@ jobs:
           }
           EOF
 
+      - name: Set up signing key and version
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > app_build/android/app/release.jks
+            echo "Signing with the permanent release key."
+          else
+            echo "::warning::KEYSTORE_BASE64 secret not set - signing with a throwaway debug key. Updates won't install over older versions."
+          fi
+          VERSION_NAME=$(grep -oP "kAppVersion = '\K[^']+" custom/main.dart || echo "2.0.0")
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$((100 + ${{ github.run_number }}))" >> "$GITHUB_ENV"
+          echo "Building version $VERSION_NAME"
+
       - name: Build APK
         working-directory: app_build
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: alexlmp
         run: |
           flutter pub get
           flutter build apk --release
