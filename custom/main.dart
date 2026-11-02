@@ -3295,6 +3295,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     if (appState.b('auto_scan', true)) await scanDeviceAudio();
     await audioHandler.restoreLastSession();
     applyNativeSettings();
+    if (mounted) checkForUpdates(context);
   }
 
   @override
@@ -13425,6 +13426,13 @@ class SettingsScreen extends StatelessWidget {
           !appState.b('setup_done'),
           (v) => appState.setB('setup_done', !v),
         ),
+        _tile(pal, Icons.system_update_rounded, 'Check for updates',
+            'You have AlexLMP $kAppVersion',
+            () => checkForUpdates(context, manual: true)),
+        _flag(pal, Icons.notifications_active_rounded, 'update_check',
+            'Update notifications',
+            'Tell me when a new version is released on GitHub',
+            def: true),
         _tile(pal, Icons.restart_alt_rounded, 'Reset settings',
             'Put every option on this page back to default (keeps your music, likes & playlists)',
             () async {
@@ -17958,6 +17966,191 @@ class _SetupScreenState extends State<SetupScreen> {
       ),
     );
   }
+}
+
+// ═══════════════════════ Update checker (GitHub Releases) ═══════════════════
+// On launch (at most every 6 hours) the app asks GitHub for the latest
+// release. If its tag is newer than kAppVersion it shows a dialog with the
+// release notes and posts an Android notification; "Download" opens the APK.
+//
+// When you publish a release: bump kAppVersion here to the SAME number as the
+// release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
+
+const String kAppVersion = '2.2.0';
+const String kGithubRepo = 'YOUR-GITHUB-NAME/YOUR-REPO-NAME';
+
+class AppRelease {
+  final String version;
+  final String title;
+  final String notes;
+  final String pageUrl;
+  final String? apkUrl;
+  const AppRelease(this.version, this.title, this.notes, this.pageUrl, this.apkUrl);
+  String get downloadUrl => apkUrl ?? pageUrl;
+}
+
+/// Compares "2.10.1" style versions (a leading "v" and any "-beta" are ignored).
+int compareVersions(String a, String b) {
+  List<int> parts(String v) => v
+      .trim()
+      .replaceFirst(RegExp(r'^[vV]'), '')
+      .split(RegExp(r'[-+ ]'))
+      .first
+      .split('.')
+      .map((x) => int.tryParse(x) ?? 0)
+      .toList();
+  final pa = parts(a), pb = parts(b);
+  for (var i = 0; i < max(pa.length, pb.length); i++) {
+    final x = i < pa.length ? pa[i] : 0;
+    final y = i < pb.length ? pb[i] : 0;
+    if (x != y) return x.compareTo(y);
+  }
+  return 0;
+}
+
+Future<AppRelease> fetchLatestRelease() async {
+  if (kGithubRepo.startsWith('YOUR-')) {
+    throw Exception('kGithubRepo is not set in main.dart');
+  }
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+  try {
+    final req = await client
+        .getUrl(Uri.parse('https://api.github.com/repos/$kGithubRepo/releases/latest'));
+    req.headers.set('User-Agent', 'AlexLMP/$kAppVersion');
+    req.headers.set('Accept', 'application/vnd.github+json');
+    final res = await req.close();
+    final body = await utf8.decoder.bind(res).join();
+    if (res.statusCode != 200) {
+      throw Exception('GitHub answered ${res.statusCode}: $body');
+    }
+    final m = Map<String, dynamic>.from(jsonDecode(body) as Map);
+    final tag = (m['tag_name'] ?? '').toString();
+    String? apk;
+    for (final a in (m['assets'] as List? ?? const [])) {
+      final am = Map<String, dynamic>.from(a as Map);
+      final name = (am['name'] ?? '').toString().toLowerCase();
+      if (name.endsWith('.apk')) {
+        apk = (am['browser_download_url'] ?? '').toString();
+        break;
+      }
+    }
+    return AppRelease(
+      tag.replaceFirst(RegExp(r'^[vV]'), ''),
+      (m['name'] ?? tag).toString(),
+      (m['body'] ?? '').toString(),
+      (m['html_url'] ?? 'https://github.com/$kGithubRepo/releases').toString(),
+      apk,
+    );
+  } finally {
+    client.close();
+  }
+}
+
+Future<void> openExternalUrl(String url) async {
+  try {
+    await _mediaChannel.invokeMethod('openUrl', {'url': url});
+  } catch (e) {
+    await Clipboard.setData(ClipboardData(text: url));
+    appNotice.value = 'Couldn\'t open the link, so it was copied instead. ($e)';
+  }
+}
+
+/// Markdown -> readable plain text for the dialog.
+String _plainNotes(String md) => md
+    .replaceAll(RegExp(r'^#{1,6}\s*', multiLine: true), '')
+    .replaceAll('**', '')
+    .replaceAll('`', '')
+    .replaceAll(RegExp(r'^\s*[-*]\s+', multiLine: true), '•  ')
+    .replaceAll(RegExp(r'^-{3,}\s*$', multiLine: true), '')
+    .trim();
+
+/// Checks for a newer release. [manual] = the user tapped "Check for updates"
+/// (always checks, and also reports "you're up to date" / errors).
+Future<void> checkForUpdates(BuildContext context, {bool manual = false}) async {
+  final prefs = YouTubeMusic.prefs;
+  if (!manual) {
+    if (!appState.b('update_check', true)) return;
+    final last = prefs?.getInt('update_last_check') ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - last < const Duration(hours: 6).inMilliseconds) return;
+    await prefs?.setInt('update_last_check', now);
+  }
+  AppRelease rel;
+  try {
+    rel = await fetchLatestRelease();
+  } catch (e) {
+    if (manual) appNotice.value = 'Update check failed: $e';
+    return;
+  }
+  final newer = compareVersions(rel.version, kAppVersion) > 0;
+  if (!newer) {
+    if (manual) appNotice.value = 'You\'re up to date (AlexLMP $kAppVersion).';
+    return;
+  }
+  if (!manual && prefs?.getString('update_skip') == rel.version) return;
+
+  // System notification (stays in the shade until tapped).
+  try {
+    await _mediaChannel.invokeMethod('showUpdateNotification', {
+      'title': 'AlexLMP ${rel.version} is available',
+      'text': 'Tap to download the update.',
+      'url': rel.downloadUrl,
+    });
+  } catch (_) {}
+
+  if (!context.mounted) return;
+  final pal = appState.palette;
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      icon: Icon(Icons.system_update_rounded, color: pal.accent, size: 34),
+      title: Text('Update available'),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.5),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(rel.title,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 17)),
+              const SizedBox(height: 4),
+              Text('You have $kAppVersion  →  new ${rel.version}',
+                  style: const TextStyle(color: Colors.white60)),
+              if (rel.notes.trim().isNotEmpty) ...[
+                const SizedBox(height: 14),
+                SelectableText(_plainNotes(rel.notes),
+                    style: const TextStyle(height: 1.4)),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            prefs?.setString('update_skip', rel.version);
+            Navigator.pop(ctx);
+          },
+          child: const Text('Skip this version'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Later'),
+        ),
+        FilledButton.icon(
+          onPressed: () {
+            Navigator.pop(ctx);
+            openExternalUrl(rel.downloadUrl);
+          },
+          icon: const Icon(Icons.download_rounded),
+          label: const Text('Download'),
+        ),
+      ],
+    ),
+  );
 }
 
 /// Soft pulsing placeholder shapes shown while content loads.
