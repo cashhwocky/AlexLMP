@@ -9,7 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  just_audio: ^0.9.40
+  # Pinned: newer versions turn on Android "audio offload", which ignores pitch.
+  just_audio: 0.9.42
   audio_session: ^0.1.21
   audio_service: ^0.18.15
   file_picker: ^8.1.2
