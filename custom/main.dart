@@ -19004,62 +19004,93 @@ class ExpressivePlayerView extends StatelessWidget {
   }
 }
 
-// ═══════════════════════ First-run setup screen ═══════════════════════
-// Permissions → YouTube Music sign-in (optional) → pick your look.
-// Shown until finished; can be turned back on in Settings.
+// ═══════════════════════ First-run setup ═══════════════════════
+// AlexLMP's own onboarding: an animated welcome, permissions, an optional
+// YouTube Music sign-in, "make it yours" (crossfade first), then a finish
+// screen. Pure black with slowly drifting colour, segmented progress bar
+// at the top, cards that slide in one after another.
 
-class CookieBadge extends StatelessWidget {
-  final IconData icon;
+/// Animated AlexLMP mark: equalizer bars that bounce inside a glowing ring.
+class AlexLogo extends StatefulWidget {
   final double size;
   final Color color;
-  final Color iconColor;
-  const CookieBadge({
-    super.key,
-    required this.icon,
-    required this.color,
-    required this.iconColor,
-    this.size = 116,
-  });
+  const AlexLogo({super.key, this.size = 120, required this.color});
+
+  @override
+  State<AlexLogo> createState() => _AlexLogoState();
+}
+
+class _AlexLogoState extends State<AlexLogo>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(
-        painter: _CookiePainter(color),
-        child: Icon(icon, color: iconColor, size: size * 0.36),
-      ),
+    final s = widget.size;
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, _) {
+        final t = _c.value * 2 * pi;
+        return Container(
+          width: s,
+          height: s,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: SweepGradient(
+              transform: GradientRotation(t / 2),
+              colors: [
+                widget.color,
+                Color.lerp(widget.color, Colors.white, 0.5)!,
+                widget.color.withOpacity(0.4),
+                widget.color,
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: widget.color.withOpacity(0.35 + 0.15 * sin(t)),
+                blurRadius: 40,
+                spreadRadius: 2,
+              ),
+            ],
+          ),
+          padding: EdgeInsets.all(s * 0.045),
+          child: Container(
+            decoration: const BoxDecoration(
+              color: Colors.black,
+              shape: BoxShape.circle,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                for (var i = 0; i < 5; i++)
+                  Container(
+                    margin: EdgeInsets.symmetric(horizontal: s * 0.025),
+                    width: s * 0.06,
+                    height: s *
+                        (0.14 + 0.24 * (0.5 + 0.5 * sin(t + i * 1.1)).abs()),
+                    decoration: BoxDecoration(
+                      color: Color.lerp(
+                          widget.color, Colors.white, 0.15 * (i % 2)),
+                      borderRadius: BorderRadius.circular(s),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
-}
-
-class _CookiePainter extends CustomPainter {
-  final Color color;
-  _CookiePainter(this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final c = size.center(Offset.zero);
-    final r = size.shortestSide / 2;
-    final path = Path();
-    const lobes = 8;
-    for (var i = 0; i <= 360; i++) {
-      final a = i * pi / 180;
-      final rr = r * (0.9 + 0.1 * cos(lobes * a));
-      final p = c + Offset(cos(a) * rr, sin(a) * rr);
-      if (i == 0) {
-        path.moveTo(p.dx, p.dy);
-      } else {
-        path.lineTo(p.dx, p.dy);
-      }
-    }
-    path.close();
-    canvas.drawPath(path, Paint()..color = color);
-  }
-
-  @override
-  bool shouldRepaint(covariant _CookiePainter old) => old.color != color;
 }
 
 class SetupScreen extends StatefulWidget {
@@ -19070,17 +19101,17 @@ class SetupScreen extends StatefulWidget {
 }
 
 class _SetupScreenState extends State<SetupScreen> {
-  static const _bg = Color(0xFF020B2E);
-  static const _card = Color(0xFF1A1A1C);
-  static const _ink = Color(0xFFE2E5FF);
-  static const _soft = Color(0xFFB4BCE6);
-  final ColorScheme _cs = AppPalette.scheme(const Color(0xFF7FA6FF));
+  static const _card = Color(0xFF111114);
+  static const _soft = Color(0xFFA9ABB8);
 
   int _page = 0;
+  int _dir = 1;
   bool _notif = false;
   bool _storage = false;
   bool _battery = false;
   AppLifecycleListener? _life;
+
+  static const _pageCount = 5;
 
   @override
   void initState() {
@@ -19113,10 +19144,19 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Future<void> _ask(Future<void> Function() request) async {
+    HapticFeedback.selectionClick();
     try {
       await request();
     } catch (_) {}
     await _refresh();
+  }
+
+  void _go(int to) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _dir = to > _page ? 1 : -1;
+      _page = to;
+    });
   }
 
   void _finish() {
@@ -19126,286 +19166,385 @@ class _SetupScreenState extends State<SetupScreen> {
 
   // ── Pieces ──────────────────────────────────────────────────────────
 
-  Widget _title(IconData icon, String title, String subtitle) {
+  Widget _heading(IconData icon, String kicker, String title, String body,
+      Color accent) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 30),
-        CookieBadge(icon: icon, color: _cs.primary, iconColor: _cs.onPrimary),
-        const SizedBox(height: 34),
-        Text(
-          title,
-          style: const TextStyle(
-            color: _ink,
-            fontSize: 44,
-            fontStyle: FontStyle.italic,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -1.2,
-            height: 1.05,
-          ),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          subtitle,
-          style: const TextStyle(
-            color: _soft,
-            fontSize: 19,
-            height: 1.4,
-            letterSpacing: 0.3,
-          ),
-        ),
         const SizedBox(height: 26),
-      ],
-    );
-  }
-
-  /// Cards stacked with small gaps; outer corners rounder than inner ones.
-  Widget _group(List<Widget> cards) {
-    return Column(
-      children: [
-        for (var i = 0; i < cards.length; i++)
-          Padding(
-            padding: EdgeInsets.only(bottom: i == cards.length - 1 ? 0 : 4),
-            child: ClipRRect(
-              borderRadius: BorderRadius.vertical(
-                top: Radius.circular(i == 0 ? 30 : 8),
-                bottom: Radius.circular(i == cards.length - 1 ? 30 : 8),
+        Reveal(
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: accent.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: accent.withOpacity(0.45)),
+                ),
+                child: Icon(icon, color: accent, size: 22),
               ),
-              child: Container(color: _card, child: cards[i]),
+              const SizedBox(width: 12),
+              Text(
+                kicker.toUpperCase(),
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.6,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        Reveal(
+          delayMs: 60,
+          child: Text(
+            title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 34,
+              fontWeight: FontWeight.w800,
+              height: 1.1,
+              letterSpacing: -0.8,
             ),
           ),
+        ),
+        const SizedBox(height: 10),
+        Reveal(
+          delayMs: 110,
+          child: Text(
+            body,
+            style: const TextStyle(color: _soft, fontSize: 16.5, height: 1.45),
+          ),
+        ),
+        const SizedBox(height: 24),
       ],
     );
   }
 
-  Widget _row({
+  Widget _card2({required Widget child, int delay = 0, Color? border}) {
+    return Reveal(
+      delayMs: 160 + delay,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: _card.withOpacity(0.92),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: border ?? Colors.white10),
+        ),
+        child: child,
+      ),
+    );
+  }
+
+  /// Row with an icon, text and an animated on/off pill.
+  Widget _permRow({
     required IconData icon,
     required String title,
     required String body,
-    Widget? trailing,
-    VoidCallback? onTap,
-    Color? iconBg,
+    required bool granted,
+    required VoidCallback onAllow,
+    required Color accent,
+    int delay = 0,
   }) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 70,
-              height: 70,
-              decoration: BoxDecoration(
-                color: iconBg ?? _cs.primary,
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Icon(icon, color: _cs.onPrimary, size: 30),
-            ),
-            const SizedBox(width: 18),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 21,
-                          fontWeight: FontWeight.w500)),
-                  const SizedBox(height: 4),
-                  Text(body,
-                      style: const TextStyle(
-                          color: _soft, fontSize: 16.5, height: 1.35)),
-                ],
-              ),
-            ),
-            if (trailing != null) ...[const SizedBox(width: 10), trailing],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _status(bool granted, VoidCallback onAllow) {
-    return GestureDetector(
-      onTap: granted ? null : onAllow,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        decoration: BoxDecoration(
-          color: granted ? const Color(0xFF16235E) : _cs.primary,
-          borderRadius: BorderRadius.circular(22),
-        ),
-        child: Text(
-          granted ? 'Allowed' : 'Allow',
-          style: TextStyle(
-            color: granted ? _cs.primary : _cs.onPrimary,
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── Pages ───────────────────────────────────────────────────────────
-
-  List<Widget> _permissionsPage() => [
-        _title(Icons.shield_rounded, 'Review permissions',
-            'Grant only what you want now. You can continue and allow permissions later.'),
-        _group([
-          _row(
-            icon: Icons.music_note_rounded,
-            title: 'Notifications',
-            body:
-                'Show playback controls and music activity in the notification shade.',
-            trailing: _status(
-                _notif, () => _ask(() => Permission.notification.request())),
-          ),
-          _row(
-            icon: Icons.storage_rounded,
-            title: 'Storage access',
-            body: 'Needed to find and play the music files on your phone.',
-            trailing: _status(_storage, () => _ask(() async {
-                  final s = await Permission.audio.request();
-                  if (!s.isGranted) await Permission.storage.request();
-                })),
-          ),
-          _row(
-            icon: Icons.battery_charging_full_rounded,
-            iconBg: const Color(0xFF8E9BFF),
-            title: 'Background playback',
-            body:
-                'Lets music keep playing with the screen off, without the battery saver stopping it.',
-            trailing: _status(_battery,
-                () => _ask(() => Permission.ignoreBatteryOptimizations.request())),
-          ),
-        ]),
-      ];
-
-  List<Widget> _syncPage() => [
-        _title(Icons.login_rounded, 'Sync your listening',
-            'Sign in to YouTube Music to bring your playlists, likes and home feed into the app.'),
-        ValueListenableBuilder<YtAccount>(
-          valueListenable: ytAccount,
-          builder: (context, acc, _) => Container(
-            padding: const EdgeInsets.all(22),
+    return _card2(
+      delay: delay,
+      border: granted ? accent.withOpacity(0.5) : null,
+      child: Row(
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            width: 46,
+            height: 46,
             decoration: BoxDecoration(
-              color: _card,
-              borderRadius: BorderRadius.circular(34),
+              shape: BoxShape.circle,
+              color: granted ? accent : Colors.white10,
             ),
-            child: Row(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
+              child: Icon(
+                granted ? Icons.check_rounded : icon,
+                key: ValueKey(granted),
+                color: granted ? Colors.black : Colors.white,
+                size: 24,
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                acc.signedIn && acc.photo != null
-                    ? YtNetworkImage(
-                        url: acc.photo,
-                        size: 84,
-                        circle: true,
-                        fallbackIcon: Icons.person_rounded)
-                    : CookieBadge(
-                        icon: Icons.account_circle_outlined,
-                        color: _cs.primary,
-                        iconColor: _cs.onPrimary,
-                        size: 84,
-                      ),
-                const SizedBox(width: 20),
-                Expanded(
-                  child: Text(
-                    acc.signedIn
-                        ? 'Signed in${acc.name != null ? ' as ${acc.name}' : ''}.'
-                        : 'Optional. You can sign in later from Settings.',
+                Text(title,
                     style: const TextStyle(
-                        color: _soft, fontSize: 19, height: 1.35),
-                  ),
-                ),
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(body,
+                    style: const TextStyle(
+                        color: _soft, fontSize: 13.5, height: 1.35)),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 22),
-        const Text('Your account helps AlexLMP',
-            style: TextStyle(
-                color: _ink,
-                fontSize: 27,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.5)),
-        const SizedBox(height: 14),
-        _group([
-          _row(
-            icon: Icons.library_music_rounded,
-            iconBg: const Color(0xFF8E9BFF),
-            title: 'See your library',
-            body: 'Your YouTube Music playlists, albums and artists, ready to play.',
-            trailing: const Icon(Icons.arrow_forward_rounded, color: _soft),
-          ),
-          _row(
-            icon: Icons.thumb_up_alt_rounded,
-            iconBg: const Color(0xFF8E9BFF),
-            title: 'Keep your likes',
-            body: 'Everything you liked on YouTube Music in one place.',
-            trailing: const Icon(Icons.arrow_forward_rounded, color: _soft),
-          ),
-          _row(
-            icon: Icons.bolt_rounded,
-            iconBg: const Color(0xFF8E9BFF),
-            title: 'A home made for you',
-            body: 'Quick picks, mixes and recommendations from your account.',
-            trailing: const Icon(Icons.arrow_forward_rounded, color: _soft),
-          ),
-        ]),
-        const SizedBox(height: 22),
-        ValueListenableBuilder<YtAccount>(
-          valueListenable: ytAccount,
-          builder: (context, acc, _) => acc.signedIn
-              ? const SizedBox.shrink()
-              : SizedBox(
-                  width: double.infinity,
-                  height: 66,
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _cs.primary,
-                      foregroundColor: _cs.onPrimary,
-                      shape: const StadiumBorder(),
-                      textStyle: const TextStyle(
-                          fontSize: 21, fontWeight: FontWeight.w600),
-                    ),
-                    onPressed: () async {
-                      await ytSignInFlow(context);
-                      _AlexLmpRootState.resetYtCaches();
-                    },
-                    icon: const Icon(Icons.login_rounded),
-                    label: const Text('Login'),
-                  ),
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: granted ? null : onAllow,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeOutBack,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              decoration: BoxDecoration(
+                color: granted ? Colors.transparent : accent,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: accent),
+              ),
+              child: Text(
+                granted ? 'On' : 'Allow',
+                style: TextStyle(
+                  color: granted ? accent : Colors.black,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
                 ),
-        ),
-      ];
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-  Widget _choice(String label, bool selected, VoidCallback onTap) {
+  Widget _choice(String label, bool selected, VoidCallback onTap, Color accent) {
     return GestureDetector(
       onTap: () {
         HapticFeedback.selectionClick();
         onTap();
       },
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
         decoration: BoxDecoration(
-          color: selected ? _cs.primary : Colors.transparent,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-              color: selected ? _cs.primary : _soft.withOpacity(0.4), width: 1.4),
+          color: selected ? accent : Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: selected ? accent : Colors.white12),
         ),
         child: Text(label,
             style: TextStyle(
-              color: selected ? _cs.onPrimary : _ink,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
+              color: selected ? Colors.black : Colors.white,
+              fontSize: 14.5,
+              fontWeight: FontWeight.w700,
             )),
       ),
     );
   }
 
-  List<Widget> _lookPage() {
+  // ── Pages ───────────────────────────────────────────────────────────
+
+  List<Widget> _welcome(Color accent) => [
+        const SizedBox(height: 70),
+        Center(
+          child: Reveal(child: AlexLogo(size: 150, color: accent)),
+        ),
+        const SizedBox(height: 40),
+        const Reveal(
+          delayMs: 120,
+          child: Center(
+            child: Text(
+              'Welcome to AlexLMP',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 34,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.8,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Reveal(
+          delayMs: 200,
+          child: Center(
+            child: Text(
+              'All your music, one player.',
+              style: TextStyle(
+                color: accent,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 34),
+        for (final (i, item) in const [
+          (Icons.library_music_rounded, 'Your files and streaming, together'),
+          (Icons.lyrics_outlined, 'Synced lyrics and offline saving'),
+          (Icons.palette_rounded, 'Players and styles you can switch any time'),
+        ].indexed)
+          Reveal(
+            delayMs: 300 + i * 90,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Row(
+                children: [
+                  Icon(item.$1, color: accent, size: 22),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(item.$2,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 16)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ];
+
+  List<Widget> _permissions(Color accent) => [
+        _heading(Icons.verified_user_rounded, 'Step 1 · Access',
+            'A few quick permissions',
+            'Turn on what you want. You can skip anything and change it later in Android settings.',
+            accent),
+        _permRow(
+          icon: Icons.notifications_rounded,
+          title: 'Notifications',
+          body: 'Music controls in your notifications and lock screen.',
+          granted: _notif,
+          onAllow: () => _ask(() => Permission.notification.request()),
+          accent: accent,
+        ),
+        _permRow(
+          icon: Icons.folder_rounded,
+          title: 'Music files',
+          body: 'Find and play the songs saved on your phone.',
+          granted: _storage,
+          onAllow: () => _ask(() async {
+            final s = await Permission.audio.request();
+            if (!s.isGranted) await Permission.storage.request();
+          }),
+          accent: accent,
+          delay: 70,
+        ),
+        _permRow(
+          icon: Icons.bolt_rounded,
+          title: 'Keep playing',
+          body: 'Stops battery saver from cutting your music off with the screen off.',
+          granted: _battery,
+          onAllow: () =>
+              _ask(() => Permission.ignoreBatteryOptimizations.request()),
+          accent: accent,
+          delay: 140,
+        ),
+      ];
+
+  List<Widget> _account(Color accent) => [
+        _heading(Icons.person_rounded, 'Step 2 · Account', 'Bring your library',
+            'Sign in to YouTube Music to see your playlists, likes and home feed. Totally optional.',
+            accent),
+        ValueListenableBuilder<YtAccount>(
+          valueListenable: ytAccount,
+          builder: (context, acc, _) => _card2(
+            border: acc.signedIn ? accent.withOpacity(0.5) : null,
+            child: Row(
+              children: [
+                YtNetworkImage(
+                  url: acc.photo,
+                  size: 56,
+                  circle: true,
+                  fallbackIcon: Icons.person_rounded,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        acc.signedIn ? (acc.name ?? 'Signed in') : 'Not signed in',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700),
+                      ),
+                      Text(
+                        acc.signedIn
+                            ? 'Your library is ready.'
+                            : 'You can do this later in Settings.',
+                        style: const TextStyle(color: _soft, fontSize: 13.5),
+                      ),
+                    ],
+                  ),
+                ),
+                if (acc.signedIn) Icon(Icons.check_circle_rounded, color: accent),
+              ],
+            ),
+          ),
+        ),
+        for (final (i, item) in const [
+          (Icons.queue_music_rounded, 'Your playlists', 'Play any of them, right here.'),
+          (Icons.favorite_rounded, 'Your likes', 'Hearts sync both ways.'),
+          (Icons.auto_awesome_rounded, 'Made for you', 'Quick picks and mixes from your account.'),
+        ].indexed)
+          _card2(
+            delay: 70 + i * 70,
+            child: Row(
+              children: [
+                Icon(item.$1, color: accent, size: 24),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(item.$2,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700)),
+                      Text(item.$3,
+                          style: const TextStyle(color: _soft, fontSize: 13.5)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 6),
+        ValueListenableBuilder<YtAccount>(
+          valueListenable: ytAccount,
+          builder: (context, acc, _) => acc.signedIn
+              ? const SizedBox.shrink()
+              : Reveal(
+                  delayMs: 320,
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: accent,
+                        side: BorderSide(color: accent, width: 1.6),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18)),
+                        textStyle: const TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w700),
+                      ),
+                      onPressed: () async {
+                        await ytSignInFlow(context);
+                        _AlexLmpRootState.resetYtCaches();
+                      },
+                      icon: const Icon(Icons.login_rounded),
+                      label: const Text('Sign in'),
+                    ),
+                  ),
+                ),
+        ),
+      ];
+
+  List<Widget> _look(Color accent) {
     const appStyles = {
       'alex': 'AlexLMP',
       'community': 'Community',
@@ -19419,154 +19558,372 @@ class _SetupScreenState extends State<SetupScreen> {
       'simp': 'SimpMusic',
       'jog': 'Jog Wheel',
     };
-    Widget block(String title, String body, Widget chips) => Padding(
-          padding: const EdgeInsets.all(22),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 21,
-                      fontWeight: FontWeight.w500)),
-              const SizedBox(height: 4),
-              Text(body, style: const TextStyle(color: _soft, fontSize: 16)),
-              const SizedBox(height: 14),
-              chips,
-            ],
-          ),
+    Widget title(String t, String b) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(t,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700)),
+            const SizedBox(height: 2),
+            Text(b, style: const TextStyle(color: _soft, fontSize: 13.5)),
+          ],
         );
     return [
-      _title(Icons.palette_rounded, 'Make it yours',
-          'Pick how the app and the player look. You can change these any time in Settings.'),
+      _heading(Icons.tune_rounded, 'Step 3 · Your way', 'Make it yours',
+          'Pick how it sounds and looks. Everything can be changed later in Settings.',
+          accent),
+      // Crossfade first.
       ListenableBuilder(
         listenable: appState,
-        builder: (context, _) => _group([
-          block(
-            'App style',
-            'Home, library and navigation.',
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              for (final e in appStyles.entries)
-                _choice(e.value, appState.appStyle == e.key,
-                    () => appState.setStr('app_style', e.key)),
-            ]),
-          ),
-          block(
-            'Player style',
-            'What you see when a song is playing.',
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              for (final e in players.entries)
-                _choice(e.value, appState.playerStyle == e.key,
-                    () => appState.setPlayerStyle(e.key)),
-            ]),
-          ),
-          block(
-            'Colors',
-            'True black or your wallpaper\'s colors.',
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              _choice('AMOLED', !appState.useWallpaper, () {
-                appState.setTheme('AMOLED');
-                appState.setB('pure_black', true);
-              }),
-              if (appState.wallpaperColor != null)
-                _choice('Wallpaper', appState.useWallpaper,
-                    () => appState.setB('use_wallpaper_colors', true)),
-            ]),
-          ),
-        ]),
-      ),
-    ];
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final pages = [_permissionsPage, _syncPage, _lookPage];
-    final last = _page == pages.length - 1;
-    final bottom = MediaQuery.of(context).padding.bottom;
-    return Theme(
-      data: ThemeData(useMaterial3: true, colorScheme: _cs),
-      child: Scaffold(
-        backgroundColor: _bg,
-        body: SafeArea(
-          bottom: false,
-          child: Column(
-            children: [
-              Expanded(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 320),
-                  switchInCurve: kEmphasizedDecel,
-                  transitionBuilder: (c, a) => FadeTransition(
-                    opacity: a,
-                    child: SlideTransition(
-                      position: Tween<Offset>(
-                              begin: const Offset(0.06, 0), end: Offset.zero)
-                          .animate(a),
-                      child: c,
-                    ),
-                  ),
-                  child: ListView(
-                    key: ValueKey(_page),
-                    padding: const EdgeInsets.fromLTRB(22, 10, 22, 30),
-                    children: pages[_page](),
-                  ),
-                ),
-              ),
-              Container(
-                padding: EdgeInsets.fromLTRB(22, 12, 22, bottom + 14),
-                child: Row(
+        builder: (context, _) {
+          final on = appState.b('crossfade_on');
+          return _card2(
+            border: on ? accent.withOpacity(0.5) : null,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    for (var i = 0; i < pages.length; i++)
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 260),
-                        margin: const EdgeInsets.only(right: 6),
-                        width: i == _page ? 26 : 9,
-                        height: 9,
-                        decoration: BoxDecoration(
-                          color: i == _page ? _cs.primary : _soft.withOpacity(0.35),
-                          borderRadius: BorderRadius.circular(5),
-                        ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text('Crossfade',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w700)),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: accent.withOpacity(0.18),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text('BETA',
+                                    style: TextStyle(
+                                        color: accent,
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: 0.8)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          const Text('Blend each song into the next one.',
+                              style: TextStyle(color: _soft, fontSize: 13.5)),
+                        ],
                       ),
-                    const Spacer(),
-                    if (_page > 0)
-                      TextButton(
-                        onPressed: () => setState(() => _page--),
-                        child: const Text('Back',
-                            style: TextStyle(color: _soft, fontSize: 17)),
-                      ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _cs.primary,
-                        foregroundColor: _cs.onPrimary,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 26, vertical: 16),
-                        textStyle: const TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.w700),
-                      ),
-                      onPressed: () {
-                        if (last) {
-                          _finish();
-                        } else {
-                          HapticFeedback.selectionClick();
-                          setState(() => _page++);
-                        }
+                    ),
+                    Switch(
+                      value: on,
+                      activeColor: Colors.black,
+                      activeTrackColor: accent,
+                      onChanged: (v) {
+                        HapticFeedback.selectionClick();
+                        appState.setB('crossfade_on', v);
                       },
-                      child: ValueListenableBuilder<YtAccount>(
-                        valueListenable: ytAccount,
-                        builder: (_, acc, __) => Text(last
-                            ? 'Get started'
-                            : (_page == 1 && !acc.signedIn
-                                ? 'Skip for now'
-                                : 'Continue')),
-                      ),
                     ),
                   ],
                 ),
-              ),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 260),
+                  curve: Curves.easeOutCubic,
+                  child: on
+                      ? Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Wrap(spacing: 8, children: [
+                            for (final secs in const [3.0, 6.0, 10.0])
+                              _choice(
+                                  '${secs.round()} s',
+                                  appState.d('crossfade_secs', 6.0) == secs,
+                                  () => appState.setD('crossfade_secs', secs),
+                                  accent),
+                          ]),
+                        )
+                      : const SizedBox(width: double.infinity),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+      ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) => _card2(
+          delay: 70,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              title('App style', 'Home, library and navigation.'),
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final e in appStyles.entries)
+                  _choice(e.value, appState.appStyle == e.key,
+                      () => appState.setStr('app_style', e.key), accent),
+              ]),
             ],
           ),
         ),
       ),
+      ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) => _card2(
+          delay: 140,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              title('Player style', 'What you see while a song plays.'),
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final e in players.entries)
+                  _choice(e.value, appState.playerStyle == e.key,
+                      () => appState.setPlayerStyle(e.key), accent),
+              ]),
+            ],
+          ),
+        ),
+      ),
+      ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) => _card2(
+          delay: 210,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              title('Colors', 'True black, or match your wallpaper.'),
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                _choice('AMOLED', !appState.useWallpaper, () {
+                  appState.setTheme('AMOLED');
+                  appState.setB('pure_black', true);
+                }, accent),
+                if (appState.wallpaperColor != null)
+                  _choice('Wallpaper', appState.useWallpaper,
+                      () => appState.setB('use_wallpaper_colors', true), accent),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _done(Color accent) => [
+        const SizedBox(height: 90),
+        Center(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: const Duration(milliseconds: 900),
+            curve: Curves.elasticOut,
+            builder: (context, v, child) =>
+                Transform.scale(scale: v, child: child),
+            child: Container(
+              width: 120,
+              height: 120,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: accent,
+                boxShadow: [
+                  BoxShadow(color: accent.withOpacity(0.5), blurRadius: 40),
+                ],
+              ),
+              child: const Icon(Icons.check_rounded,
+                  color: Colors.black, size: 64),
+            ),
+          ),
+        ),
+        const SizedBox(height: 36),
+        const Reveal(
+          delayMs: 250,
+          child: Center(
+            child: Text("You're all set",
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 34,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.8)),
+          ),
+        ),
+        const SizedBox(height: 10),
+        const Reveal(
+          delayMs: 330,
+          child: Center(
+            child: Text(
+              'Press play and enjoy.\nSwipe up in the player any time to see your queue.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: _soft, fontSize: 16, height: 1.45),
+            ),
+          ),
+        ),
+      ];
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: appState,
+      builder: (context, _) {
+        final accent = Color.lerp(appState.palette.accent, Colors.white, 0.1)!;
+        final pages = [_welcome, _permissions, _account, _look, _done];
+        final last = _page == _pageCount - 1;
+        final bottom = MediaQuery.of(context).padding.bottom;
+        return Theme(
+          data: ThemeData(
+            useMaterial3: true,
+            brightness: Brightness.dark,
+            colorScheme: AppPalette.scheme(accent),
+          ),
+          child: Scaffold(
+            backgroundColor: Colors.black,
+            body: Stack(
+              fit: StackFit.expand,
+              children: [
+                AmoledGlow(accent: accent),
+                SafeArea(
+                  bottom: false,
+                  child: Column(
+                    children: [
+                      // Segmented progress bar.
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(22, 14, 22, 0),
+                        child: Row(
+                          children: [
+                            for (var i = 0; i < _pageCount; i++)
+                              Expanded(
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 400),
+                                  curve: Curves.easeOutCubic,
+                                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                                  height: 4,
+                                  decoration: BoxDecoration(
+                                    color: i <= _page
+                                        ? accent
+                                        : Colors.white.withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 380),
+                          switchInCurve: kEmphasizedDecel,
+                          switchOutCurve: Curves.easeIn,
+                          transitionBuilder: (c, a) {
+                            final incoming = c.key == ValueKey(_page);
+                            return FadeTransition(
+                              opacity: a,
+                              child: SlideTransition(
+                                position: Tween<Offset>(
+                                  begin: Offset(
+                                      0.12 * (incoming ? _dir : -_dir), 0),
+                                  end: Offset.zero,
+                                ).animate(a),
+                                child: c,
+                              ),
+                            );
+                          },
+                          child: ListView(
+                            key: ValueKey(_page),
+                            padding: const EdgeInsets.fromLTRB(22, 4, 22, 30),
+                            children: pages[_page](accent),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(22, 10, 22, bottom + 16),
+                        child: Row(
+                          children: [
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 250),
+                              child: _page > 0 && !last
+                                  ? Padding(
+                                      key: const ValueKey('back'),
+                                      padding: const EdgeInsets.only(right: 12),
+                                      child: SquishyGesture(
+                                        onTap: () => _go(_page - 1),
+                                        child: Container(
+                                          width: 56,
+                                          height: 56,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: Colors.white.withOpacity(0.06),
+                                            border:
+                                                Border.all(color: Colors.white12),
+                                          ),
+                                          child: const Icon(
+                                              Icons.arrow_back_rounded,
+                                              color: Colors.white),
+                                        ),
+                                      ),
+                                    )
+                                  : const SizedBox(key: ValueKey('none')),
+                            ),
+                            Expanded(
+                              child: SquishyGesture(
+                                pressedScale: 0.97,
+                                onTap: () =>
+                                    last ? _finish() : _go(_page + 1),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 300),
+                                  height: 56,
+                                  decoration: BoxDecoration(
+                                    color: accent,
+                                    borderRadius: BorderRadius.circular(18),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: accent.withOpacity(0.35),
+                                        blurRadius: 22,
+                                        offset: const Offset(0, 8),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      ValueListenableBuilder<YtAccount>(
+                                        valueListenable: ytAccount,
+                                        builder: (_, acc, __) => Text(
+                                          _page == 0
+                                              ? 'Get started'
+                                              : last
+                                                  ? 'Start listening'
+                                                  : (_page == 2 && !acc.signedIn)
+                                                      ? 'Skip for now'
+                                                      : 'Continue',
+                                          style: const TextStyle(
+                                            color: Colors.black,
+                                            fontSize: 17,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      const Icon(Icons.arrow_forward_rounded,
+                                          color: Colors.black, size: 20),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
