@@ -14421,6 +14421,38 @@ class QueueScreen extends StatefulWidget {
 
 class _QueueScreenState extends State<QueueScreen> {
   double _drag = 0;
+  bool _closing = false;
+
+  void _close() {
+    if (_closing) return;
+    _closing = true;
+    Navigator.of(context).pop();
+  }
+
+  /// Pulling down when the list is already at the top drags the queue down;
+  /// let go far enough (or flick) and it closes, back to the player.
+  bool _onScroll(ScrollNotification n) {
+    if (_closing || n.metrics.axis != Axis.vertical) return false;
+    if (n is OverscrollNotification &&
+        n.dragDetails != null &&
+        n.overscroll < 0 &&
+        n.metrics.extentBefore == 0) {
+      setState(() => _drag = _drag - n.overscroll);
+    } else if (n is ScrollUpdateNotification &&
+        _drag > 0 &&
+        n.dragDetails != null &&
+        (n.scrollDelta ?? 0) > 0) {
+      setState(() => _drag = max(0, _drag - (n.scrollDelta ?? 0)));
+    } else if (n is ScrollEndNotification && _drag > 0) {
+      final v = n.dragDetails?.velocity.pixelsPerSecond.dy ?? 0;
+      if (_drag > 90 || v > 600) {
+        _close();
+      } else {
+        setState(() => _drag = 0);
+      }
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -14432,7 +14464,7 @@ class _QueueScreenState extends State<QueueScreen> {
           setState(() => _drag = max(0, _drag + d.delta.dy)),
       onVerticalDragEnd: (d) {
         if (_drag > 90 || d.velocity.pixelsPerSecond.dy > 600) {
-          Navigator.of(context).pop();
+          _close();
         } else {
           setState(() => _drag = 0);
         }
@@ -14479,7 +14511,10 @@ class _QueueScreenState extends State<QueueScreen> {
                   Expanded(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 18),
-                      child: _queueBody(),
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: _onScroll,
+                        child: _queueBody(),
+                      ),
                     ),
                   ),
                 ],
@@ -17945,10 +17980,9 @@ class AlexPlayerView extends StatelessWidget {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          if (glass)
-            TinyArtBackdrop(track: track, dim: 0.5)
-          else
-            DecoratedBox(
+          // Same colour gradient with or without Liquid Glass (glass only
+          // changes the dock).
+          DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
