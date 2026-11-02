@@ -9196,7 +9196,7 @@ class SettingsScreen extends StatelessWidget {
             badge: 'BETA'),
         _segments(pal, Icons.format_size_rounded, 'Text size',
             appState.d('text_scale', 1.0),
-            const {0.9: 'Small', 1.0: 'Default', 1.15: 'Large'},
+            <double, String>{0.9: 'Small', 1.0: 'Default', 1.15: 'Large'},
             (v) => appState.setD('text_scale', v)),
       ]),
     ];
@@ -9402,7 +9402,7 @@ class SettingsScreen extends StatelessWidget {
             badge: 'NEW'),
         _segments(pal, Icons.animation_rounded, 'Animation speed',
             appState.d('animation_speed', 1.0),
-            const {0.6: 'Fast', 1.0: 'Normal', 2.0: 'Slow-mo'}, (v) {
+            <double, String>{0.6: 'Fast', 1.0: 'Normal', 2.0: 'Slow-mo'}, (v) {
           timeDilation = v;
           appState.setD('animation_speed', v);
         }),
