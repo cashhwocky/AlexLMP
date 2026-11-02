@@ -2389,8 +2389,25 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   void initState() {
     super.initState();
     appNotice.addListener(_onNotice);
-    scanDeviceAudio();
+    _askPermissionsThenScan();
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotice());
+  }
+
+  /// Asks for everything the app needs right at launch (music access,
+  /// notifications, and — once — background/battery permission), then scans.
+  Future<void> _askPermissionsThenScan() async {
+    if (Platform.isAndroid) {
+      try {
+        await ensureMediaPermissions(); // music files + notifications
+        final prefs = await SharedPreferences.getInstance();
+        final battery = await Permission.ignoreBatteryOptimizations.isGranted;
+        if (!battery && !(prefs.getBool('asked_battery_opt') ?? false)) {
+          await prefs.setBool('asked_battery_opt', true);
+          await Permission.ignoreBatteryOptimizations.request();
+        }
+      } catch (_) {}
+    }
+    await scanDeviceAudio();
   }
 
   @override
