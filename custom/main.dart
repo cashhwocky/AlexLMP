@@ -350,7 +350,7 @@ class AppState extends ChangeNotifier {
   bool stopOnTaskClear = true;
   bool linkSpeedAndPitch = false;
   bool swipeRightForNext = false; // default: swipe left = next (like a carousel)
-  String playerStyle = 'simp'; // simp = "AlexLMP" (default), alex = "AlexLMP Classic"
+  String playerStyle = 'alex'; // alex = "AlexLMP Classic" (default), simp = "AlexLMP"
   bool animatedBackground = false;
   bool artBackdrop = false;
   AppPalette? _adaptivePalette;
@@ -408,7 +408,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// 'alex' (default look) or 'community' (Google / Material 3 look).
-  String get appStyle => str('app_style', 'prestige');
+  String get appStyle => str('app_style', 'alex');
   bool get community => appStyle == 'community';
 
   /// 'local' (files on your phone) or 'youtube' (your YouTube Music).
@@ -541,7 +541,9 @@ class AppState extends ChangeNotifier {
       await prefs.setBool('swipe_left_default_v1', true);
     }
     swipeRightForNext = prefs.getBool('swipe_right_next') ?? false;
-    playerStyle = prefs.getString('player_style') ?? 'simp';
+    playerStyle = prefs.getString('player_style') ?? 'alex';
+    // The Prestige player was removed.
+    if (playerStyle == 'prestige') playerStyle = 'alex';
     animatedBackground = prefs.getBool('animated_bg') ?? false;
     artBackdrop = prefs.getBool('art_backdrop') ?? false;
     speed = prefs.getDouble('playback_speed') ?? 1.0;
@@ -3846,6 +3848,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         if (appState.appStyle == 'prestige') {
           return _prestigeScaffold(context, pal, tracks);
         }
+        if (appState.appStyle == 'plus') {
+          return _plusScaffold(context, pal, tracks);
+        }
         if (appState.appStyle == 'pocket') {
           return _pocketScaffold(context, pal, tracks);
         }
@@ -3949,6 +3954,397 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         );
       }
     }
+  }
+
+  // ═══════════════════════ PLUS app style ═══════════════════════
+
+  Widget _plusScaffold(
+      BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Column(
+        children: [
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 260),
+              switchInCurve: Curves.easeOut,
+              child: KeyedSubtree(
+                key: ValueKey('plus$_tab'),
+                child: _tab == 0
+                    ? _plusHome(context, pal, tracks)
+                    : SafeArea(bottom: false, child: _tabBody(context, pal, tracks)),
+              ),
+            ),
+          ),
+          PlusDock(
+            tab: _tab,
+            onTab: (i) => setState(() {
+              _dir = i >= _tab ? 1 : -1;
+              _tab = i;
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _plusSection(String title, {VoidCallback? playAll}) {
+    final accent = appState.palette.accent;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 28, 14, 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(title,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.5)),
+          ),
+          if (playAll != null)
+            TextButton.icon(
+              style: TextButton.styleFrom(foregroundColor: accent),
+              onPressed: playAll,
+              icon: const Icon(Icons.play_arrow_rounded, size: 20),
+              label: const Text('Play',
+                  style: TextStyle(fontWeight: FontWeight.w800)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _plusHome(BuildContext context, AppPalette pal, List<TrackItem> all) {
+    final yt = appState.homeMode == 'youtube';
+    final accent = pal.accent;
+    final top = MediaQuery.of(context).padding.top;
+    final h = DateTime.now().hour;
+    final greet = h < 5
+        ? 'GOOD NIGHT'
+        : h < 12
+            ? 'GOOD MORNING'
+            : h < 17
+                ? 'GOOD AFTERNOON'
+                : 'GOOD EVENING';
+    final local = all.where((t) => !t.isYouTube).toList();
+    final pool = yt ? all.where((t) => t.isYouTube).toList() : local;
+    void shuffleAll() {
+      if (pool.isEmpty) {
+        yt ? showSearchSheet(context) : showAddMusicSheet(context);
+      } else {
+        _ytShuffle(pool);
+      }
+    }
+
+    final likedCount = yt
+        ? (_cachedYtLiked()?.tracks.length ?? 0)
+        : local.where((t) => appState.isLiked(t.id)).length;
+
+    Widget circle(IconData icon, VoidCallback onTap) => SquishyGesture(
+          pressedScale: 0.86,
+          onTap: onTap,
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: const BoxDecoration(
+                color: _plusCard, shape: BoxShape.circle),
+            child: Icon(icon, color: Colors.white, size: 22),
+          ),
+        );
+
+    final out = <Widget>[
+      Reveal(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(20, top + 14, 14, 0),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(greet,
+                        style: TextStyle(
+                            color: accent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.8)),
+                    const SizedBox(height: 2),
+                    const Text('Your music',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 34,
+                            height: 1.05,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -1.2)),
+                  ],
+                ),
+              ),
+              circle(Icons.person_rounded, () => showYtAccountSheet(context)),
+              const SizedBox(width: 8),
+              circle(Icons.settings_rounded, () => showSettingsSheet(context)),
+            ],
+          ),
+        ),
+      ),
+      Reveal(
+        delayMs: 50,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+          child: Row(
+            children: [
+              PlusModeSwitch(
+                yt: yt,
+                onChange: (v) => _setMode(v ? 'youtube' : 'local'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      // ── Bento grid
+      Reveal(
+        delayMs: 100,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          child: LayoutBuilder(builder: (context, c) {
+            const gap = 10.0;
+            final w = (c.maxWidth - gap) / 2;
+            final tall = w * 1.3;
+            final small = (tall - gap) / 2;
+            return Column(
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    PlusNowTile(width: w, height: tall, onStart: shuffleAll),
+                    const SizedBox(width: gap),
+                    Column(
+                      children: [
+                        PlusTile(
+                          width: w,
+                          height: small,
+                          color: Color.lerp(accent, Colors.black, 0.15)!,
+                          onTap: () {
+                            if (yt) {
+                              openYtLikedMusic(context);
+                            } else {
+                              Navigator.of(context).push(MaterialPageRoute(
+                                  builder: (_) => const LikedSongsScreen()));
+                            }
+                          },
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.favorite_rounded,
+                                  color: Colors.black, size: 22),
+                              const Spacer(),
+                              const Text('Liked',
+                                  style: TextStyle(
+                                      color: Colors.black,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900)),
+                              Text(
+                                  '$likedCount ${likedCount == 1 ? 'song' : 'songs'}',
+                                  style: const TextStyle(
+                                      color: Colors.black54,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w700)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: gap),
+                        PlusStatsTile(width: w, height: small),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: gap),
+                Row(
+                  children: [
+                    PlusTile(
+                      width: w,
+                      height: 64,
+                      onTap: shuffleAll,
+                      child: const Row(
+                        children: [
+                          Icon(Icons.shuffle_rounded,
+                              color: Colors.white, size: 22),
+                          SizedBox(width: 10),
+                          Text('Shuffle all',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: gap),
+                    PlusTile(
+                      width: w,
+                      height: 64,
+                      onTap: () => yt
+                          ? showSearchSheet(context)
+                          : showAddMusicSheet(context),
+                      child: Row(
+                        children: [
+                          Icon(yt ? Icons.search_rounded : Icons.add_rounded,
+                              color: Colors.white, size: 22),
+                          const SizedBox(width: 10),
+                          Text(yt ? 'Search' : 'Add music',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          }),
+        ),
+      ),
+    ];
+
+    Widget numbered(List<TrackItem> list) => Column(
+          children: [
+            for (var i = 0; i < list.length; i++)
+              PlusNumberedRow(
+                  number: i + 1,
+                  track: list[i],
+                  onTap: () => _ytPlay(list, i)),
+          ],
+        );
+
+    if (yt) {
+      out.add(_ytData((d, err, loading) {
+        const w = 146.0;
+        final c = <Widget>[];
+        if (d.shelves.isEmpty) c.add(_ytHomeStatus(pal, err, loading));
+        final quick = d.quick.take(6).toList();
+        if (quick.isNotEmpty) {
+          c
+            ..add(_plusSection('Top picks', playAll: () => _ytPlay(d.quick, 0)))
+            ..add(numbered(quick));
+        }
+        if (d.again.isNotEmpty) {
+          c
+            ..add(_plusSection('Jump back in'))
+            ..add(_bigRow(
+                [for (final it in d.again) _shelfCard(context, it, w)], w));
+        }
+        if (d.liked.isNotEmpty) {
+          final liked = d.liked.take(20).toList();
+          c
+            ..add(_plusSection('From your likes',
+                playAll: () => _ytPlay(d.liked, 0)))
+            ..add(PlusCardRow(tracks: liked, onTap: (i) => _ytPlay(liked, i)));
+        }
+        if (d.mixes.isNotEmpty) {
+          c
+            ..add(_plusSection('Your mixes'))
+            ..add(_bigRow(
+                [for (final it in d.mixes) _shelfCard(context, it, w)], w));
+        }
+        for (final sh in d.rest) {
+          final title = sh.title.isEmpty ? 'For you' : sh.title;
+          if (sh.kind == 'song') {
+            final songs = [
+              for (final it in sh.items)
+                YouTubeMusic.trackFromShelf(it, it.subtitle)
+            ];
+            c
+              ..add(_plusSection(title, playAll: () => _ytPlay(songs, 0)))
+              ..add(PlusCardRow(tracks: songs, onTap: (i) => _ytPlay(songs, i)));
+          } else {
+            c
+              ..add(_plusSection(title))
+              ..add(_bigRow(
+                  [for (final it in sh.items) _shelfCard(context, it, w)], w));
+          }
+        }
+        c
+          ..add(_plusSection('Your playlists'))
+          ..add(SizedBox(height: 214, child: _ytPlaylistRow(context, pal)));
+        return Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: c);
+      }));
+    } else if (local.isEmpty) {
+      out.add(Padding(
+        padding: const EdgeInsets.only(top: 40),
+        child: _emptyState(context, pal),
+      ));
+    } else {
+      final quick = _quickPicks(local, 6);
+      final recent = _recentFrom(local);
+      out
+        ..add(_plusSection('Top picks', playAll: () => _ytPlay(quick, 0)))
+        ..add(numbered(quick))
+        ..add(_plusSection('Jump back in', playAll: () => _ytPlay(recent, 0)))
+        ..add(PlusCardRow(tracks: recent, onTap: (i) => _ytPlay(recent, i)));
+      if (appState.playlists.isNotEmpty) {
+        out.add(_plusSection('Your playlists'));
+        for (final p in appState.playlists) {
+          final ts = p.trackIds
+              .map(audioHandler.trackById)
+              .whereType<TrackItem>()
+              .toList();
+          out.add(SquishyGesture(
+            pressedScale: 0.98,
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => PlaylistDetailScreen(playlistId: p.id))),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: SizedBox(
+                      width: 56,
+                      height: 56,
+                      child: ts.isEmpty
+                          ? Container(
+                              color: _plusCard,
+                              child: const Icon(Icons.queue_music_rounded,
+                                  color: Colors.white38))
+                          : CustomAlbumArtwork(track: ts.first),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(p.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700)),
+                        Text('${ts.length} ${ts.length == 1 ? 'song' : 'songs'}',
+                            style: const TextStyle(
+                                color: Colors.white54, fontSize: 13)),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right_rounded,
+                      color: Colors.white24),
+                ],
+              ),
+            ),
+          ));
+        }
+      }
+    }
+
+    return ListView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 30),
+      children: out,
+    );
   }
 
   // ═══════════════════════ AlexLMP Prestige app style ═══════════════════════
@@ -10638,7 +11034,7 @@ class _SwipeArtCarouselState extends State<SwipeArtCarousel>
     // artwork breathed.
     Widget art = ClipRRect(
       borderRadius: BorderRadius.circular(widget.radius),
-      child: !widget.plain && appState.b('player_lyrics', true)
+      child: !widget.plain && appState.b('player_lyrics')
           ? Stack(
               fit: StackFit.expand,
               children: [
@@ -12256,9 +12652,9 @@ class NowPlayingScreen extends StatelessWidget {
                 )),
               );
             }
-            if (appState.playerStyle == 'prestige') {
+            if (appState.playerStyle == 'plus') {
               return SwipeDownDismiss(
-                child: _artModeSwitch(PrestigePlayerView(
+                child: _artModeSwitch(PlusPlayerView(
                   track: track,
                   playing: playing,
                   loading: loading,
@@ -14273,6 +14669,7 @@ class SettingsScreen extends StatelessWidget {
           appState.appStyle,
           const {
             'alex': 'AlexLMP',
+            'plus': 'PLUS',
             'prestige': 'AlexLMP Prestige',
             'pocket': 'Pocket',
             'community': 'Community Suggested',
@@ -14281,7 +14678,7 @@ class SettingsScreen extends StatelessWidget {
           (v) {
             appState.setStr('app_style', v);
             if (v == 'apple') appState.setPlayerStyle('apple');
-            if (v == 'prestige') appState.setPlayerStyle('prestige');
+            if (v == 'plus') appState.setPlayerStyle('plus');
           },
         ),
         _dropdown<String>(
@@ -14291,9 +14688,9 @@ class SettingsScreen extends StatelessWidget {
           'How the player controls look',
           appState.playerStyle,
           const {
-            'simp': 'AlexLMP (Default)',
-            'alex': 'AlexLMP Classic',
-            'prestige': 'Prestige',
+            'alex': 'AlexLMP Classic (Default)',
+            'plus': 'PLUS',
+            'simp': 'AlexLMP',
             'modern': 'Modern',
             'expressive': 'Expressive',
             'apple': 'Apple Music',
@@ -14412,8 +14809,7 @@ class SettingsScreen extends StatelessWidget {
             'Art gently breathes while playing and shrinks when paused',
             def: true),
         _flag(pal, Icons.lyrics_rounded, 'player_lyrics', 'Lyrics in the player',
-            'Shows the current synced line over the artwork',
-            def: true),
+            'Shows the current synced line over the artwork'),
         _flag(pal, Icons.text_rotation_none_rounded, 'word_lyrics',
             'Word-by-word lyrics',
             'Lights up each word as it\'s sung in the lyrics screen',
@@ -18124,7 +18520,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
                   ListenableBuilder(
                     listenable: appState,
                     builder: (context, _) {
-                      final on = appState.b('player_lyrics', true);
+                      final on = appState.b('player_lyrics');
                       return Padding(
                         padding: const EdgeInsets.only(right: 12),
                         child: SquishyGesture(
@@ -20232,15 +20628,16 @@ class _SetupScreenState extends State<SetupScreen> {
   List<Widget> _look(Color accent) {
     const appStyles = {
       'alex': 'AlexLMP',
+      'plus': 'PLUS',
       'prestige': 'Prestige',
       'pocket': 'Pocket',
       'community': 'Community',
       'apple': 'Apple Music',
     };
     const players = {
-      'simp': 'AlexLMP',
       'alex': 'Classic',
-      'prestige': 'Prestige',
+      'plus': 'PLUS',
+      'simp': 'AlexLMP',
       'modern': 'Modern',
       'expressive': 'Expressive',
       'apple': 'Apple Music',
@@ -20355,7 +20752,7 @@ class _SetupScreenState extends State<SetupScreen> {
                   _choice(e.value, appState.appStyle == e.key,
                       () {
                         appState.setStr('app_style', e.key);
-                        if (e.key == 'prestige' || e.key == 'apple') {
+                        if (e.key == 'plus' || e.key == 'apple') {
                           appState.setPlayerStyle(e.key);
                         }
                       }, accent),
@@ -20624,7 +21021,7 @@ class _SetupScreenState extends State<SetupScreen> {
 // ═══════════════════════ Big artwork (double-tap) ═══════════════════════
 
 /// Player styles that support big edge-to-edge artwork.
-const kImmersivePlayers = {'simp', 'alex', 'prestige'};
+const kImmersivePlayers = {'simp', 'alex', 'plus'};
 
 /// Edge-to-edge artwork filling the top of the player, fading out at the
 /// bottom into whatever is behind it. Double-tap it to go back.
@@ -21239,6 +21636,1143 @@ class SimpPlayerView extends StatelessWidget {
                     },
                   ),
                   const SizedBox(height: 16),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════ PLUS ═══════════════════════
+// AlexLMP's own design. Pure black, one accent colour, a bento grid of
+// tiles on Home, numbered picks, and a player with a "barcode" seek bar
+// and a play button that morphs between a rounded square and a circle.
+// Everything is static drawing (no blur, no full-screen animation) so it
+// stays smooth on any phone.
+
+const _plusCard = Color(0xFF121216);
+const _plusLine = Color(0xFF1E1E24);
+
+/// A tile in the PLUS bento grid.
+class PlusTile extends StatelessWidget {
+  final double width;
+  final double height;
+  final Widget child;
+  final VoidCallback? onTap;
+  final Color color;
+  final EdgeInsetsGeometry padding;
+  const PlusTile({
+    super.key,
+    required this.width,
+    required this.height,
+    required this.child,
+    this.onTap,
+    this.color = _plusCard,
+    this.padding = const EdgeInsets.all(14),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SquishyGesture(
+      pressedScale: 0.96,
+      onTap: onTap == null
+          ? null
+          : () {
+              HapticFeedback.selectionClick();
+              onTap!();
+            },
+      child: Container(
+        width: width,
+        height: height,
+        padding: padding,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: child,
+      ),
+    );
+  }
+}
+
+/// Big "now playing" tile: artwork fills it, details on top.
+class PlusNowTile extends StatelessWidget {
+  final double width;
+  final double height;
+  final VoidCallback onStart;
+  const PlusNowTile(
+      {super.key,
+      required this.width,
+      required this.height,
+      required this.onStart});
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = appState.palette.accent;
+    return ValueListenableBuilder<int>(
+      valueListenable: audioHandler.currentIndex,
+      builder: (context, _, __) {
+        final t = audioHandler.currentTrack;
+        if (t == null) {
+          return PlusTile(
+            width: width,
+            height: height,
+            color: accent,
+            onTap: onStart,
+            padding: const EdgeInsets.all(18),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.play_circle_fill_rounded,
+                    color: Colors.black, size: 40),
+                Spacer(),
+                Text('Start\nlistening',
+                    style: TextStyle(
+                        color: Colors.black,
+                        fontSize: 24,
+                        height: 1.05,
+                        fontWeight: FontWeight.w900)),
+                SizedBox(height: 4),
+                Text('Shuffle your music',
+                    style: TextStyle(
+                        color: Colors.black54,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+              ],
+            ),
+          );
+        }
+        return PlusTile(
+          width: width,
+          height: height,
+          padding: EdgeInsets.zero,
+          onTap: () => openPlayer(context),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              CustomAlbumArtwork(track: t),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0x00000000), Color(0xE6000000)],
+                    stops: [0.35, 1],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 12,
+                top: 12,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.55),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      NowPlayingBars(color: accent, size: 11),
+                      const SizedBox(width: 6),
+                      const Text('NOW',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1.2)),
+                    ],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 14,
+                right: 14,
+                bottom: 14,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(t.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  height: 1.1,
+                                  fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 2),
+                          Text(t.artist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white70, fontSize: 12.5)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    StreamBuilder<bool>(
+                      stream: audioHandler.player.playingStream,
+                      initialData: audioHandler.player.playing,
+                      builder: (_, p) => SquishyGesture(
+                        pressedScale: 0.85,
+                        onTap: () => (p.data ?? false)
+                            ? audioHandler.pause()
+                            : audioHandler.play(),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                              color: accent, shape: BoxShape.circle),
+                          child: Icon(
+                              (p.data ?? false)
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              color: Colors.black,
+                              size: 24),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Stats tile with this week's listening as tiny bars.
+class PlusStatsTile extends StatelessWidget {
+  final double width;
+  final double height;
+  const PlusStatsTile({super.key, required this.width, required this.height});
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = appState.palette.accent;
+    final today = ListenStats.today();
+    final days = [
+      for (var i = 6; i >= 0; i--)
+        ListenStats.i.dayTotal(
+            ListenStats.dayKey(today.subtract(Duration(days: i))))
+    ];
+    final total = days.fold<int>(0, (a, b) => a + b);
+    final top = days.fold<int>(1, (a, b) => max(a, b));
+    return Builder(builder: (context) {
+      return PlusTile(
+        width: width,
+        height: height,
+        onTap: () {
+          final box = context.findRenderObject() as RenderBox?;
+          openListeningStats(context,
+              from: box?.localToGlobal(box.size.center(Offset.zero)));
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.bar_chart_rounded, color: accent, size: 20),
+                const Spacer(),
+                const Icon(Icons.north_east_rounded,
+                    color: Colors.white38, size: 16),
+              ],
+            ),
+            const Spacer(),
+            SizedBox(
+              height: 26,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  for (var i = 0; i < 7; i++) ...[
+                    if (i > 0) const SizedBox(width: 3),
+                    Expanded(
+                      child: Container(
+                        height: 4 + 22 * days[i] / top,
+                        decoration: BoxDecoration(
+                          color: i == 6 ? accent : accent.withOpacity(0.35),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text('${_statNum((total / 60).round())} min',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800)),
+            const Text('this week',
+                style: TextStyle(color: Colors.white54, fontSize: 12)),
+          ],
+        ),
+      );
+    });
+  }
+}
+
+/// YTM / Local switch with a sliding highlight.
+class PlusModeSwitch extends StatelessWidget {
+  final bool yt;
+  final ValueChanged<bool> onChange;
+  const PlusModeSwitch({super.key, required this.yt, required this.onChange});
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = appState.palette.accent;
+    return Container(
+      width: 168,
+      height: 38,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: _plusCard,
+        borderRadius: BorderRadius.circular(19),
+      ),
+      child: Stack(
+        children: [
+          AnimatedAlign(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutBack,
+            alignment: yt ? Alignment.centerLeft : Alignment.centerRight,
+            child: Container(
+              width: 81,
+              decoration: BoxDecoration(
+                color: accent,
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              for (final (label, v) in const [('YTM', true), ('Local', false)])
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => onChange(v),
+                    child: Center(
+                      child: Text(label,
+                          style: TextStyle(
+                            color: v == yt ? Colors.black : Colors.white70,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w800,
+                          )),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Numbered song row (PLUS quick picks).
+class PlusNumberedRow extends StatelessWidget {
+  final int number;
+  final TrackItem track;
+  final VoidCallback onTap;
+  const PlusNumberedRow(
+      {super.key,
+      required this.number,
+      required this.track,
+      required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return SquishyGesture(
+      pressedScale: 0.98,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 34,
+              child: Text('$number',
+                  style: const TextStyle(
+                      color: Colors.white24,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -1)),
+            ),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                width: 52,
+                height: 52,
+                child: NowPlayingArt(
+                    trackId: track.id,
+                    child: CustomAlbumArtwork(track: track)),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(track.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700)),
+                  Text(track.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white54, fontSize: 13.5)),
+                ],
+              ),
+            ),
+            SquishyGesture(
+              pressedScale: 0.85,
+              onTap: () => track.isYouTube
+                  ? showYtAddToPlaylist(context, track)
+                  : showAddToPlaylistSheet(context, track),
+              child: const Padding(
+                padding: EdgeInsets.all(8),
+                child: Icon(Icons.more_horiz_rounded,
+                    color: Colors.white38, size: 22),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Square song cards in a side-scrolling row.
+class PlusCardRow extends StatelessWidget {
+  final List<TrackItem> tracks;
+  final ValueChanged<int> onTap;
+  const PlusCardRow({super.key, required this.tracks, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 196,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        itemCount: tracks.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, i) {
+          final t = tracks[i];
+          return SquishyGesture(
+            pressedScale: 0.95,
+            onTap: () => onTap(i),
+            child: SizedBox(
+              width: 146,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: SizedBox(
+                      width: 146,
+                      height: 146,
+                      child: NowPlayingArt(
+                          trackId: t.id,
+                          child: CustomAlbumArtwork(track: t)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(t.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700)),
+                  Text(t.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white54, fontSize: 12.5)),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Bottom bar: mini player (play button wrapped in a progress ring) and tabs.
+class PlusDock extends StatelessWidget {
+  final int tab;
+  final ValueChanged<int> onTab;
+  const PlusDock({super.key, required this.tab, required this.onTab});
+
+  static const _items = [
+    (Icons.home_rounded, 'Home'),
+    (Icons.sensors_rounded, 'Mix'),
+    (Icons.library_music_rounded, 'Library'),
+    (Icons.search_rounded, 'Search'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = appState.palette.accent;
+    final bottom = MediaQuery.of(context).padding.bottom;
+    return ValueListenableBuilder<int>(
+      valueListenable: audioHandler.currentIndex,
+      builder: (context, _, __) {
+        final t = audioHandler.currentTrack;
+        return Container(
+          padding: EdgeInsets.only(bottom: bottom),
+          decoration: const BoxDecoration(
+            color: Color(0xFF0A0A0D),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+            border: Border(top: BorderSide(color: _plusLine)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (t != null)
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => openPlayer(context),
+                  onVerticalDragEnd: (d) {
+                    if ((d.primaryVelocity ?? 0) < -250) openPlayer(context);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 10, 4),
+                    child: Row(
+                      children: [
+                        Hero(
+                          tag: 'now_playing_art',
+                          createRectTween: _arcTween,
+                          flightShuttleBuilder: _artShuttle,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: SizedBox(
+                                width: 46,
+                                height: 46,
+                                child: CustomAlbumArtwork(track: t)),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(t.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700)),
+                              Text(t.artist,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: Colors.white54, fontSize: 12.5)),
+                            ],
+                          ),
+                        ),
+                        StreamBuilder<bool>(
+                          stream: audioHandler.player.playingStream,
+                          initialData: audioHandler.player.playing,
+                          builder: (_, p) {
+                            final playing = p.data ?? false;
+                            return TrackProgress(
+                              fallbackSeconds: t.durationSeconds,
+                              builder: (context, pos, dur) {
+                                final v = dur.inMilliseconds <= 0
+                                    ? 0.0
+                                    : pos.inMilliseconds / dur.inMilliseconds;
+                                return SquishyGesture(
+                                  pressedScale: 0.85,
+                                  onTap: () => playing
+                                      ? audioHandler.pause()
+                                      : audioHandler.play(),
+                                  child: SizedBox(
+                                    width: 46,
+                                    height: 46,
+                                    child: CustomPaint(
+                                      painter: _RingPainter(
+                                          v, Colors.white12, accent),
+                                      child: Icon(
+                                          playing
+                                              ? Icons.pause_rounded
+                                              : Icons.play_arrow_rounded,
+                                          color: Colors.white,
+                                          size: 24),
+                                    ),
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.skip_next_rounded,
+                              color: Colors.white, size: 28),
+                          onPressed: audioHandler.skipToNext,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              SizedBox(
+                height: 58,
+                child: Row(
+                  children: [
+                    for (var i = 0; i < _items.length; i++)
+                      Expanded(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            if (i == 3) {
+                              showSearchSheet(context);
+                            } else {
+                              onTab(i);
+                            }
+                          },
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(_items[i].$1,
+                                  size: 23,
+                                  color:
+                                      i == tab ? Colors.white : Colors.white38),
+                              const SizedBox(height: 3),
+                              Text(_items[i].$2,
+                                  style: TextStyle(
+                                    color: i == tab
+                                        ? Colors.white
+                                        : Colors.white38,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  )),
+                              const SizedBox(height: 4),
+                              AnimatedContainer(
+                                duration: const Duration(milliseconds: 260),
+                                curve: Curves.easeOutBack,
+                                width: i == tab ? 18 : 0,
+                                height: 3,
+                                decoration: BoxDecoration(
+                                  color: accent,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── PLUS player ─────────────────────────────────────────────────────────
+
+/// Bar heights for the "barcode" seek bar: the same song always gets the
+/// same pattern.
+List<double> _plusBars(String id, int n) {
+  var h = 0x811C9DC5;
+  for (final c in id.codeUnits) {
+    h = ((h ^ c) * 0x01000193) & 0x7fffffff;
+  }
+  final rnd = Random(h);
+  final raw = [for (var i = 0; i < n; i++) 0.25 + 0.75 * rnd.nextDouble()];
+  return [
+    for (var i = 0; i < n; i++)
+      (raw[max(0, i - 1)] + raw[i] * 2 + raw[min(n - 1, i + 1)]) / 4
+  ];
+}
+
+class _PlusSeekPainter extends CustomPainter {
+  final double value;
+  final bool dragging;
+  final List<double> bars;
+  final Color accent;
+  _PlusSeekPainter(this.value, this.dragging, this.bars, this.accent);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final n = bars.length;
+    final slot = size.width / n;
+    final w = max(2.0, slot * 0.55);
+    final on = Paint()..color = accent;
+    final off = Paint()..color = Colors.white.withOpacity(0.16);
+    final cy = size.height / 2;
+    for (var i = 0; i < n; i++) {
+      final played = (i + 0.5) / n <= value;
+      var h = size.height * bars[i];
+      if (dragging && played) h = min(size.height, h * 1.15);
+      final x = i * slot + (slot - w) / 2;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromLTWH(x, cy - h / 2, w, h), Radius.circular(w / 2)),
+        played ? on : off,
+      );
+    }
+    // Playhead.
+    final px = (size.width * value).clamp(1.0, size.width - 1);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          Rect.fromCenter(
+              center: Offset(px, cy), width: 3, height: size.height + 8),
+          const Radius.circular(2)),
+      Paint()..color = Colors.white,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_PlusSeekPainter o) =>
+      o.value != value ||
+      o.dragging != dragging ||
+      o.accent != accent ||
+      !identical(o.bars, bars);
+}
+
+class PlusPlayerView extends StatelessWidget {
+  final TrackItem track;
+  final bool playing;
+  final bool loading;
+  final bool shuffle;
+  final AudioServiceRepeatMode repeat;
+  final bool liked;
+  const PlusPlayerView({
+    super.key,
+    required this.track,
+    required this.playing,
+    required this.loading,
+    required this.shuffle,
+    required this.repeat,
+    required this.liked,
+  });
+
+  static final Map<String, List<double>> _barCache = {};
+
+  void _more(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _plusCard,
+      showDragHandle: true,
+      builder: (ctx) {
+        Widget item(IconData i, String t, VoidCallback f) => ListTile(
+              leading: Icon(i, color: Colors.white70),
+              title: Text(t, style: const TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(ctx);
+                f();
+              },
+            );
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              item(Icons.playlist_add_rounded, 'Add to playlist',
+                  () => showAddToPlaylistSheet(context, track)),
+              item(Icons.bedtime_outlined, 'Sleep timer',
+                  () => showSleepTimerSheet(context)),
+              item(Icons.person_rounded, 'Go to artist',
+                  () => goToArtist(context, track)),
+              item(Icons.ios_share_rounded, 'Share', () => shareTrack(track)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Color>(
+      future: artSeedFor(track),
+      builder: (context, snap) {
+        final seed = snap.data ?? track.artColors.first;
+        final accent = Color.lerp(seed, Colors.white, 0.4)!;
+        return TweenAnimationBuilder<Color?>(
+          tween: ColorTween(end: accent),
+          duration: const Duration(milliseconds: 500),
+          builder: (context, c, _) => _body(context, c ?? accent),
+        );
+      },
+    );
+  }
+
+  Widget _body(BuildContext context, Color accent) {
+    final immersive = appState.b('immersive_art');
+    final bars = _barCache.putIfAbsent(track.id, () => _plusBars(track.id, 48));
+    final source = liked
+        ? 'Your likes'
+        : track.isYouTube
+            ? 'Streaming'
+            : 'On this phone';
+
+    Widget side(IconData icon, VoidCallback onTap, {bool on = false}) =>
+        SquishyGesture(
+          pressedScale: 0.85,
+          onTap: () {
+            HapticFeedback.selectionClick();
+            onTap();
+          },
+          child: SizedBox(
+            width: 48,
+            height: 48,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 22, color: on ? accent : Colors.white54),
+                const SizedBox(height: 3),
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: on ? 4 : 0,
+                  height: 4,
+                  decoration:
+                      BoxDecoration(color: accent, shape: BoxShape.circle),
+                ),
+              ],
+            ),
+          ),
+        );
+
+    Widget tab(IconData icon, String label, VoidCallback onTap,
+            {bool on = false}) =>
+        Expanded(
+          child: SquishyGesture(
+            pressedScale: 0.9,
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 21, color: on ? accent : Colors.white),
+                  const SizedBox(height: 3),
+                  Text(label,
+                      style: TextStyle(
+                          color: on ? accent : Colors.white54,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+          ),
+        );
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // A still glow of the song's colour in the top corner.
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(-0.9, -1.0),
+                radius: 1.3,
+                colors: [accent.withOpacity(0.28), Colors.black],
+              ),
+            ),
+          ),
+          if (immersive)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: ImmersiveArt(track: track, playing: playing),
+            ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 22),
+              child: Column(
+                children: [
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      SquishyGesture(
+                        pressedScale: 0.85,
+                        onTap: () => Navigator.of(context).pop(),
+                        child: const SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: Icon(Icons.keyboard_arrow_down_rounded,
+                              color: Colors.white, size: 30),
+                        ),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.35),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.white12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('PLUS',
+                                style: TextStyle(
+                                    color: accent,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 1.4)),
+                            const SizedBox(width: 8),
+                            Text(source,
+                                style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      const Spacer(),
+                      SquishyGesture(
+                        pressedScale: 0.85,
+                        onTap: () => _more(context),
+                        child: const SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: Icon(Icons.more_vert_rounded,
+                              color: Colors.white, size: 24),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (immersive)
+                    const Spacer()
+                  else
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        child: Center(
+                          child: AspectRatio(
+                            aspectRatio: 1,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(28),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: accent.withOpacity(0.22),
+                                    blurRadius: 36,
+                                    offset: const Offset(0, 16),
+                                  ),
+                                ],
+                              ),
+                              child: Hero(
+                                tag: 'now_playing_art',
+                                createRectTween: _arcTween,
+                                flightShuttleBuilder: _artShuttle,
+                                child: SwipeArtCarousel(
+                                    track: track,
+                                    playing: playing,
+                                    radius: 28),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  // ── Title, artist, like
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(track.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 25,
+                                    height: 1.1,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: -0.6)),
+                            const SizedBox(height: 4),
+                            GestureDetector(
+                              onTap: () => goToArtist(context, track),
+                              child: Text(track.artist,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: accent,
+                                      fontSize: 15.5,
+                                      fontWeight: FontWeight.w700)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      SquishyGesture(
+                        pressedScale: 0.8,
+                        onTap: () {
+                          HapticFeedback.lightImpact();
+                          appState.toggleLike(track.id);
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 250),
+                          width: 46,
+                          height: 46,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: liked ? accent : Colors.transparent,
+                            border: Border.all(
+                                color: liked ? accent : Colors.white24,
+                                width: 1.5),
+                          ),
+                          child: Icon(
+                            liked
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            color: liked ? Colors.black : Colors.white,
+                            size: 22,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  // ── Barcode seek bar
+                  RepaintBoundary(
+                    child: PlayerSeek(
+                      fallbackSeconds: track.durationSeconds,
+                      height: 34,
+                      timeStyle: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: [ui.FontFeature.tabularFigures()],
+                      ),
+                      track: (v, dragging) => CustomPaint(
+                        painter: _PlusSeekPainter(v, dragging, bars, accent),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // ── Controls
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      side(Icons.shuffle_rounded, () {
+                        audioHandler.setShuffleMode(shuffle
+                            ? AudioServiceShuffleMode.none
+                            : AudioServiceShuffleMode.all);
+                      }, on: shuffle),
+                      SquishyGesture(
+                        pressedScale: 0.85,
+                        onTap: audioHandler.skipToPrevious,
+                        child: const SizedBox(
+                          width: 56,
+                          height: 56,
+                          child: Icon(Icons.skip_previous_rounded,
+                              color: Colors.white, size: 38),
+                        ),
+                      ),
+                      SquishyGesture(
+                        pressedScale: 0.9,
+                        onTap: () =>
+                            playing ? audioHandler.pause() : audioHandler.play(),
+                        child: TweenAnimationBuilder<double>(
+                          tween: Tween(end: playing ? 40.0 : 26.0),
+                          duration: const Duration(milliseconds: 380),
+                          curve: Curves.easeOutBack,
+                          builder: (_, r, child) => Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              color: accent,
+                              borderRadius:
+                                  BorderRadius.circular(r.clamp(8.0, 40.0)),
+                            ),
+                            child: child,
+                          ),
+                          child: Center(
+                            child: loading
+                                ? const SizedBox(
+                                    width: 28,
+                                    height: 28,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 3, color: Colors.black),
+                                  )
+                                : Icon(
+                                    playing
+                                        ? Icons.pause_rounded
+                                        : Icons.play_arrow_rounded,
+                                    color: Colors.black,
+                                    size: 40),
+                          ),
+                        ),
+                      ),
+                      SquishyGesture(
+                        pressedScale: 0.85,
+                        onTap: audioHandler.skipToNext,
+                        child: const SizedBox(
+                          width: 56,
+                          height: 56,
+                          child: Icon(Icons.skip_next_rounded,
+                              color: Colors.white, size: 38),
+                        ),
+                      ),
+                      side(
+                          repeat == AudioServiceRepeatMode.one
+                              ? Icons.repeat_one_rounded
+                              : Icons.repeat_rounded,
+                          () => audioHandler.setRepeatMode(_nextRepeat(repeat)),
+                          on: repeat != AudioServiceRepeatMode.none),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // ── Tab strip
+                  Container(
+                    decoration: BoxDecoration(
+                      color: _plusCard,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      children: [
+                        tab(Icons.lyrics_outlined, 'Lyrics',
+                            () => showLyricsSheet(context, track)),
+                        tab(Icons.queue_music_rounded, 'Up next',
+                            () => showQueueSheet(context)),
+                        tab(Icons.graphic_eq_rounded, 'Sound',
+                            () => showPlaybackSheet(context),
+                            on: soundModified),
+                        ValueListenableBuilder<String?>(
+                          valueListenable: audioHandler.sleepLabel,
+                          builder: (_, label, __) => tab(
+                              Icons.bedtime_outlined,
+                              'Sleep',
+                              () => showSleepTimerSheet(context),
+                              on: label != null),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                 ],
               ),
             ),
@@ -22040,517 +23574,6 @@ class PrestigeDock extends StatelessWidget {
   }
 }
 
-/// A light that slowly travels around the artwork (Prestige player).
-class _LightRing extends StatefulWidget {
-  final Color color;
-  final bool spinning;
-  final double radius;
-  final Widget child;
-  const _LightRing({
-    required this.color,
-    required this.spinning,
-    required this.radius,
-    required this.child,
-  });
-
-  @override
-  State<_LightRing> createState() => _LightRingState();
-}
-
-class _LightRingState extends State<_LightRing>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: const Duration(seconds: 9));
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.spinning) _c.repeat();
-  }
-
-  @override
-  void didUpdateWidget(_LightRing old) {
-    super.didUpdateWidget(old);
-    if (widget.spinning && !_c.isAnimating) _c.repeat();
-    if (!widget.spinning && _c.isAnimating) _c.stop();
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Positioned.fill(
-          child: RepaintBoundary(
-           child: AnimatedBuilder(
-            animation: _c,
-            builder: (_, __) => CustomPaint(
-              painter: _RingLightPainter(
-                  _c.value, widget.color, widget.radius, widget.spinning),
-            ),
-           ),
-          ),
-        ),
-        // The artwork gets its own layer so the moving light never makes
-        // it redraw.
-        RepaintBoundary(child: widget.child),
-      ],
-    );
-  }
-}
-
-class _RingLightPainter extends CustomPainter {
-  final double t;
-  final Color color;
-  final double radius;
-  final bool on;
-  _RingLightPainter(this.t, this.color, this.radius, this.on);
-
-  // The ring's outline is measured once per size, not every frame.
-  static Size? _cachedSize;
-  static double? _cachedRadius;
-  static ui.PathMetric? _metric;
-  static Path? _path;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const gap = 9.0;
-    if (_cachedSize != size || _cachedRadius != radius || _metric == null) {
-      final rect = Rect.fromLTWH(
-          -gap, -gap, size.width + gap * 2, size.height + gap * 2);
-      final rr = RRect.fromRectAndRadius(
-          rect, Radius.circular(min(radius + gap, rect.shortestSide / 2)));
-      _path = Path()..addRRect(rr);
-      _metric = _path!.computeMetrics().first;
-      _cachedSize = size;
-      _cachedRadius = radius;
-    }
-    final m = _metric!;
-    // Faint static outline.
-    canvas.drawPath(
-      _path!,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1
-        ..color = Colors.white.withOpacity(0.08),
-    );
-    // A small light with a fading tail travelling around the outline.
-    // Plain circles only (no blur filters), so it costs almost nothing.
-    final k = on ? 1.0 : 0.5;
-    final len = m.length;
-    final head = t * len;
-    final glowAt = m.getTangentForOffset(head)!.position;
-    canvas.drawCircle(
-      glowAt,
-      18,
-      Paint()
-        ..shader = RadialGradient(colors: [
-          color.withOpacity(0.55 * k),
-          color.withOpacity(0),
-        ]).createShader(Rect.fromCircle(center: glowAt, radius: 18)),
-    );
-    final dot = Paint();
-    for (var i = 0; i < 16; i++) {
-      var d = head - i * 5.0;
-      if (d < 0) d += len;
-      final p = m.getTangentForOffset(d)!.position;
-      final f = 1 - i / 16;
-      dot.color = Color.lerp(color, Colors.white, f * 0.8)!
-          .withOpacity(f * 0.95 * k);
-      canvas.drawCircle(p, 1.2 + 1.8 * f, dot);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_RingLightPainter o) =>
-      o.t != t || o.color != color || o.on != on || o.radius != radius;
-}
-
-class PrestigePlayerView extends StatelessWidget {
-  final TrackItem track;
-  final bool playing;
-  final bool loading;
-  final bool shuffle;
-  final AudioServiceRepeatMode repeat;
-  final bool liked;
-  const PrestigePlayerView({
-    super.key,
-    required this.track,
-    required this.playing,
-    required this.loading,
-    required this.shuffle,
-    required this.repeat,
-    required this.liked,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<Color>(
-      future: artSeedFor(track),
-      builder: (context, snap) {
-        final seed = snap.data ?? track.artColors.first;
-        final accent = Color.lerp(seed, Colors.white, 0.45)!;
-        return _body(context, accent);
-      },
-    );
-  }
-
-  Widget _body(BuildContext context, Color accent) {
-    final radius = appState.vinylSpinMode ? 999.0 : 26.0;
-    final immersive = appState.b('immersive_art');
-    final source = liked
-        ? 'Your likes'
-        : track.isYouTube
-            ? 'Streaming'
-            : 'On this phone';
-
-    Widget ctl(IconData icon, VoidCallback onTap,
-            {bool on = false, double size = 26}) =>
-        SquishyGesture(
-          pressedScale: 0.85,
-          onTap: () {
-            HapticFeedback.selectionClick();
-            onTap();
-          },
-          child: SizedBox(
-            width: 50,
-            height: 50,
-            child: Icon(icon,
-                size: size, color: on ? accent : Colors.white.withOpacity(0.85)),
-          ),
-        );
-
-    Widget dock(IconData icon, String label, VoidCallback onTap,
-            {bool on = false}) =>
-        Expanded(
-          child: SquishyGesture(
-            pressedScale: 0.88,
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, size: 21, color: on ? accent : Colors.white70),
-                  const SizedBox(height: 3),
-                  Text(label,
-                      style: TextStyle(
-                          color: on ? accent : Colors.white54,
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.3)),
-                ],
-              ),
-            ),
-          ),
-        );
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          PrestigeBackdrop(track: track, dim: 0.3, animate: false),
-          if (immersive)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: ImmersiveArt(track: track, playing: playing),
-            ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Column(
-                children: [
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      PrestigeCircleButton(
-                          icon: Icons.expand_more_rounded,
-                          size: 42,
-                          onTap: () => Navigator.of(context).pop()),
-                      Expanded(
-                        child: Column(
-                          children: [
-                            const Text('NOW PLAYING',
-                                style: TextStyle(
-                                    color: Colors.white54,
-                                    fontSize: 10.5,
-                                    letterSpacing: 2,
-                                    fontWeight: FontWeight.w800)),
-                            const SizedBox(height: 2),
-                            Text(source,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700)),
-                          ],
-                        ),
-                      ),
-                      PrestigeCircleButton(
-                          icon: Icons.more_horiz_rounded,
-                          size: 42,
-                          onTap: () => showAddToPlaylistSheet(context, track)),
-                    ],
-                  ),
-                  if (immersive) const Spacer() else Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 24, 18, 24),
-                      child: Center(
-                        child: AspectRatio(
-                          aspectRatio: 1,
-                          child: _LightRing(
-                            color: accent,
-                            spinning: playing,
-                            radius: radius,
-                            child: Hero(
-                              tag: 'now_playing_art',
-                              createRectTween: _arcTween,
-                              flightShuttleBuilder: _artShuttle,
-                              child: SwipeArtCarousel(
-                                  track: track,
-                                  playing: playing,
-                                  radius: radius),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(track.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 26,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: -0.6)),
-                            const SizedBox(height: 2),
-                            GestureDetector(
-                              onTap: () => goToArtist(context, track),
-                              child: Text(track.artist,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 16.5,
-                                      fontWeight: FontWeight.w600)),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SquishyGesture(
-                        pressedScale: 0.8,
-                        onTap: () {
-                          HapticFeedback.lightImpact();
-                          appState.toggleLike(track.id);
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.all(6),
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 420),
-                            switchInCurve: Curves.elasticOut,
-                            transitionBuilder: (c, a) =>
-                                ScaleTransition(scale: a, child: c),
-                            child: Icon(
-                              liked
-                                  ? Icons.favorite_rounded
-                                  : Icons.favorite_border_rounded,
-                              key: ValueKey(liked),
-                              color: liked ? accent : Colors.white70,
-                              size: 30,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  RepaintBoundary(
-                   child: PrestigeGlass(
-                    radius: 30,
-                    padding: const EdgeInsets.fromLTRB(18, 10, 18, 6),
-                    child: Column(
-                      children: [
-                        RepaintBoundary(
-                         child: PlayerSeek(
-                          fallbackSeconds: track.durationSeconds,
-                          height: 26,
-                          timeStyle: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
-                            fontFeatures: [ui.FontFeature.tabularFigures()],
-                          ),
-                          track: (v, dragging) => LayoutBuilder(
-                            builder: (_, k) {
-                              final h = dragging ? 7.0 : 4.0;
-                              return Stack(
-                                alignment: Alignment.centerLeft,
-                                clipBehavior: Clip.none,
-                                children: [
-                                  Container(
-                                    height: h,
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(0.18),
-                                      borderRadius: BorderRadius.circular(h),
-                                    ),
-                                  ),
-                                  Container(
-                                    height: h,
-                                    width: k.maxWidth * v,
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(h),
-                                      boxShadow: [
-                                        BoxShadow(
-                                            color: accent.withOpacity(0.6),
-                                            blurRadius: 10),
-                                      ],
-                                    ),
-                                  ),
-                                  Positioned(
-                                    left: k.maxWidth * v - 7,
-                                    child: AnimatedContainer(
-                                      duration:
-                                          const Duration(milliseconds: 150),
-                                      width: dragging ? 18 : 14,
-                                      height: dragging ? 18 : 14,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        shape: BoxShape.circle,
-                                        boxShadow: [
-                                          BoxShadow(
-                                              color: accent.withOpacity(0.8),
-                                              blurRadius: 12),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                        ),
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            ctl(Icons.shuffle_rounded, () {
-                              audioHandler.setShuffleMode(shuffle
-                                  ? AudioServiceShuffleMode.none
-                                  : AudioServiceShuffleMode.all);
-                            }, on: shuffle, size: 23),
-                            ctl(Icons.skip_previous_rounded,
-                                audioHandler.skipToPrevious,
-                                size: 38),
-                            SquishyGesture(
-                              pressedScale: 0.9,
-                              onTap: () => playing
-                                  ? audioHandler.pause()
-                                  : audioHandler.play(),
-                              child: Container(
-                                width: 74,
-                                height: 74,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: accent.withOpacity(0.5),
-                                      blurRadius: 26,
-                                    ),
-                                  ],
-                                ),
-                                child: loading
-                                    ? const Padding(
-                                        padding: EdgeInsets.all(22),
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 3,
-                                            color: Colors.black),
-                                      )
-                                    : AnimatedSwitcher(
-                                        duration:
-                                            const Duration(milliseconds: 220),
-                                        transitionBuilder: (c, a) =>
-                                            ScaleTransition(scale: a, child: c),
-                                        child: Icon(
-                                          playing
-                                              ? Icons.pause_rounded
-                                              : Icons.play_arrow_rounded,
-                                          key: ValueKey(playing),
-                                          color: Colors.black,
-                                          size: 40,
-                                        ),
-                                      ),
-                              ),
-                            ),
-                            ctl(Icons.skip_next_rounded,
-                                audioHandler.skipToNext,
-                                size: 38),
-                            ctl(
-                                repeat == AudioServiceRepeatMode.one
-                                    ? Icons.repeat_one_rounded
-                                    : Icons.repeat_rounded,
-                                () => audioHandler
-                                    .setRepeatMode(_nextRepeat(repeat)),
-                                on: repeat != AudioServiceRepeatMode.none,
-                                size: 23),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                            height: 1, color: Colors.white.withOpacity(0.08)),
-                        Row(
-                          children: [
-                            dock(Icons.lyrics_outlined, 'Lyrics',
-                                () => showLyricsSheet(context, track)),
-                            dock(Icons.queue_music_rounded, 'Up next',
-                                () => showQueueSheet(context)),
-                            dock(Icons.graphic_eq_rounded, 'Sound',
-                                () => showPlaybackSheet(context),
-                                on: soundModified),
-                            ValueListenableBuilder<String?>(
-                              valueListenable: audioHandler.sleepLabel,
-                              builder: (_, label, __) => dock(
-                                  Icons.bedtime_outlined,
-                                  'Sleep',
-                                  () => showSleepTimerSheet(context),
-                                  on: label != null),
-                            ),
-                            dock(Icons.ios_share_rounded, 'Share',
-                                () => shareTrack(track)),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 // ═══════════════════════ Pocket ═══════════════════════
 // Bare-bones and fast, for big libraries and low-end phones: plain text
