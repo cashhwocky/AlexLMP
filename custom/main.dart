@@ -753,6 +753,11 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   String? _ytRecoverId;
   int _ytRecoverCount = 0;
   Duration _lastGoodPosition = Duration.zero;
+  // Last position seen while actually playing (not counting the jump that
+  // can happen when the player reports "completed").
+  Duration _readyPosition = Duration.zero;
+  String? _endRecoverId;
+  int _endRecoverCount = 0;
 
   final ValueNotifier<int> currentIndex = ValueNotifier<int>(0);
   final ValueNotifier<int> libraryRevision = ValueNotifier<int>(0);
@@ -794,13 +799,20 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
     player.positionStream.listen((p) {
       if (p > Duration.zero) _lastGoodPosition = p;
+      if (player.processingState == ProcessingState.ready && p > Duration.zero) {
+        _readyPosition = p;
+      }
     });
 
     player.processingStateStream.listen((state) {
       if (state == ProcessingState.ready) {
         _applySpeedAndPitch();
       } else if (state == ProcessingState.completed) {
-        _onCompleted();
+        if (_isPrematureYouTubeEnd()) {
+          _resumeAfterPrematureEnd();
+        } else {
+          _onCompleted();
+        }
       }
     });
 
@@ -975,8 +987,11 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     final t = tracks[i];
     mediaItem.add(t.toMediaItem());
     _lastGoodPosition = Duration.zero;
+    _readyPosition = Duration.zero;
     _ytRecoverId = null;
     _ytRecoverCount = 0;
+    _endRecoverId = null;
+    _endRecoverCount = 0;
     try {
       if (t.isYouTube) {
         await _setYouTubeSource(t, seq);
@@ -1058,6 +1073,44 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     } catch (_) {
     } finally {
       _ytRecovering = false;
+    }
+  }
+
+  /// True when a YouTube song "finished" noticeably before its real length —
+  /// i.e. the stream got cut off near the end rather than actually ending.
+  bool _isPrematureYouTubeEnd() {
+    final t = currentTrack;
+    if (t == null || !t.isYouTube || _loadedId != t.id) return false;
+    final dur = player.duration;
+    if (dur == null || dur.inSeconds < 20) return false;
+    if (_endRecoverId != t.id) {
+      _endRecoverId = t.id;
+      _endRecoverCount = 0;
+    }
+    if (_endRecoverCount >= 3) return false; // give up: move on normally
+    return _readyPosition < dur - const Duration(seconds: 3);
+  }
+
+  /// Reloads the song with a fresh stream and continues from where it cut off.
+  Future<void> _resumeAfterPrematureEnd() async {
+    final t = currentTrack;
+    if (t == null) return;
+    _endRecoverCount++;
+    final seq = _loadSeq;
+    final resumeAt = _readyPosition;
+    try {
+      final uri = await YouTubeMusic.prepare(t.ytVideoId!, refresh: true);
+      if (seq != _loadSeq) return;
+      await player.setAudioSource(
+        AudioSource.uri(uri, tag: t.id),
+        initialPosition: resumeAt,
+      );
+      if (seq != _loadSeq) return;
+      await _applySpeedAndPitch();
+      player.play();
+    } catch (_) {
+      // Couldn't recover: behave like a normal song end.
+      if (seq == _loadSeq) _onCompleted();
     }
   }
 
@@ -1805,6 +1858,329 @@ class LiquidGlassBox extends StatelessWidget {
   }
 }
 
+/// Liquid Glass bottom bar (only used when Liquid Glass is on in Settings).
+///
+/// At rest the selected tab sits in a dark glass pill. Press and hold and the
+/// pill swells into a clear, frosted lens that pokes out past the bar; slide
+/// your finger and it follows (stretching with your speed), lighting up the
+/// tab underneath. Let go and it springs onto the nearest tab.
+class LiquidGlassNavBar extends StatefulWidget {
+  final int selected;
+  final List<(IconData, String)> items;
+  final ValueChanged<int> onSelect;
+  final AppPalette palette;
+
+  const LiquidGlassNavBar({
+    super.key,
+    required this.selected,
+    required this.items,
+    required this.onSelect,
+    required this.palette,
+  });
+
+  @override
+  State<LiquidGlassNavBar> createState() => _LiquidGlassNavBarState();
+}
+
+class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
+    with TickerProviderStateMixin {
+  static const double _pad = 6;
+  static const double _h = 56;
+
+  // Indicator position measured in "tabs" (0 = first tab, 1 = second, ...).
+  late final AnimationController _pos =
+      AnimationController.unbounded(vsync: this, value: widget.selected.toDouble());
+  // 0 = resting pill, 1 = pressed lens.
+  late final AnimationController _press = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 240),
+    reverseDuration: const Duration(milliseconds: 320),
+  );
+  // Horizontal stretch from finger speed; decays back to 0.
+  late final AnimationController _stretch =
+      AnimationController.unbounded(vsync: this, value: 0);
+
+  double _tabW = 100;
+  bool _dragging = false;
+  int _hovered = -1;
+  Duration? _lastTs;
+
+  int get _n => widget.items.length;
+
+  @override
+  void didUpdateWidget(covariant LiquidGlassNavBar old) {
+    super.didUpdateWidget(old);
+    if (!_dragging && widget.selected != old.selected) {
+      _springPos(widget.selected.toDouble());
+    }
+  }
+
+  @override
+  void dispose() {
+    _pos.dispose();
+    _press.dispose();
+    _stretch.dispose();
+    super.dispose();
+  }
+
+  void _springPos(double target, [double velocity = 0]) {
+    _pos.animateWith(SpringSimulation(
+      // Slightly under-damped: lands with a small liquid wobble.
+      const SpringDescription(mass: 1, stiffness: 380, damping: 22),
+      _pos.value,
+      target,
+      velocity,
+    ));
+  }
+
+  double _tabAt(double localX) =>
+      ((localX - _pad) / _tabW - 0.5).clamp(0.0, (_n - 1).toDouble()).toDouble();
+
+  void _pressDown(double localX) {
+    HapticFeedback.lightImpact();
+    _press.animateTo(1, curve: Curves.easeOutBack);
+    _springPos(_tabAt(localX));
+    _hovered = _tabAt(localX).round();
+  }
+
+  void _release({double velocityTabs = 0, bool select = true}) {
+    _dragging = false;
+    _lastTs = null;
+    final target = (_pos.value + velocityTabs * 0.08)
+        .round()
+        .clamp(0, _n - 1)
+        .toInt();
+    _press.animateBack(0, curve: Curves.easeOutCubic);
+    _stretch.animateWith(SpringSimulation(
+      const SpringDescription(mass: 1, stiffness: 300, damping: 18),
+      _stretch.value,
+      0,
+      0,
+    ));
+    if (!select) {
+      _springPos(widget.selected.toDouble());
+      return;
+    }
+    _springPos(target.toDouble(), velocityTabs);
+    if (target != widget.selected) {
+      HapticFeedback.selectionClick();
+      widget.onSelect(target);
+    }
+  }
+
+  void _dragUpdate(DragUpdateDetails d) {
+    _dragging = true;
+    _pos.value = _tabAt(d.localPosition.dx);
+    // Stretch with speed (px per ms), smoothed.
+    final ts = d.sourceTimeStamp;
+    double speed = d.delta.dx.abs() / 16.0;
+    if (ts != null && _lastTs != null) {
+      final ms = (ts - _lastTs!).inMicroseconds / 1000.0;
+      if (ms > 0) speed = d.delta.dx.abs() / ms;
+    }
+    _lastTs = ts;
+    final target = (speed * 0.18).clamp(0.0, 0.38).toDouble();
+    _stretch.value = _stretch.value + (target - _stretch.value) * 0.35;
+    final h = _pos.value.round();
+    if (h != _hovered) {
+      _hovered = h;
+      HapticFeedback.selectionClick();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = widget.palette;
+    return LayoutBuilder(builder: (context, c) {
+      final w = c.maxWidth;
+      _tabW = (w - _pad * 2) / _n;
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (d) => _pressDown(d.localPosition.dx),
+        onTapUp: (_) => _release(),
+        onTapCancel: () {
+          // A tap turns into a drag by cancelling first; only reset if no
+          // drag actually started (e.g. the touch became a scroll).
+          Future.delayed(const Duration(milliseconds: 60), () {
+            if (mounted && !_dragging) _release(select: false);
+          });
+        },
+        onHorizontalDragStart: (d) {
+          _dragging = true;
+          _press.animateTo(1, curve: Curves.easeOutBack);
+          _pos.value = _tabAt(d.localPosition.dx);
+        },
+        onHorizontalDragUpdate: _dragUpdate,
+        onHorizontalDragEnd: (d) =>
+            _release(velocityTabs: d.velocity.pixelsPerSecond.dx / _tabW),
+        onHorizontalDragCancel: () => _release(),
+        child: AnimatedBuilder(
+          animation: Listenable.merge([_pos, _press, _stretch]),
+          builder: (context, _) {
+            final p = _press.value; // may overshoot slightly (easeOutBack)
+            final pc = p.clamp(0.0, 1.0).toDouble();
+            final st = _stretch.value.clamp(0.0, 0.5).toDouble();
+            final active = _pos.value.round().clamp(0, _n - 1);
+
+            // Indicator geometry: grows past the bar when pressed, stretches
+            // sideways with speed and squashes vertically to match.
+            final indW = _tabW * (1 + 0.32 * p) * (1 + st);
+            final indH = _h * (1 + 0.34 * p) * (1 - 0.22 * st);
+            final cx = _pad + (_pos.value + 0.5) * _tabW;
+            final left = cx - indW / 2;
+            final top = _pad + (_h - indH) / 2;
+
+            return SizedBox(
+              height: _h + _pad * 2,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // ── The bar: frosted, see-through, thin bright rim.
+                  Positioned.fill(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(36),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.40),
+                            blurRadius: 22,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(36),
+                        child: BackdropFilter(
+                          filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(36),
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.white.withOpacity(0.10),
+                                  pal.bg.withOpacity(0.35),
+                                ],
+                              ),
+                              border: Border.all(
+                                color: Colors.white.withOpacity(0.16),
+                                width: 1,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  // ── The selection pill / liquid lens.
+                  Positioned(
+                    left: left,
+                    top: top,
+                    width: indW,
+                    height: indH,
+                    child: _lens(pal, pc, indH),
+                  ),
+                  // ── Icons + labels (on top, so they stay readable).
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Padding(
+                        padding: const EdgeInsets.all(_pad),
+                        child: Row(
+                          children: [
+                            for (var i = 0; i < _n; i++)
+                              Expanded(child: _tab(pal, i, i == active, pc)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      );
+    });
+  }
+
+  Widget _lens(AppPalette pal, double p, double h) {
+    final r = BorderRadius.circular(h / 2);
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: r,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.18 + 0.22 * p),
+            blurRadius: 10 + 14 * p,
+            offset: Offset(0, 3 + 5 * p),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: r,
+        child: BackdropFilter(
+          // Resting: light frost. Pressed: heavier, lens-like frost.
+          filter: ui.ImageFilter.blur(sigmaX: 4 + 10 * p, sigmaY: 4 + 10 * p),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: r,
+              // Dark tinted pill at rest -> bright clear glass when pressed.
+              color: Color.lerp(
+                Colors.black.withOpacity(0.30),
+                Colors.white.withOpacity(0.16),
+                p,
+              ),
+              border: Border.all(
+                color: Colors.white.withOpacity(0.10 + 0.45 * p),
+                width: 1 + 0.6 * p,
+              ),
+            ),
+            foregroundDecoration: BoxDecoration(
+              borderRadius: r,
+              // Specular highlight along the top edge + soft glow at the bottom.
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.white.withOpacity(0.06 + 0.30 * p),
+                  Colors.white.withOpacity(0.0),
+                  Colors.white.withOpacity(0.0),
+                  Colors.white.withOpacity(0.04 + 0.14 * p),
+                ],
+                stops: const [0.0, 0.35, 0.7, 1.0],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tab(AppPalette pal, int i, bool active, double p) {
+    final color = active ? pal.accent : const Color(0xFFE2E6EA);
+    return AnimatedScale(
+      scale: active ? 1.0 + 0.06 * p : 1.0,
+      duration: const Duration(milliseconds: 160),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(widget.items[i].$1, size: 22, color: color),
+          const SizedBox(height: 2),
+          Text(
+            widget.items[i].$2,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class AuroraPlasmaBackground extends StatefulWidget {
   final Color accent;
   final Color secondary;
@@ -2093,7 +2469,23 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        Expanded(child: _navBar(pal)),
+                        Expanded(
+                          child: appState.liquidGlass
+                              ? LiquidGlassNavBar(
+                                  selected: _tab,
+                                  palette: pal,
+                                  items: const [
+                                    (Icons.home_rounded, 'Home'),
+                                    (Icons.sensors_rounded, 'Mix'),
+                                    (Icons.library_music_rounded, 'Library'),
+                                  ],
+                                  onSelect: (i) => setState(() {
+                                    _dir = i >= _tab ? 1 : -1;
+                                    _tab = i;
+                                  }),
+                                )
+                              : _navBar(pal),
+                        ),
                         const SizedBox(width: 10),
                         SquishyGesture(
                           onTap: () => showSearchSheet(context),
