@@ -346,7 +346,7 @@ class AppState extends ChangeNotifier {
   bool vinylSpinMode = false;
   bool stopOnTaskClear = true;
   bool linkSpeedAndPitch = false;
-  bool swipeRightForNext = true;
+  bool swipeRightForNext = false; // default: swipe left = next (like a carousel)
   String playerStyle = 'alex'; // alex (default), modern, expressive, apple, simp, jog
   bool animatedBackground = false;
   bool artBackdrop = false;
@@ -529,7 +529,12 @@ class AppState extends ChangeNotifier {
     vinylSpinMode = prefs.getBool('vinyl_spin_mode') ?? false;
     stopOnTaskClear = prefs.getBool('stop_on_task_clear') ?? true;
     linkSpeedAndPitch = prefs.getBool('link_speed_pitch') ?? false;
-    swipeRightForNext = prefs.getBool('swipe_right_next') ?? true;
+    // Swipe left = next is now the default (the old default felt backwards).
+    if (prefs.getBool('swipe_left_default_v1') != true) {
+      await prefs.setBool('swipe_right_next', false);
+      await prefs.setBool('swipe_left_default_v1', true);
+    }
+    swipeRightForNext = prefs.getBool('swipe_right_next') ?? false;
     playerStyle = prefs.getString('player_style') ?? 'alex';
     animatedBackground = prefs.getBool('animated_bg') ?? false;
     artBackdrop = prefs.getBool('art_backdrop') ?? false;
@@ -3526,8 +3531,11 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (audioHandler.currentTrack != null) ...[
-                  MiniPlayer(track: audioHandler.currentTrack!, palette: pal),
-                  const SizedBox(height: 8),
+                  MiniPlayer(
+                      track: audioHandler.currentTrack!,
+                      palette: pal,
+                      compact: true),
+                  const SizedBox(height: 6),
                 ],
                 AmNavBar(
                   selected: _amTab,
@@ -10894,7 +10902,15 @@ class MiniPlayer extends StatefulWidget {
   final TrackItem track;
   final AppPalette palette;
 
-  const MiniPlayer({super.key, required this.track, required this.palette});
+  /// Smaller version (used by the Apple Music app style).
+  final bool compact;
+
+  const MiniPlayer({
+    super.key,
+    required this.track,
+    required this.palette,
+    this.compact = false,
+  });
 
   @override
   State<MiniPlayer> createState() => _MiniPlayerState();
@@ -10988,24 +11004,25 @@ class _MiniPlayerState extends State<MiniPlayer>
   Widget _content(BuildContext context) {
     final track = widget.track;
     final palette = widget.palette;
+    final k = widget.compact ? 0.8 : 1.0;
     return SquishyGesture(
       pressedScale: 0.97,
       onTap: () => openPlayer(context),
       child: LiquidGlassBox(
         realBlur: true,
-        borderRadius: BorderRadius.circular(appState.community ? 22 : 34),
+        borderRadius: BorderRadius.circular(appState.community ? 22 : 34 * k),
         fallbackColor: appState.community
             ? appState.scheme.surfaceContainerHighest
             : palette.surface,
         padding: const EdgeInsets.symmetric(horizontal: 10),
         boxShadow: _shadow,
         child: SizedBox(
-          height: 66,
+          height: 66 * k,
           child: Row(
             children: [
               SizedBox(
-                width: 46,
-                height: 46,
+                width: 46 * k,
+                height: 46 * k,
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
@@ -11017,8 +11034,8 @@ class _MiniPlayerState extends State<MiniPlayer>
                                 .clamp(0.0, 1.0)
                             : 0.0;
                         return SizedBox(
-                          width: 46,
-                          height: 46,
+                          width: 46 * k,
+                          height: 46 * k,
                           child: CircularProgressIndicator(
                             value: v,
                             strokeWidth: 2.6,
@@ -11035,8 +11052,8 @@ class _MiniPlayerState extends State<MiniPlayer>
                       flightShuttleBuilder: _artShuttle,
                       child: ClipOval(
                         child: SizedBox(
-                          width: 36,
-                          height: 36,
+                          width: 36 * k,
+                          height: 36 * k,
                           child: CustomAlbumArtwork(track: track),
                         ),
                       ),
@@ -11054,20 +11071,20 @@ class _MiniPlayerState extends State<MiniPlayer>
                       track.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: Colors.white,
-                        fontSize: 16,
+                        fontSize: 16 * (widget.compact ? 0.9 : 1.0),
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 3),
+                    SizedBox(height: 3 * k),
                     Text(
                       track.artist,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFFB3B9BE),
-                        fontSize: 13,
+                      style: TextStyle(
+                        color: const Color(0xFFB3B9BE),
+                        fontSize: 13 * (widget.compact ? 0.92 : 1.0),
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -11077,8 +11094,8 @@ class _MiniPlayerState extends State<MiniPlayer>
               SquishyGesture(
                 onTap: () => appState.toggleLike(track.id),
                 child: Container(
-                  width: 44,
-                  height: 44,
+                  width: 44 * k,
+                  height: 44 * k,
                   decoration: BoxDecoration(
                     color: palette.container,
                     shape: BoxShape.circle,
@@ -11090,7 +11107,7 @@ class _MiniPlayerState extends State<MiniPlayer>
                     color: appState.isLiked(track.id)
                         ? palette.accent
                         : const Color(0xFFD5DCE0),
-                    size: 21,
+                    size: 21 * k,
                   ),
                 ),
               ),
@@ -11104,8 +11121,8 @@ class _MiniPlayerState extends State<MiniPlayer>
                     onTap: () =>
                         playing ? audioHandler.pause() : audioHandler.play(),
                     child: Container(
-                      width: 46,
-                      height: 46,
+                      width: 46 * k,
+                      height: 46 * k,
                       decoration: BoxDecoration(
                         color: palette.accent,
                         shape: BoxShape.circle,
@@ -11122,7 +11139,7 @@ class _MiniPlayerState extends State<MiniPlayer>
                               : Icons.play_arrow_rounded,
                           key: ValueKey(playing),
                           color: palette.onAccent,
-                          size: 26,
+                          size: 26 * k,
                         ),
                       ),
                     ),
@@ -13352,10 +13369,10 @@ class SettingsScreen extends StatelessWidget {
         _switch(
           pal,
           Icons.swipe_rounded,
-          'Swipe right for next song',
+          'Reverse swipe direction',
           appState.swipeRightForNext
-              ? 'Swipe right = next, left = previous (art & mini player)'
-              : 'Swipe left = next, right = previous (art & mini player)',
+              ? 'On: swipe right = next, left = previous'
+              : 'Off: swipe left = next, right = previous (like flipping pages)',
           appState.swipeRightForNext,
           appState.setSwipeRightForNext,
         ),
@@ -15911,11 +15928,11 @@ class AmNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 78,
-      padding: const EdgeInsets.all(4),
+      height: 62,
+      padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
         color: const Color(0xFF1E1E20).withOpacity(0.97),
-        borderRadius: BorderRadius.circular(39),
+        borderRadius: BorderRadius.circular(31),
         border: Border.all(color: Colors.white10),
         boxShadow: const [
           BoxShadow(color: Colors.black54, blurRadius: 24, offset: Offset(0, 8)),
@@ -15936,7 +15953,7 @@ class AmNavBar extends StatelessWidget {
                 child: Container(
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.09),
-                    borderRadius: BorderRadius.circular(35),
+                    borderRadius: BorderRadius.circular(28),
                   ),
                 ),
               ),
@@ -15952,13 +15969,13 @@ class AmNavBar extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(_items[i].$1,
-                                size: 29,
+                                size: 23,
                                 color: i == selected ? kAmTint : Colors.white),
-                            const SizedBox(height: 2),
+                            const SizedBox(height: 1),
                             Text(
                               _items[i].$2,
                               style: TextStyle(
-                                fontSize: 12.5,
+                                fontSize: 10.5,
                                 fontWeight: FontWeight.w600,
                                 color: i == selected ? kAmTint : Colors.white,
                               ),
@@ -16343,12 +16360,110 @@ class TinyArtBackdrop extends StatelessWidget {
   }
 }
 
-class AmArtBackground extends StatelessWidget {
+/// Apple Music style background: soft blobs of the album's colours drifting
+/// slowly. Plain gradients (no blur pass), so it stays smooth.
+class AmArtBackground extends StatefulWidget {
   final TrackItem track;
   const AmArtBackground({super.key, required this.track});
 
   @override
-  Widget build(BuildContext context) => TinyArtBackdrop(track: track, dim: 0.38);
+  State<AmArtBackground> createState() => _AmArtBackgroundState();
+}
+
+class _AmArtBackgroundState extends State<AmArtBackground>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _t = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 26),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _t.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Color>(
+      future: artSeedFor(widget.track),
+      builder: (context, snap) {
+        final seed = snap.data ?? widget.track.artColors.first;
+        final hsl = HSLColor.fromColor(seed);
+        Color shade(double dh, double l, [double s = 0.65]) => hsl
+            .withHue((hsl.hue + dh) % 360)
+            .withSaturation((hsl.saturation * s + 0.15).clamp(0.0, 1.0))
+            .withLightness(l)
+            .toColor();
+        final base = shade(0, 0.16, 0.5);
+        final c1 = shade(0, 0.42);
+        final c2 = shade(28, 0.34);
+        final c3 = shade(-30, 0.28);
+        return IgnorePointer(
+          child: RepaintBoundary(
+            child: TweenAnimationBuilder<Color?>(
+              tween: ColorTween(end: base),
+              duration: const Duration(milliseconds: 900),
+              builder: (context, b, _) => AnimatedBuilder(
+                animation: _t,
+                builder: (context, _) => CustomPaint(
+                  painter: _AmBlobPainter(
+                    _t.value,
+                    b ?? base,
+                    [c1, c2, c3],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _AmBlobPainter extends CustomPainter {
+  final double t;
+  final Color base;
+  final List<Color> colors;
+  _AmBlobPainter(this.t, this.base, this.colors);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = base);
+    final a = t * 2 * pi;
+    final w = size.width, h = size.height;
+    final spots = [
+      Offset(w * (0.3 + 0.18 * sin(a)), h * (0.25 + 0.1 * cos(a * 1.3))),
+      Offset(w * (0.75 + 0.15 * cos(a * 0.8)), h * (0.5 + 0.14 * sin(a * 1.1))),
+      Offset(w * (0.35 + 0.2 * cos(a * 1.2)), h * (0.82 + 0.08 * sin(a * 0.9))),
+    ];
+    for (var i = 0; i < spots.length; i++) {
+      final r = max(w, h) * (0.55 + 0.05 * sin(a + i));
+      canvas.drawCircle(
+        spots[i],
+        r,
+        Paint()
+          ..shader = RadialGradient(
+            colors: [colors[i].withOpacity(0.75), colors[i].withOpacity(0)],
+          ).createShader(Rect.fromCircle(center: spots[i], radius: r)),
+      );
+    }
+    // Slight darkening toward the bottom so the controls stay readable.
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.black.withOpacity(0.05), Colors.black.withOpacity(0.35)],
+        ).createShader(Offset.zero & size),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _AmBlobPainter old) =>
+      old.t != t || old.base != base || old.colors != colors;
 }
 
 /// Thick rounded seek bar with times underneath and a source label.
