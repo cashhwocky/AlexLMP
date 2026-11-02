@@ -504,6 +504,10 @@ class AppState extends ChangeNotifier {
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     _prefs = prefs;
+    // Brand-new install: start on the YTM tab.
+    if (prefs.getKeys().isEmpty) {
+      await prefs.setString('home_mode', 'youtube');
+    }
     // One-time switch to the new defaults: Material You wallpaper colors on,
     // moving background glow off.
     // One-time switch to the defaults: AMOLED (true black) theme, no
@@ -752,17 +756,20 @@ class AppState extends ChangeNotifier {
       _rememberIfYt(id);
     }
     _saveYtLiked();
+    final track = audioHandler.trackById(id);
+    YouTubeMusic.patchLikedCache(videoId, track, !wasLiked);
     notifyListeners();
     _ytChannel
         .invokeMethod('ytRate', {'videoId': videoId, 'like': !wasLiked})
         .then((_) {
-      // Liked Music changed: reload it next time it's shown.
-      YouTubeMusic.prefs?.remove('ytpl_LM');
+      // Refresh Liked Music in the background; the patched copy shows
+      // meanwhile, so there's no spinner.
       _AlexLmpRootState._ytLikedFuture = null;
       appNotice.value = wasLiked
           ? 'Removed from your YouTube Music likes.'
           : 'Added to your YouTube Music likes.';
     }).catchError((Object e) {
+      YouTubeMusic.patchLikedCache(videoId, track, wasLiked);
       if (wasLiked) {
         _ytLiked.add(id);
         if (hadLocal) {
@@ -1037,6 +1044,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       },
     );
 
+    player.positionStream.listen(_maybeCrossfade);
     player.positionStream.listen((p) {
       if (p > Duration.zero) _saveSession(p);
       if (p > Duration.zero) _lastGoodPosition = p;
@@ -1553,8 +1561,88 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     }
   }
 
+  // ── Crossfade (beta) ─────────────────────────────────────────────────
+  // Near the end of a song, a second "ghost" player keeps playing the tail
+  // of the current song while fading out, and the next song fades in.
+  AudioPlayer? _ghost;
+  bool _crossfading = false;
+
+  void _maybeCrossfade(Duration pos) {
+    if (_crossfading || !appState.b('crossfade_on') || !player.playing) return;
+    final dur = player.duration;
+    if (dur == null || dur.inSeconds < 20) return;
+    final secs = appState.d('crossfade_secs', 6.0);
+    final left = dur - pos;
+    if (left > Duration(milliseconds: (secs * 1000).round()) ||
+        left < const Duration(milliseconds: 800)) {
+      return;
+    }
+    if (playbackState.value.repeatMode == AudioServiceRepeatMode.one) return;
+    if (_nextIndex(auto: false) == null) return;
+    _startCrossfade(secs);
+  }
+
+  Future<void> _rampVolume(AudioPlayer p, double from, double to, double secs) async {
+    const stepMs = 50;
+    final steps = max(1, (secs * 1000 / stepMs).round());
+    for (var i = 1; i <= steps; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: stepMs));
+      try {
+        await p.setVolume(from + (to - from) * (i / steps));
+      } catch (_) {
+        return;
+      }
+    }
+  }
+
+  Future<void> _killGhost() async {
+    final g = _ghost;
+    _ghost = null;
+    if (g == null) return;
+    try {
+      await g.stop();
+    } catch (_) {}
+    try {
+      await g.dispose();
+    } catch (_) {}
+  }
+
+  Future<void> _startCrossfade(double secs) async {
+    final src = player.audioSource;
+    if (src is! UriAudioSource) return;
+    _crossfading = true;
+    final base = player.volume > 0.01 ? player.volume : _userVolume;
+    final ghost = AudioPlayer();
+    try {
+      await _killGhost();
+      _ghost = ghost;
+      await ghost.setAudioSource(AudioSource.uri(src.uri),
+          initialPosition: player.position);
+      try {
+        await ghost.setSpeed(player.speed);
+        await ghost.setPitch(appState.pitch.clamp(0.5, 2.0));
+      } catch (_) {}
+      await ghost.setVolume(base);
+      ghost.play();
+      await player.setVolume(0);
+      await skipToNext();
+      await Future.wait([
+        _rampVolume(ghost, base, 0, secs),
+        _rampVolume(player, 0, base, secs),
+      ]);
+    } catch (_) {
+      try {
+        await player.setVolume(base);
+      } catch (_) {}
+    } finally {
+      if (identical(_ghost, ghost)) await _killGhost();
+      _crossfading = false;
+    }
+  }
+
   @override
   Future<void> pause() async {
+    if (_ghost != null) _killGhost();
     if (appState.b('smooth_fade') && player.playing) {
       _userVolume = player.volume > 0.01 ? player.volume : _userVolume;
       await _fade(_userVolume, 0);
@@ -2375,6 +2463,27 @@ class YouTubeMusic {
       thumbnail ?? m['thumbnail'] as String?,
       _tracks(m['tracks']),
     );
+  }
+
+  /// Adds/removes one song in the saved copy of Liked Music so the list is
+  /// right immediately, while the real one reloads in the background.
+  static void patchLikedCache(String videoId, TrackItem? t, bool add) {
+    try {
+      final raw = prefs?.getString('ytpl_LM');
+      final m = raw == null
+          ? <String, dynamic>{'title': 'Liked Music', 'tracks': <dynamic>[]}
+          : Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      final list = List<dynamic>.from((m['tracks'] as List?) ?? const []);
+      list.removeWhere((e) => e is Map && e['videoId'] == videoId);
+      if (add) {
+        list.insert(
+          0,
+          t?.toYtJson() ?? {'videoId': videoId, 'title': '', 'artist': ''},
+        );
+      }
+      m['tracks'] = list;
+      prefs?.setString('ytpl_LM', jsonEncode(m));
+    } catch (_) {}
   }
 
   /// Last loaded copy of one of your playlists (shown instantly while the
@@ -3354,6 +3463,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     super.initState();
     appNotice.addListener(_onNotice);
     audioHandler.currentIndex.addListener(_trackRecent);
+    startWidgetSync();
     // Pick up a new wallpaper colour when you come back to the app.
     _life = AppLifecycleListener(onResume: () {
       applyNativeSettings();
@@ -4476,7 +4586,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 size: 14, color: pal.accent),
             const SizedBox(width: 6),
             Text(
-              yt ? 'YOUTUBE MUSIC' : 'LOCAL MUSIC',
+              yt ? 'YTM' : 'LOCAL MUSIC',
               style: TextStyle(
                 color: pal.accent,
                 fontSize: 12,
@@ -6239,9 +6349,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  _homeChip(pal, 'Local', !yt, () => _setMode('local')),
+                  _homeChip(pal, 'YTM', yt, () => _setMode('youtube')),
                   const SizedBox(width: 8),
-                  _homeChip(pal, 'YouTube', yt, () => _setMode('youtube')),
+                  _homeChip(pal, 'Local', !yt, () => _setMode('local')),
                 ],
               ),
             ),
@@ -10130,9 +10240,30 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
     super.dispose();
   }
 
+  static const double _upMax = 170;
+  bool _openingQueue = false;
+
   void _update(DragUpdateDetails d) {
-    if (_dismissing) return;
-    _c.value = (_c.value + d.delta.dy).clamp(-24.0, double.infinity).toDouble();
+    if (_dismissing || _openingQueue) return;
+    var dy = d.delta.dy;
+    // Pulling up gets heavier the further you go (rubber band).
+    if (_c.value < 0 && dy < 0) dy *= 1 - (-_c.value / _upMax) * 0.7;
+    final before = _c.value;
+    _c.value = (_c.value + dy).clamp(-_upMax, double.infinity).toDouble();
+    if (before > -70 && _c.value <= -70) HapticFeedback.selectionClick();
+  }
+
+  Future<void> _openQueue(double velocity) async {
+    _openingQueue = true;
+    HapticFeedback.mediumImpact();
+    // Lift the player a little, then the queue slides up over it.
+    await _c.animateTo(-_upMax * 0.75,
+        duration: const Duration(milliseconds: 120), curve: Curves.easeOut);
+    if (!mounted) return;
+    final sheet = showQueueSheet(context);
+    _springBack(0);
+    await sheet;
+    _openingQueue = false;
   }
 
   void _springBack(double velocity) {
@@ -10147,9 +10278,17 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
   }
 
   void _end(DragEndDetails d) {
-    if (_dismissing) return;
+    if (_dismissing || _openingQueue) return;
     final v = d.velocity.pixelsPerSecond.dy;
     final h = MediaQuery.of(context).size.height;
+    if (_c.value < 0) {
+      if (_c.value <= -70 || v < -700) {
+        _openQueue(v);
+      } else {
+        _springBack(v);
+      }
+      return;
+    }
     if (_c.value > h * 0.08 || v > 450) {
       HapticFeedback.lightImpact();
       setState(() => _dismissing = true);
@@ -10177,6 +10316,69 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
         animation: _c,
         builder: (context, child) {
           final h = MediaQuery.of(context).size.height;
+          if (_c.value < 0) {
+            // Pulling up: the player lifts, shrinks and rounds off, and an
+            // "Up next" hint rises from the bottom.
+            final up = (-_c.value / _upMax).clamp(0.0, 1.0).toDouble();
+            final pal = appState.palette;
+            return Stack(
+              children: [
+                Positioned.fill(child: ColoredBox(color: Colors.black)),
+                Transform.translate(
+                  offset: Offset(0, _c.value * 0.55),
+                  child: Transform.scale(
+                    scale: 1 - 0.07 * up,
+                    alignment: Alignment.bottomCenter,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(up * 34),
+                      child: child,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 18 + 40 * up,
+                  child: IgnorePointer(
+                    child: Opacity(
+                      opacity: up,
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 18, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.6),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(
+                                color: pal.accent.withOpacity(0.5)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Transform.rotate(
+                                angle: -pi / 2 * (1 - up),
+                                child: Icon(Icons.keyboard_arrow_up_rounded,
+                                    color: pal.accent, size: 22),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                up >= 0.41 ? 'Release for queue' : 'Up next',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
           final p = (_c.value / h).clamp(0.0, 1.0).toDouble();
           return Transform.translate(
             offset: Offset(0, _c.value),
@@ -13280,6 +13482,17 @@ class SettingsScreen extends StatelessWidget {
     final wallPal = hasWallpaper
         ? AppPalette.fromSeed('Wallpaper', appState.wallpaperColor!)
         : null;
+    final themeOptions = <String, String>{
+      if (wallPal != null) 'Wallpaper': 'Wallpaper (Material You)',
+      AppPalette.adaptiveName: 'Adaptive (from album art)',
+      for (final t in AppPalette.all) t.name: t.name,
+    };
+    var themeValue = wallOn
+        ? 'Wallpaper'
+        : appState.isAdaptive
+            ? AppPalette.adaptiveName
+            : appState.themeName;
+    if (!themeOptions.containsKey(themeValue)) themeValue = themeOptions.keys.first;
     return [
       _section(pal, 'Appearance', Icons.palette_rounded, [
         _dropdown<String>(
@@ -13298,6 +13511,22 @@ class SettingsScreen extends StatelessWidget {
             if (v == 'apple') appState.setPlayerStyle('apple');
           },
         ),
+        _dropdown<String>(
+          pal,
+          Icons.tune_rounded,
+          'Player style',
+          'How the player controls look',
+          appState.playerStyle,
+          const {
+            'alex': 'AlexLMP (Default)',
+            'modern': 'Modern',
+            'expressive': 'Expressive',
+            'apple': 'Apple Music',
+            'simp': 'SimpMusic',
+            'jog': 'Community Suggested (Jog Wheel)',
+          },
+          appState.setPlayerStyle,
+        ),
         if (appState.community)
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -13306,53 +13535,20 @@ class SettingsScreen extends StatelessWidget {
               style: TextStyle(color: Colors.white54, fontSize: 12.5),
             ),
           ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Color theme',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  if (wallPal != null)
-                    ThemeChip(
-                      label: 'Wallpaper',
-                      selected: wallOn,
-                      swatch: [wallPal.accent, wallPal.playerButton, wallPal.bg],
-                      accent: wallPal.accent,
-                      onAccent: wallPal.onAccent,
-                      onTap: () => appState.setB('use_wallpaper_colors', true),
-                    ),
-                  ThemeChip(
-                    label: 'Adaptive',
-                    selected: appState.isAdaptive && !wallOn,
-                    swatch: const [
-                      Color(0xFFFF6FAE),
-                      Color(0xFFFFC94D),
-                      Color(0xFF2EE6C8),
-                      Color(0xFF2E9BFF),
-                    ],
-                    accent: pal.accent,
-                    onAccent: pal.onAccent,
-                    onTap: () => appState.setTheme(AppPalette.adaptiveName),
-                  ),
-                  for (final t in AppPalette.all)
-                    ThemeChip(
-                      label: t.name.split(' ').first,
-                      selected: appState.themeName == t.name && !wallOn,
-                      swatch: [t.accent, t.playerButton, t.bg],
-                      accent: t.accent,
-                      onAccent: t.onAccent,
-                      onTap: () => appState.setTheme(t.name),
-                    ),
-                ],
-              ),
-            ],
-          ),
+        _dropdown<String>(
+          pal,
+          Icons.color_lens_rounded,
+          'Color theme',
+          'Colors used across the app',
+          themeValue,
+          themeOptions,
+          (v) {
+            if (v == 'Wallpaper') {
+              appState.setB('use_wallpaper_colors', true);
+            } else {
+              appState.setTheme(v);
+            }
+          },
         ),
         _switch(
           pal,
@@ -13398,22 +13594,6 @@ class SettingsScreen extends StatelessWidget {
   List<Widget> _nowPlaying(BuildContext context, AppPalette pal) {
     return [
       _section(pal, 'Now Playing', Icons.music_note_rounded, [
-        _dropdown<String>(
-          pal,
-          Icons.tune_rounded,
-          'Player style',
-          'How the player controls look',
-          appState.playerStyle,
-          const {
-            'alex': 'AlexLMP (Default)',
-            'modern': 'Modern',
-            'expressive': 'Expressive',
-            'apple': 'Apple Music',
-            'simp': 'SimpMusic',
-            'jog': 'Community Suggested (Jog Wheel)',
-          },
-          appState.setPlayerStyle,
-        ),
         _switch(pal, Icons.image_rounded, 'Album art background',
             'Blurred cover art fills the player', appState.artBackdrop,
             appState.setArtBackdrop),
@@ -13466,6 +13646,14 @@ class SettingsScreen extends StatelessWidget {
         _tile(pal, Icons.speed_rounded, 'Speed & pitch',
             '${appState.speed.toStringAsFixed(2)}x speed • ${appState.pitch.toStringAsFixed(2)}x pitch',
             () => showPlaybackSheet(context)),
+        _flag(pal, Icons.compare_arrows_rounded, 'crossfade_on', 'Crossfade',
+            'Fades each song into the next one',
+            badge: 'BETA'),
+        if (appState.b('crossfade_on'))
+          _segments(pal, Icons.timer_outlined, 'Crossfade length',
+              appState.d('crossfade_secs', 6.0),
+              <double, String>{3: '3 s', 6: '6 s', 10: '10 s'},
+              (v) => appState.setD('crossfade_secs', v)),
         _flag(pal, Icons.graphic_eq_rounded, 'smooth_fade', 'Smooth play/pause',
             'Gently fades the volume in and out'),
         _flag(pal, Icons.fast_forward_rounded, 'skip_silence', 'Skip silence',
@@ -13978,8 +14166,8 @@ void showPlaybackSheet(BuildContext context) {
   );
 }
 
-void showQueueSheet(BuildContext context) {
-  _sheet(
+Future<void> showQueueSheet(BuildContext context) {
+  return _sheet(
     context,
     (ctx) => SizedBox(
       height: MediaQuery.of(ctx).size.height * 0.7,
@@ -19013,7 +19201,7 @@ class _SetupScreenState extends State<SetupScreen> {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.5.0';
+const String kAppVersion = '2.6.0';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -19863,6 +20051,60 @@ class DownloadsScreen extends StatelessWidget {
       },
     );
   }
+}
+
+// ═══════════════════════ Home screen widget ═══════════════════════
+// Sends the current song (title, artist, artwork, playing) to the Android
+// widget whenever it changes.
+
+String? _widgetTrackId;
+bool? _widgetPlaying;
+
+bool _widgetSyncStarted = false;
+
+void startWidgetSync() {
+  if (_widgetSyncStarted) return;
+  _widgetSyncStarted = true;
+  void push() => _pushWidget();
+  audioHandler.currentIndex.addListener(push);
+  audioHandler.libraryRevision.addListener(push);
+  audioHandler.playbackState.listen((st) {
+    if (st.playing != _widgetPlaying) push();
+  });
+  push();
+}
+
+Future<void> _pushWidget() async {
+  if (!Platform.isAndroid) return;
+  final t = audioHandler.currentTrack;
+  final playing = audioHandler.playbackState.value.playing;
+  if (t?.id == _widgetTrackId && playing == _widgetPlaying) return;
+  final trackChanged = t?.id != _widgetTrackId;
+  _widgetTrackId = t?.id;
+  _widgetPlaying = playing;
+  String? artPath;
+  try {
+    final dir = await getApplicationDocumentsDirectory();
+    final f = File('${dir.path}/widget_art.img');
+    if (t != null && trackChanged) {
+      final bytes = await loadArt(t);
+      if (bytes != null && bytes.isNotEmpty) {
+        await f.writeAsBytes(bytes, flush: true);
+      } else if (await f.exists()) {
+        await f.delete();
+      }
+    }
+    if (await f.exists()) artPath = f.path;
+  } catch (_) {}
+  try {
+    await _mediaChannel.invokeMethod('updateWidget', {
+      'title': t?.title ?? 'Nothing playing',
+      'artist': t?.artist ?? 'Open AlexLMP to start',
+      'playing': playing,
+      'art': artPath,
+      'artChanged': trackChanged,
+    });
+  } catch (_) {}
 }
 
 /// Soft pulsing placeholder shapes shown while content loads.
