@@ -2446,6 +2446,9 @@ class YouTubeMusic {
 
   /// Resolves a song and returns the local URL the player should load.
   static Future<Uri> prepare(String videoId, {bool refresh = false}) async {
+    // Saved for offline? Play the file — no internet needed.
+    final local = OfflineStore.pathForVideo(videoId);
+    if (local != null) return Uri.file(local);
     final url = await _ytChannel.invokeMethod<String>('ytPrepare', {
       'videoId': videoId,
       'refresh': refresh,
@@ -4083,6 +4086,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         amListRow(Icons.music_note_rounded, 'Songs', () {
           push('Songs', (ctx) => amSongList(ctx, d.songs, _amPlay));
         }),
+        amListRow(Icons.download_done_rounded, 'Downloaded',
+            () => openDownloads(context)),
         amListRow(Icons.account_box_outlined, 'Made For You', () {
           push(
               'Made For You',
@@ -5125,6 +5130,18 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   subtitle: likedSub,
                   onTap: () => openYtLikedMusic(context),
                 ),
+                _libRow(
+                  pal,
+                  cover: GradientCover(
+                    icon: Icons.download_done_rounded,
+                    colors: [pal.playerButton, pal.accent],
+                    size: 60,
+                    iconColor: pal.onAccent,
+                  ),
+                  title: 'Downloaded',
+                  subtitle: '${OfflineStore.count} saved for offline',
+                  onTap: () => openDownloads(context),
+                ),
                 for (final p in pls)
                   _libRow(
                     pal,
@@ -5154,6 +5171,18 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     title: 'Liked Songs',
                     subtitle: likedSub,
                     onTap: () => openYtLikedMusic(context),
+                  ),
+                  MediaCard(
+                    width: cw,
+                    cover: GradientCover(
+                      icon: Icons.download_done_rounded,
+                      colors: [pal.playerButton, pal.accent],
+                      size: cw,
+                      iconColor: pal.onAccent,
+                    ),
+                    title: 'Downloaded',
+                    subtitle: '${OfflineStore.count} saved',
+                    onTap: () => openDownloads(context),
                   ),
                   for (var i = 0; i < pls.length; i++)
                     Reveal(
@@ -5345,6 +5374,20 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     : 'Auto playlist • ${liked.length} ${liked.length == 1 ? 'song' : 'songs'}',
                 onTap: () => openYtLikedMusic(context),
                 trailing: const Icon(Icons.push_pin_rounded, size: 18),
+              ),
+              _m3ListItem(
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: GradientCover(
+                    icon: Icons.download_done_rounded,
+                    colors: [cs.tertiary, cs.primary],
+                    size: 56,
+                    iconColor: cs.onPrimary,
+                  ),
+                ),
+                title: 'Downloaded',
+                subtitle: '${OfflineStore.count} saved for offline',
+                onTap: () => openDownloads(context),
               ),
               for (final p in snap.data ?? const <YtPlaylistRef>[])
                 _m3ListItem(
@@ -5783,6 +5826,17 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             MaterialPageRoute(builder: (_) => const LikedSongsScreen()),
           ),
           trailing: const Icon(Icons.push_pin_rounded, size: 18),
+        ));
+        items.add(_m3ListItem(
+          leading: cover(GradientCover(
+            icon: Icons.download_done_rounded,
+            colors: [cs.tertiary, cs.primary],
+            size: 56,
+            iconColor: cs.onPrimary,
+          )),
+          title: 'Downloaded',
+          subtitle: '${OfflineStore.count} saved for offline',
+          onTap: () => openDownloads(context),
         ));
         if (ytAccount.value.signedIn) {
           items.add(_m3ListItem(
@@ -10222,19 +10276,31 @@ class TrackRow extends StatelessWidget {
                 ),
               ),
               SizedBox(height: compact ? 2 : 4),
-              Text(
-                track.isYouTube && community
-                    ? '${track.artist} • YouTube'
-                    : track.artist,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: community
-                      ? appState.scheme.onSurfaceVariant
-                      : const Color(0xFFA6ADB2),
-                  fontSize: compact ? 12.5 : 13.5,
-                  fontWeight: FontWeight.w500,
-                ),
+              Row(
+                children: [
+                  if (OfflineStore.isDownloaded(track))
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Icon(Icons.download_done_rounded,
+                          size: 15, color: palette.accent),
+                    ),
+                  Flexible(
+                    child: Text(
+                      track.isYouTube && community
+                          ? '${track.artist} • YouTube'
+                          : track.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: community
+                            ? appState.scheme.onSurfaceVariant
+                            : const Color(0xFFA6ADB2),
+                        fontSize: compact ? 12.5 : 13.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -12403,6 +12469,31 @@ void showAddToPlaylistSheet(BuildContext context, TrackItem track) {
                     ),
                   ],
                 ),
+                if (track.isYouTube) ...[
+                  const SizedBox(height: 10),
+                  ValueListenableBuilder<int>(
+                    valueListenable: OfflineStore.revision,
+                    builder: (_, __, ___) {
+                      final saved = OfflineStore.isDownloaded(track);
+                      final busy = OfflineStore.isBusy(track);
+                      return _menuAction(
+                        pal,
+                        saved
+                            ? Icons.download_done_rounded
+                            : Icons.download_for_offline_rounded,
+                        saved
+                            ? 'Remove download'
+                            : busy
+                                ? 'Saving…'
+                                : 'Download for offline',
+                        () {
+                          Navigator.pop(ctx);
+                          if (!busy) toggleOffline(track);
+                        },
+                      );
+                    },
+                  ),
+                ],
                 const SizedBox(height: 16),
                 const Text(
                   'ADD TO PLAYLIST',
@@ -13426,6 +13517,9 @@ class SettingsScreen extends StatelessWidget {
           !appState.b('setup_done'),
           (v) => appState.setB('setup_done', !v),
         ),
+        _tile(pal, Icons.download_done_rounded, 'Downloads',
+            '${OfflineStore.count} songs • ${OfflineStore.formatBytes(OfflineStore.totalBytes)} used',
+            () => openDownloads(context)),
         _tile(pal, Icons.system_update_rounded, 'Check for updates',
             'You have AlexLMP $kAppVersion',
             () => checkForUpdates(context, manual: true)),
@@ -18153,6 +18247,431 @@ Future<void> checkForUpdates(BuildContext context, {bool manual = false}) async 
   );
 }
 
+// ═══════════════════════ Offline saves ═══════════════════════
+// Songs are downloaded whole into the app's private storage (not the
+// phone's Music folder) and play from there with no internet. Artwork is
+// saved next to them so covers show offline too.
+
+class OfflineStore {
+  static final ValueNotifier<int> revision = ValueNotifier<int>(0);
+
+  /// videoId -> progress (0..1) for saves that are queued or running.
+  static final ValueNotifier<Map<String, double>> active =
+      ValueNotifier<Map<String, double>>(const {});
+
+  static final Map<String, Map<String, dynamic>> _items = {};
+  static bool _loaded = false;
+  static final List<TrackItem> _queue = [];
+  static bool _running = false;
+  static int _batchDone = 0;
+  static int _batchFailed = 0;
+
+  static void _load() {
+    if (_loaded) return;
+    final prefs = YouTubeMusic.prefs;
+    if (prefs == null) return;
+    _loaded = true;
+    try {
+      final raw = prefs.getString('offline_tracks');
+      if (raw == null) return;
+      (jsonDecode(raw) as Map).forEach((k, v) {
+        if (v is Map) _items[k.toString()] = Map<String, dynamic>.from(v);
+      });
+    } catch (_) {}
+  }
+
+  static void _save() {
+    try {
+      YouTubeMusic.prefs?.setString('offline_tracks', jsonEncode(_items));
+    } catch (_) {}
+    revision.value++;
+  }
+
+  static bool isDownloaded(TrackItem t) {
+    final id = t.ytVideoId;
+    if (id == null) return false;
+    _load();
+    return _items.containsKey(id);
+  }
+
+  static bool isBusy(TrackItem t) =>
+      t.ytVideoId != null && active.value.containsKey(t.ytVideoId);
+
+  static String? pathForVideo(String videoId) {
+    _load();
+    final p = _items[videoId]?['path'] as String?;
+    if (p == null) return null;
+    try {
+      if (File(p).existsSync()) return p;
+    } catch (_) {}
+    return null;
+  }
+
+  static String? artPathFor(TrackItem t) {
+    final id = t.ytVideoId;
+    if (id == null) return null;
+    _load();
+    final p = _items[id]?['art'] as String?;
+    if (p == null) return null;
+    try {
+      if (File(p).existsSync()) return p;
+    } catch (_) {}
+    return null;
+  }
+
+  /// Saved songs, newest first.
+  static List<TrackItem> tracks() {
+    _load();
+    final entries = _items.entries.toList()
+      ..sort((a, b) => ((b.value['at'] as num?) ?? 0)
+          .compareTo((a.value['at'] as num?) ?? 0));
+    final out = <TrackItem>[];
+    for (var i = 0; i < entries.length; i++) {
+      final m = entries[i].value['track'];
+      if (m is! Map) continue;
+      final t = TrackItem.fromYtJson(Map<String, dynamic>.from(m), i);
+      if (t != null) out.add(audioHandler.trackById(t.id) ?? t);
+    }
+    return out;
+  }
+
+  static int get count {
+    _load();
+    return _items.length;
+  }
+
+  static int get totalBytes {
+    _load();
+    var n = 0;
+    for (final v in _items.values) {
+      n += (v['bytes'] as num?)?.toInt() ?? 0;
+    }
+    return n;
+  }
+
+  static String formatBytes(int b) {
+    if (b >= 1024 * 1024 * 1024) {
+      return '${(b / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+    }
+    if (b >= 1024 * 1024) return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
+    if (b >= 1024) return '${(b / 1024).toStringAsFixed(0)} KB';
+    return '$b B';
+  }
+
+  static void _setActive(String id, double? p) {
+    final m = Map<String, double>.from(active.value);
+    if (p == null) {
+      m.remove(id);
+    } else {
+      m[id] = p;
+    }
+    active.value = m;
+  }
+
+  /// Queues one song. Returns false if it can't be saved (local file etc.).
+  static bool download(TrackItem t, {bool quiet = false}) {
+    final id = t.ytVideoId;
+    if (id == null) return false;
+    _load();
+    if (_items.containsKey(id) || active.value.containsKey(id)) return true;
+    _queue.add(t);
+    _setActive(id, 0);
+    if (!quiet) appNotice.value = 'Saving "${t.title}" for offline…';
+    _pump();
+    return true;
+  }
+
+  static void downloadAll(List<TrackItem> list) {
+    final todo =
+        list.where((t) => t.isYouTube && !isDownloaded(t) && !isBusy(t)).toList();
+    if (todo.isEmpty) {
+      appNotice.value = list.any((t) => t.isYouTube)
+          ? 'Already saved for offline.'
+          : 'Only YouTube Music songs need saving — local files already work offline.';
+      return;
+    }
+    for (final t in todo) {
+      download(t, quiet: true);
+    }
+    appNotice.value =
+        'Saving ${todo.length} ${todo.length == 1 ? 'song' : 'songs'} for offline…';
+  }
+
+  static Future<void> _pump() async {
+    if (_running) return;
+    _running = true;
+    _batchDone = 0;
+    _batchFailed = 0;
+    try {
+      while (_queue.isNotEmpty) {
+        final t = _queue.removeAt(0);
+        final id = t.ytVideoId!;
+        final poll = Timer.periodic(const Duration(milliseconds: 600), (_) async {
+          try {
+            final p = await _ytChannel
+                .invokeMethod<double>('ytOfflineProgress', {'videoId': id});
+            if (p != null && p >= 0 && active.value.containsKey(id)) {
+              _setActive(id, p);
+            }
+          } catch (_) {}
+        });
+        try {
+          final raw = await _ytChannel
+              .invokeMethod('ytSaveOffline', {'videoId': id});
+          final m = Map<String, dynamic>.from(raw as Map);
+          String? art;
+          try {
+            final bytes = await loadArt(t);
+            if (bytes != null && bytes.isNotEmpty) {
+              final dir = await getApplicationDocumentsDirectory();
+              final f = File('${dir.path}/offline_art/$id.img');
+              await f.parent.create(recursive: true);
+              await f.writeAsBytes(bytes, flush: true);
+              art = f.path;
+            }
+          } catch (_) {}
+          _items[id] = {
+            'track': t.toYtJson(),
+            'path': m['path'],
+            'bytes': m['bytes'],
+            'art': art,
+            'at': DateTime.now().millisecondsSinceEpoch,
+          };
+          _save();
+          _batchDone++;
+        } catch (e) {
+          _batchFailed++;
+          final detail = e is PlatformException ? (e.message ?? e.code) : '$e';
+          appNotice.value = 'Couldn\'t save "${t.title}": $detail';
+        } finally {
+          poll.cancel();
+          _setActive(id, null);
+        }
+      }
+      if (_batchDone > 0) {
+        appNotice.value = _batchFailed == 0
+            ? 'Saved $_batchDone ${_batchDone == 1 ? 'song' : 'songs'} for offline.'
+            : 'Saved $_batchDone, $_batchFailed failed.';
+      }
+    } finally {
+      _running = false;
+    }
+  }
+
+  static Future<void> delete(TrackItem t) async {
+    final id = t.ytVideoId;
+    if (id == null) return;
+    _load();
+    final art = _items[id]?['art'] as String?;
+    _items.remove(id);
+    _save();
+    try {
+      await _ytChannel.invokeMethod('ytDeleteOffline', {'videoId': id});
+    } catch (_) {}
+    if (art != null) {
+      try {
+        await File(art).delete();
+      } catch (_) {}
+    }
+  }
+
+  static Future<void> deleteAll() async {
+    _load();
+    final arts = _items.values.map((v) => v['art'] as String?).whereType<String>();
+    for (final a in arts.toList()) {
+      try {
+        await File(a).delete();
+      } catch (_) {}
+    }
+    _items.clear();
+    _queue.clear();
+    _save();
+    try {
+      await _ytChannel.invokeMethod('ytDeleteAllOffline');
+    } catch (_) {}
+  }
+}
+
+/// Download / remove-download action for a song (used in menus).
+void toggleOffline(TrackItem t) {
+  if (!t.isYouTube) {
+    appNotice.value = 'This song is already on your phone.';
+    return;
+  }
+  if (OfflineStore.isDownloaded(t)) {
+    OfflineStore.delete(t);
+    appNotice.value = 'Removed "${t.title}" from offline.';
+  } else {
+    OfflineStore.download(t);
+  }
+}
+
+void openDownloads(BuildContext context) {
+  Navigator.of(context).push(
+    MaterialPageRoute(builder: (_) => const DownloadsScreen()),
+  );
+}
+
+class DownloadsScreen extends StatelessWidget {
+  const DownloadsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        OfflineStore.revision,
+        OfflineStore.active,
+        appState,
+        audioHandler.currentIndex,
+      ]),
+      builder: (context, _) {
+        final pal = appState.palette;
+        final list = OfflineStore.tracks();
+        final busy = OfflineStore.active.value;
+        void play(int i) {
+          if (list.isEmpty) return;
+          audioHandler.playYouTubeList(list, i);
+          openPlayer(context);
+        }
+
+        return Scaffold(
+          backgroundColor: pal.bg,
+          appBar: AppBar(
+            backgroundColor: pal.bg,
+            foregroundColor: Colors.white,
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Downloaded',
+                    style: TextStyle(fontWeight: FontWeight.w800)),
+                Text(
+                  '${list.length} ${list.length == 1 ? 'song' : 'songs'} • ${OfflineStore.formatBytes(OfflineStore.totalBytes)}',
+                  style: const TextStyle(fontSize: 13, color: Colors.white60),
+                ),
+              ],
+            ),
+            actions: [
+              if (list.isNotEmpty)
+                IconButton(
+                  tooltip: 'Delete all downloads',
+                  icon: const Icon(Icons.delete_sweep_rounded),
+                  onPressed: () async {
+                    final ok = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Delete all downloads?'),
+                        content: Text(
+                            'Frees ${OfflineStore.formatBytes(OfflineStore.totalBytes)}. Songs stay in your likes and playlists.'),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: const Text('Cancel')),
+                          FilledButton(
+                              onPressed: () => Navigator.pop(ctx, true),
+                              child: const Text('Delete')),
+                        ],
+                      ),
+                    );
+                    if (ok == true) {
+                      await OfflineStore.deleteAll();
+                      appNotice.value = 'All downloads deleted.';
+                    }
+                  },
+                ),
+            ],
+          ),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 120),
+            children: [
+              if (busy.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 6),
+                  child: Text(
+                    'Saving ${busy.length} ${busy.length == 1 ? 'song' : 'songs'}…',
+                    style: TextStyle(
+                        color: pal.accent,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14),
+                  ),
+                ),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    minHeight: 6,
+                    value: busy.values.isEmpty
+                        ? null
+                        : busy.values.reduce((a, b) => a + b) / busy.length,
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+              if (list.isEmpty && busy.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 80),
+                  child: Column(
+                    children: [
+                      Icon(Icons.download_for_offline_rounded,
+                          size: 64, color: Colors.white24),
+                      SizedBox(height: 14),
+                      Text('No downloads yet',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700)),
+                      SizedBox(height: 6),
+                      Text(
+                        'Use "Download" in a song\'s ⋯ menu, or the download\nbutton on any playlist or album.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white54),
+                      ),
+                    ],
+                  ),
+                ),
+              if (list.isNotEmpty) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () {
+                          audioHandler
+                              .setShuffleMode(AudioServiceShuffleMode.none);
+                          play(0);
+                        },
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        label: const Text('Play'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        onPressed: () {
+                          audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
+                          play(Random().nextInt(list.length));
+                        },
+                        icon: const Icon(Icons.shuffle_rounded),
+                        label: const Text('Shuffle'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                for (var i = 0; i < list.length; i++)
+                  TrackRow(
+                    track: list[i],
+                    palette: pal,
+                    active: audioHandler.currentTrack?.id == list[i].id,
+                    onTap: () => play(i),
+                    onMore: () => showAddToPlaylistSheet(context, list[i]),
+                  ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// Soft pulsing placeholder shapes shown while content loads.
 class SkeletonPulse extends StatefulWidget {
   final Widget child;
@@ -19229,6 +19748,17 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
                     audioHandler.addToQueue(tracks, next: true);
                     appNotice.value = 'Playing "$title" next';
                   }),
+                  const SizedBox(width: 10),
+                  ValueListenableBuilder<int>(
+                    valueListenable: OfflineStore.revision,
+                    builder: (_, __, ___) => _circleAction(
+                      pal,
+                      tracks.every(OfflineStore.isDownloaded)
+                          ? Icons.download_done_rounded
+                          : Icons.download_for_offline_rounded,
+                      () => OfflineStore.downloadAll(tracks),
+                    ),
+                  ),
                 ],
               ),
             if (page.description != null && page.description!.isNotEmpty)
@@ -19872,7 +20402,12 @@ Future<Uint8List?> loadArt(TrackItem t) {
   final existing = _artCache[t.id];
   if (existing is Future<Uint8List?>) return existing;
   final url = t.artworkUrl;
-  final fut = url != null ? _fetchArtFromUrl(url) : _fetchArtFromChannel(t);
+  final saved = OfflineStore.artPathFor(t);
+  final fut = saved != null
+      ? File(saved).readAsBytes().then<Uint8List?>((b) => b, onError: (_) => null)
+      : url != null
+          ? _fetchArtFromUrl(url)
+          : _fetchArtFromChannel(t);
   _artCache[t.id] = fut;
   return fut;
 }
