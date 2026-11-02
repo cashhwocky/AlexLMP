@@ -168,6 +168,10 @@ object YtMusicBridge {
                 val auth = call.argument<Boolean>("auth") ?: true
                 runAsync(result, "YT_PLAYLIST") { Account.playlistTracks(id, auth) }
             }
+            "ytArtistPage" -> {
+                val url = call.argument<String>("url") ?: ""
+                runAsync(result, "YT_ARTIST") { Account.artistPage(url) }
+            }
             "ytAlbumPage" -> {
                 val ref = call.argument<String>("ref") ?: ""
                 runAsync(result, "YT_ALBUM") { Account.albumPage(ref) }
@@ -1535,6 +1539,97 @@ object Account {
             "info" to second.ifEmpty { null },
             "description" to description,
             "tracks" to tracks,
+            "shelves" to shelves,
+        )
+    }
+
+    // ── Artist pages (public) ───────────────────────────────────────────────
+
+    fun artistPage(urlOrId: String): Map<String, Any?> {
+        val channelId = Regex("(UC[A-Za-z0-9_-]{22})").find(urlOrId)?.value
+            ?: throw IOException("Not an artist link")
+        val r = call("browse", JSONObject().put("browseId", channelId), auth = false)
+        val header = all(r, "musicImmersiveHeaderRenderer").firstOrNull()
+            ?: all(r, "musicVisualHeaderRenderer").firstOrNull()
+            ?: all(r, "musicResponsiveHeaderRenderer").firstOrNull()
+        val name = text(header?.optJSONObject("title"))
+        val description = text(header?.optJSONObject("description")).ifEmpty {
+            all(r, "musicDescriptionShelfRenderer").firstOrNull()
+                ?.let { text(it.optJSONObject("description")) } ?: ""
+        }
+        val banner = lastThumb(header?.optJSONObject("thumbnail"))
+            ?.replace(Regex("=w\\d+-h\\d+[^&?/]*$"), "=w1200-h1200-p-l90-rj")
+        val avatar = lastThumb(header?.optJSONObject("foregroundThumbnail"))
+        val subscribers = all(header, "subscribeButtonRenderer").firstOrNull()
+            ?.let { text(it.optJSONObject("subscriberCountText")) }
+            ?.ifEmpty { null }
+        val audience = text(header?.optJSONObject("monthlyListenerCount")).ifEmpty { null }
+
+        // Top songs shelf
+        val songs = ArrayList<Map<String, Any?>>()
+        val songShelf = all(r, "musicShelfRenderer").firstOrNull()
+        if (songShelf != null) {
+            for (item in all(songShelf, "musicResponsiveListItemRenderer")) {
+                val song = parseSong(item) ?: continue
+                val m = HashMap(song)
+                // Play count is usually the 3rd column ("12M plays").
+                val cols = item.optJSONArray("flexColumns")
+                for (c in 1 until (cols?.length() ?: 0)) {
+                    val t = text(cols?.optJSONObject(c)
+                        ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                        ?.optJSONObject("text"))
+                    if (t.contains("play", ignoreCase = true)) m["plays"] = t
+                }
+                if ((m["artist"] as? String).isNullOrEmpty()) m["artist"] = name
+                songs.add(m)
+            }
+        }
+
+        // Carousels: albums, singles, videos, related artists, featured playlists
+        val shelves = ArrayList<Map<String, Any?>>()
+        for (c in all(r, "musicCarouselShelfRenderer")) {
+            val title = all(c, "musicCarouselShelfBasicHeaderRenderer").firstOrNull()
+                ?.let { text(it.optJSONObject("title")) } ?: ""
+            val items = ArrayList<Map<String, Any?>>()
+            var kind = ""
+            for (t in all(c, "musicTwoRowItemRenderer")) {
+                val nav = t.optJSONObject("navigationEndpoint")
+                val browse = nav?.optJSONObject("browseEndpoint")?.optString("browseId") ?: ""
+                val videoId = nav?.optJSONObject("watchEndpoint")?.optString("videoId") ?: ""
+                val itemKind = when {
+                    browse.startsWith("MPREb_") -> "album"
+                    browse.startsWith("UC") -> "artist"
+                    browse.startsWith("VL") -> "playlist"
+                    videoId.isNotEmpty() -> "video"
+                    else -> continue
+                }
+                if (kind.isEmpty()) kind = itemKind
+                items.add(mapOf(
+                    "kind" to itemKind,
+                    "id" to when (itemKind) {
+                        "artist" -> "https://www.youtube.com/channel/$browse"
+                        "playlist" -> browse.removePrefix("VL")
+                        "video" -> videoId
+                        else -> browse
+                    },
+                    "title" to text(t.optJSONObject("title")),
+                    "subtitle" to text(t.optJSONObject("subtitle")),
+                    "thumbnail" to lastThumb(t.optJSONObject("thumbnailRenderer")),
+                ))
+            }
+            if (items.isNotEmpty()) {
+                shelves.add(mapOf("title" to title, "kind" to kind, "items" to items))
+            }
+        }
+
+        return mapOf(
+            "name" to name,
+            "description" to description.ifEmpty { null },
+            "banner" to banner,
+            "avatar" to avatar,
+            "subscribers" to subscribers,
+            "audience" to audience,
+            "songs" to songs,
             "shelves" to shelves,
         )
     }
