@@ -16678,7 +16678,8 @@ void showSleepTimerSheet(BuildContext context) {
 class LyricsResult {
   final List<(Duration, String)> synced;
   final String? plain;
-  const LyricsResult(this.synced, this.plain);
+  final String source;
+  const LyricsResult(this.synced, this.plain, [this.source = 'LRCLIB']);
   bool get isEmpty => synced.isEmpty && (plain == null || plain!.trim().isEmpty);
 }
 
@@ -16694,20 +16695,74 @@ String _lyricsClean(String s) => s
         '')
     .trim();
 
+/// Tries several lyric sources, best first:
+///  1. LRCLIB, matched by title + artist (synced, time-stamped lines)
+///  2. LRCLIB free-text search (catches odd titles/artist spellings)
+///  3. YouTube Music's own lyrics (huge catalogue; plain text). Local songs
+///     are matched to YouTube Music by searching "title artist".
 Future<LyricsResult?> _fetchLyrics(TrackItem t) async {
+  final errors = <String>[];
+  final title = _lyricsClean(t.title);
+  final artist = t.artist
+      .split(RegExp(r',|&| x | feat\.? | ft\.? ', caseSensitive: false))
+      .first
+      .trim();
+  final hasArtist = artist.isNotEmpty && artist != 'Unknown Artist';
+
+  // 1 + 2: LRCLIB.
+  LyricsResult? plainFallback;
+  for (final params in [
+    {'track_name': title, if (hasArtist) 'artist_name': artist},
+    {'q': hasArtist ? '$title $artist' : title},
+  ]) {
+    try {
+      final r = await _lrclibSearch(t, params);
+      if (r != null && r.synced.isNotEmpty) return r;
+      plainFallback ??= r;
+    } catch (e) {
+      errors.add('LRCLIB: $e');
+    }
+  }
+
+  // 3: YouTube Music.
+  try {
+    var videoId = t.ytVideoId;
+    if (videoId == null && Platform.isAndroid) {
+      final hits =
+          await YouTubeMusic.search(hasArtist ? '$title $artist' : title);
+      if (hits.isNotEmpty) videoId = hits.first.ytVideoId;
+    }
+    if (videoId != null) {
+      final raw =
+          await _ytChannel.invokeMethod('ytLyrics', {'videoId': videoId});
+      if (raw is Map) {
+        final plain = (raw['plain'] ?? '').toString();
+        if (plain.trim().isNotEmpty) {
+          // Prefer YouTube Music's text over a plain LRCLIB copy only when
+          // LRCLIB had nothing at all.
+          final src = (raw['source'] ?? '').toString().trim();
+          return plainFallback ??
+              LyricsResult(const [], plain,
+                  src.isEmpty ? 'YouTube Music' : 'YouTube Music · $src');
+        }
+      }
+    }
+  } catch (e) {
+    errors.add('YouTube Music: ${e is PlatformException ? (e.message ?? e.code) : e}');
+  }
+
+  if (plainFallback != null) return plainFallback;
+  if (errors.isNotEmpty) throw Exception(errors.join('\n'));
+  return null;
+}
+
+Future<LyricsResult?> _lrclibSearch(
+    TrackItem t, Map<String, String> params) async {
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
   try {
-    final title = _lyricsClean(t.title);
-    final artist = t.artist
-        .split(RegExp(r',|&| x | feat\.? | ft\.? ', caseSensitive: false))
-        .first
-        .trim();
-    final uri = Uri.https('lrclib.net', '/api/search', {
-      'track_name': title,
-      if (artist.isNotEmpty && artist != 'Unknown Artist') 'artist_name': artist,
-    });
-    final req = await client.getUrl(uri);
-    req.headers.set('User-Agent', 'AlexLMP music player');
+    final req =
+        await client.getUrl(Uri.https('lrclib.net', '/api/search', params));
+    req.headers.set('User-Agent', 'AlexLMP/$kAppVersion (github.com/$kGithubRepo)');
     final res = await req.close();
     if (res.statusCode != 200) {
       throw Exception('lrclib.net answered ${res.statusCode}');
@@ -16715,24 +16770,32 @@ Future<LyricsResult?> _fetchLyrics(TrackItem t) async {
     final body = await utf8.decoder.bind(res).join();
     final list = jsonDecode(body);
     if (list is! List || list.isEmpty) return null;
-    // Prefer synced lyrics with the closest length.
+    String norm(String s) =>
+        s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9$]'), '');
+    final wantTitle = norm(_lyricsClean(t.title));
     Map<String, dynamic>? best;
     double bestScore = double.infinity;
     for (final e in list) {
       if (e is! Map) continue;
       final m = Map<String, dynamic>.from(e);
+      if (m['instrumental'] == true) continue;
       final dur = (m['duration'] as num?)?.toDouble() ?? 0;
       var score = t.durationSeconds > 0 && dur > 0
           ? (dur - t.durationSeconds).abs()
-          : 0.0;
-      if ((m['syncedLyrics'] ?? '').toString().isEmpty) score += 30;
-      if (m['instrumental'] == true) score += 1000;
+          : 5.0;
+      final gotTitle = norm((m['trackName'] ?? '').toString());
+      if (gotTitle != wantTitle &&
+          !gotTitle.contains(wantTitle) &&
+          !wantTitle.contains(gotTitle)) {
+        score += 60; // probably a different song
+      }
+      if ((m['syncedLyrics'] ?? '').toString().isEmpty) score += 20;
       if (score < bestScore) {
         bestScore = score;
         best = m;
       }
     }
-    if (best == null) return null;
+    if (best == null || bestScore >= 60) return null;
     final synced = <(Duration, String)>[];
     final raw = (best['syncedLyrics'] ?? '').toString();
     final re = RegExp(r'^\[(\d+):(\d+(?:\.\d+)?)\](.*)$');
@@ -16747,7 +16810,7 @@ Future<LyricsResult?> _fetchLyrics(TrackItem t) async {
       ));
     }
     final plain = (best['plainLyrics'] ?? '').toString();
-    final r = LyricsResult(synced, plain.isEmpty ? null : plain);
+    final r = LyricsResult(synced, plain.isEmpty ? null : plain, 'LRCLIB');
     return r.isEmpty ? null : r;
   } finally {
     client.close();
@@ -16850,12 +16913,21 @@ class _LyricsScreenState extends State<LyricsScreen> {
                   if (r.synced.isEmpty) {
                     return SingleChildScrollView(
                       padding: const EdgeInsets.fromLTRB(26, 10, 26, 60),
-                      child: Text(r.plain ?? '',
-                          style: TextStyle(
-                              color: cs.onSurface,
-                              fontSize: 22,
-                              height: 1.5,
-                              fontWeight: FontWeight.w600)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(r.plain ?? '',
+                              style: TextStyle(
+                                  color: cs.onSurface,
+                                  fontSize: 22,
+                                  height: 1.5,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 24),
+                          Text('Lyrics from ${r.source}',
+                              style: TextStyle(
+                                  color: cs.onSurfaceVariant, fontSize: 12)),
+                        ],
+                      ),
                     );
                   }
                   return StreamBuilder<Duration>(
@@ -16896,7 +16968,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
                             ),
                           Padding(
                             padding: const EdgeInsets.only(top: 30),
-                            child: Text('Lyrics from LRCLIB',
+                            child: Text('Lyrics from ${r.source}',
                                 style: TextStyle(
                                     color: cs.onSurfaceVariant, fontSize: 12)),
                           ),
@@ -18869,7 +18941,7 @@ class _SetupScreenState extends State<SetupScreen> {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.2.0';
+const String kAppVersion = '2.4.0';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
