@@ -9,6 +9,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/scheduler.dart' show timeDilation;
 import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
@@ -61,6 +62,7 @@ Future<void> main() async {
   );
 
   await appState.load();
+  timeDilation = appState.d('animation_speed', 1.0);
 
   try {
     audioHandler = await AudioService.init(
@@ -274,6 +276,34 @@ class AppPalette {
     ...extra,
   ];
 
+  /// Official Material 3 tonal palette (ColorScheme.fromSeed) — used by the
+  /// "Community Suggested" app style.
+  static final Map<String, AppPalette> _m3Cache = {};
+  static AppPalette m3(Color seed, {bool pureBlack = false}) {
+    final key = '${seed.value}_$pureBlack';
+    return _m3Cache.putIfAbsent(key, () {
+      final cs = ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.dark);
+      return AppPalette(
+        name: 'M3',
+        accent: cs.primary,
+        onAccent: cs.onPrimary,
+        container: cs.secondaryContainer,
+        bg: pureBlack ? Colors.black : cs.surface,
+        surface: pureBlack ? cs.surfaceContainerLow : cs.surfaceContainerHigh,
+        playerBg: pureBlack ? Colors.black : cs.surfaceContainerLowest,
+        playerSurface: cs.surfaceContainerHighest,
+        playerButton: cs.secondaryContainer,
+        playerAccent: cs.primary,
+        playerOnAccent: cs.onPrimary,
+      );
+    });
+  }
+
+  static final Map<String, ColorScheme> _schemeCache = {};
+  static ColorScheme scheme(Color seed) => _schemeCache.putIfAbsent(
+      '${seed.value}',
+      () => ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.dark));
+
   /// Special theme name: colours follow the current song's album art.
   static const adaptiveName = 'Adaptive';
 
@@ -334,9 +364,66 @@ class AppState extends ChangeNotifier {
   // Stored so they survive restarts (the library itself is rebuilt from the device).
   final Map<String, Map<String, dynamic>> _ytSaved = {};
 
-  AppPalette get palette => themeName == AppPalette.adaptiveName
-      ? (_adaptivePalette ?? AppPalette.amoled)
-      : AppPalette.byName(themeName);
+  // ── Generic settings store (every toggle in Settings uses these) ──────
+  bool b(String key, [bool def = false]) => _prefs?.getBool(key) ?? def;
+  double d(String key, double def) => _prefs?.getDouble(key) ?? def;
+  String str(String key, String def) => _prefs?.getString(key) ?? def;
+  void setB(String key, bool v) {
+    _prefs?.setBool(key, v);
+    notifyListeners();
+  }
+
+  void setD(String key, double v) {
+    _prefs?.setDouble(key, v);
+    notifyListeners();
+  }
+
+  void setStr(String key, String v) {
+    _prefs?.setString(key, v);
+    notifyListeners();
+  }
+
+  /// 'alex' (default look) or 'community' (Google / Material 3 look).
+  String get appStyle => str('app_style', 'alex');
+  bool get community => appStyle == 'community';
+
+  /// Android 12+ wallpaper colour (Material You), if the device has one.
+  Color? wallpaperColor;
+
+  AppPalette get _basePalette {
+    if (b('use_wallpaper_colors') && wallpaperColor != null) {
+      return AppPalette.fromSeed('Wallpaper', wallpaperColor!);
+    }
+    return themeName == AppPalette.adaptiveName
+        ? (_adaptivePalette ?? AppPalette.amoled)
+        : AppPalette.byName(themeName);
+  }
+
+  AppPalette get palette {
+    final base = _basePalette;
+    if (community) {
+      return AppPalette.m3(base.accent, pureBlack: b('pure_black'));
+    }
+    if (b('pure_black')) {
+      return AppPalette(
+        name: base.name,
+        accent: base.accent,
+        onAccent: base.onAccent,
+        container: base.container,
+        bg: Colors.black,
+        surface: base.surface,
+        playerBg: Colors.black,
+        playerSurface: base.playerSurface,
+        playerButton: base.playerButton,
+        playerAccent: base.playerAccent,
+        playerOnAccent: base.playerOnAccent,
+      );
+    }
+    return base;
+  }
+
+  /// Seed colour for Material 3 widgets (theme, navigation bar).
+  ColorScheme get scheme => AppPalette.scheme(_basePalette.accent);
 
   bool get isAdaptive => themeName == AppPalette.adaptiveName;
 
@@ -796,7 +883,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     } catch (_) {}
 
     try {
-      await player.setSkipSilenceEnabled(false);
+      await player.setSkipSilenceEnabled(appState.b('skip_silence'));
     } catch (_) {}
 
     player.playbackEventStream.map(_transformEvent).listen(
@@ -807,6 +894,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     );
 
     player.positionStream.listen((p) {
+      if (p > Duration.zero) _saveSession(p);
       if (p > Duration.zero) _lastGoodPosition = p;
       if (player.processingState == ProcessingState.ready && p > Duration.zero) {
         _readyPosition = p;
@@ -1125,6 +1213,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// Warm up the next YouTube Music track so skipping to it starts quickly.
   void _prefetchNextYouTube() {
+    if (!appState.b('prefetch_next', true)) return;
     final next = peekNext;
     if (next != null && next.isYouTube) {
       unawaited(
@@ -1278,6 +1367,14 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   Future<void> _onCompleted() async {
+    // Sleep timer: "End of this song".
+    if (stopAfterCurrent) {
+      stopAfterCurrent = false;
+      sleepLabel.value = null;
+      await player.pause();
+      await player.seek(Duration.zero);
+      return;
+    }
     if (_repeat == AudioServiceRepeatMode.one) {
       await player.seek(Duration.zero);
       player.play();
@@ -1285,6 +1382,8 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     }
     final n = _nextIndex(auto: true);
     if (n == null) {
+      // Labs: keep the music going with similar songs from YouTube Music.
+      if (await _autoplayRadio()) return;
       await _load(0, play: false);
     } else {
       _history.add(_index);
@@ -1299,13 +1398,122 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       await _load(_index, play: true);
     } else {
       await _applySpeedAndPitch();
-      player.play();
+      if (appState.b('smooth_fade') && !player.playing) {
+        if (player.volume > 0.01) _userVolume = player.volume;
+        await player.setVolume(0);
+        player.play();
+        await _fade(0, _userVolume);
+      } else {
+        player.play();
+      }
     }
   }
 
   @override
   Future<void> pause() async {
+    if (appState.b('smooth_fade') && player.playing) {
+      _userVolume = player.volume > 0.01 ? player.volume : _userVolume;
+      await _fade(_userVolume, 0);
+      await player.pause();
+      await player.setVolume(_userVolume);
+      return;
+    }
     await player.pause();
+  }
+
+  // ── Extras used by Settings ───────────────────────────────────────────
+
+  double _userVolume = 1.0;
+
+  Future<void> _fade(double from, double to, {int ms = 260}) async {
+    const steps = 8;
+    for (var i = 1; i <= steps; i++) {
+      try {
+        await player.setVolume(from + (to - from) * i / steps);
+      } catch (_) {}
+      await Future.delayed(Duration(milliseconds: ms ~/ steps));
+    }
+  }
+
+  // Sleep timer
+  Timer? _sleepTimer;
+  bool stopAfterCurrent = false;
+  final ValueNotifier<String?> sleepLabel = ValueNotifier<String?>(null);
+
+  void setSleepTimer(Duration? d, {bool endOfSong = false}) {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    stopAfterCurrent = endOfSong;
+    if (endOfSong) {
+      sleepLabel.value = 'End of song';
+      return;
+    }
+    if (d == null) {
+      sleepLabel.value = null;
+      return;
+    }
+    final at = DateTime.now().add(d);
+    sleepLabel.value =
+        'Stops at ${at.hour % 12 == 0 ? 12 : at.hour % 12}:${at.minute.toString().padLeft(2, '0')} ${at.hour < 12 ? 'AM' : 'PM'}';
+    _sleepTimer = Timer(d, () async {
+      sleepLabel.value = null;
+      await pause();
+    });
+  }
+
+  // Labs: autoplay similar songs when the queue runs out.
+  Future<bool> _autoplayRadio() async {
+    if (!appState.b('autoplay_radio')) return false;
+    final t = currentTrack;
+    if (t == null) return false;
+    try {
+      final results = await YouTubeMusic.search(
+          t.artist == 'Unknown Artist' ? t.title : t.artist);
+      final fresh = results
+          .where((r) => r.id != t.id && trackById(r.id) == null)
+          .take(10)
+          .toList();
+      if (fresh.isEmpty) return false;
+      addToQueue(fresh);
+      await skipToNext();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Resume where you left off
+  DateTime _lastSessionSave = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _saveSession(Duration pos) {
+    final t = currentTrack;
+    if (t == null || !appState.b('resume_last', true)) return;
+    final now = DateTime.now();
+    if (now.difference(_lastSessionSave).inSeconds < 5) return;
+    _lastSessionSave = now;
+    final p = YouTubeMusic.prefs;
+    p?.setString('last_track', t.id);
+    p?.setInt('last_pos', pos.inMilliseconds);
+  }
+
+  bool _restoredSession = false;
+
+  /// Loads (without playing) the song you were on last time, at the same spot.
+  Future<void> restoreLastSession() async {
+    if (_restoredSession || !appState.b('resume_last', true)) return;
+    _restoredSession = true;
+    final p = YouTubeMusic.prefs;
+    final id = p?.getString('last_track');
+    if (id == null) return;
+    final idx = tracks.indexWhere((t) => t.id == id);
+    if (idx < 0 || player.playing) return;
+    if (_loadedId != id) await _load(idx, play: false);
+    final ms = p?.getInt('last_pos') ?? 0;
+    if (ms > 0 && _loadedId == id) {
+      try {
+        await player.seek(Duration(milliseconds: ms));
+      } catch (_) {}
+    }
   }
 
   @override
@@ -1448,6 +1656,10 @@ Future<void> scanDeviceAudio() async {
       if (source.isEmpty) continue;
       final id = 'ms_${m['id']}';
       if (appState.isDeleted(id, path.isEmpty ? source : path)) continue;
+      if (appState.b('hide_short_tracks') &&
+          ((m['durationSeconds'] as num?)?.toInt() ?? 0) < 30) {
+        continue;
+      }
       final title = cleanText(m['title'], 'Unknown Track');
       if (title.toLowerCase().contains('306 bobby')) continue;
       final t = TrackItem(
@@ -1505,6 +1717,31 @@ Future<void> pickLocalFiles() async {
     added.add(t);
   }
   if (added.isNotEmpty) await audioHandler.addTracks(added, playFirst: true);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Settings that live on the Android side
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Pushes the current settings to the native side (screen-on, data saver)
+/// and reads the Material You wallpaper colour.
+Future<void> applyNativeSettings() async {
+  if (!Platform.isAndroid) return;
+  try {
+    await _mediaChannel.invokeMethod(
+        'keepScreenOn', {'on': appState.b('keep_screen_on')});
+  } catch (_) {}
+  try {
+    await _ytChannel.invokeMethod(
+        'setYtDataSaver', {'on': appState.b('yt_data_saver')});
+  } catch (_) {}
+  try {
+    final c = await _mediaChannel.invokeMethod<int>('getWallpaperColor');
+    if (c != null && c != 0) {
+      appState.wallpaperColor = Color(c);
+      appState.refresh();
+    }
+  } catch (_) {}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2002,7 +2239,8 @@ class LiquidGlassBox extends StatelessWidget {
         decoration: BoxDecoration(
           color: fallbackColor,
           borderRadius: borderRadius,
-          boxShadow: boxShadow,
+          // Material 3 uses tonal colour instead of shadows.
+          boxShadow: appState.community ? null : boxShadow,
         ),
         child: child,
       );
@@ -2504,6 +2742,20 @@ class AlexLmpApp extends StatelessWidget {
       listenable: appState,
       builder: (context, _) {
         final pal = appState.palette;
+        final community = appState.community;
+        final cs = community
+            ? appState.scheme.copyWith(
+                surface: pal.bg,
+                surfaceContainerLow: appState.b('pure_black') ? Colors.black : null,
+              )
+            : ColorScheme.dark(
+                primary: pal.accent,
+                onPrimary: pal.onAccent,
+                secondary: pal.accent,
+                surface: pal.bg,
+                surfaceContainer: pal.surface,
+              );
+        final textScale = appState.d('text_scale', 1.0);
         return MaterialApp(
           title: 'AlexLMP',
           debugShowCheckedModeBanner: false,
@@ -2512,16 +2764,20 @@ class AlexLmpApp extends StatelessWidget {
             useMaterial3: true,
             brightness: Brightness.dark,
             scaffoldBackgroundColor: pal.bg,
-            colorScheme: ColorScheme.dark(
-              primary: pal.accent,
-              onPrimary: pal.onAccent,
-              secondary: pal.accent,
-              surface: pal.bg,
-              surfaceContainer: pal.surface,
-            ),
+            colorScheme: cs,
             splashFactory: InkSparkle.splashFactory,
             fontFamily: 'Roboto',
+            bottomSheetTheme: BottomSheetThemeData(
+              backgroundColor: community ? cs.surfaceContainerLow : null,
+            ),
           ),
+          builder: (context, child) {
+            final mq = MediaQuery.of(context);
+            return MediaQuery(
+              data: mq.copyWith(textScaler: TextScaler.linear(textScale)),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
           home: const AlexLmpRoot(),
         );
       },
@@ -2597,7 +2853,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         }
       } catch (_) {}
     }
-    await scanDeviceAudio();
+    if (appState.b('auto_scan', true)) await scanDeviceAudio();
+    await audioHandler.restoreLastSession();
+    applyNativeSettings();
   }
 
   @override
@@ -2667,6 +2925,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   ),
                 ),
               ),
+              if (appState.community && !appState.liquidGlass)
+                _m3Bottom(context, pal)
+              else
               Positioned(
                 left: 12,
                 right: 12,
@@ -2729,6 +2990,89 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           ),
         );
       },
+    );
+  }
+
+  /// Community style: standard Material 3 navigation bar (full width) with
+  /// the mini player floating above it.
+  Widget _m3Bottom(BuildContext context, AppPalette pal) {
+    final cs = appState.scheme;
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (audioHandler.currentTrack != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Reveal(
+                dy: 40,
+                child: MiniPlayer(
+                  track: audioHandler.currentTrack!,
+                  palette: pal,
+                ),
+              ),
+            ),
+          NavigationBarTheme(
+            data: NavigationBarThemeData(
+              backgroundColor: appState.b('pure_black')
+                  ? const Color(0xFF0B0B0D)
+                  : cs.surfaceContainer,
+              indicatorColor: cs.secondaryContainer,
+              iconTheme: WidgetStateProperty.resolveWith((st) => IconThemeData(
+                    color: st.contains(WidgetState.selected)
+                        ? cs.onSecondaryContainer
+                        : cs.onSurfaceVariant,
+                  )),
+              labelTextStyle: WidgetStateProperty.resolveWith((st) => TextStyle(
+                    fontSize: 12,
+                    fontWeight: st.contains(WidgetState.selected)
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                    color: st.contains(WidgetState.selected)
+                        ? cs.onSurface
+                        : cs.onSurfaceVariant,
+                  )),
+            ),
+            child: NavigationBar(
+              selectedIndex: _tab,
+              onDestinationSelected: (i) {
+                if (i == 3) {
+                  showSearchSheet(context);
+                  return;
+                }
+                setState(() {
+                  _dir = i >= _tab ? 1 : -1;
+                  _tab = i;
+                });
+              },
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  selectedIcon: Icon(Icons.home_rounded),
+                  label: 'Home',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.sensors_outlined),
+                  selectedIcon: Icon(Icons.sensors_rounded),
+                  label: 'Mix',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.library_music_outlined),
+                  selectedIcon: Icon(Icons.library_music_rounded),
+                  label: 'Library',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.search_rounded),
+                  label: 'Search',
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -3269,21 +3613,24 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               children: [
                 Text(
                   eyebrow,
-                  style: const TextStyle(
-                    color: Color(0xFF9EA6AC),
+                  style: TextStyle(
+                    color: appState.community
+                        ? appState.palette.accent
+                        : const Color(0xFF9EA6AC),
                     fontSize: 12,
-                    letterSpacing: 0.6,
+                    letterSpacing: appState.community ? 0.4 : 0.6,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.4,
+                    fontSize: appState.community ? 22 : 24,
+                    fontWeight:
+                        appState.community ? FontWeight.w600 : FontWeight.w800,
+                    letterSpacing: appState.community ? 0 : -0.4,
                   ),
                 ),
               ],
@@ -3466,18 +3813,32 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   duration: const Duration(milliseconds: 240),
                   curve: Curves.easeOutCubic,
                   padding: const EdgeInsets.symmetric(horizontal: 14),
-                  decoration: BoxDecoration(
-                    color: selected ? pal.accent : pal.surface,
-                    borderRadius: BorderRadius.circular(21),
-                    border: Border.all(
-                      color: selected ? pal.accent : Colors.white12,
-                    ),
-                  ),
+                  decoration: appState.community
+                      ? BoxDecoration(
+                          color: selected
+                              ? appState.scheme.secondaryContainer
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: selected
+                                ? appState.scheme.secondaryContainer
+                                : appState.scheme.outline,
+                          ),
+                        )
+                      : BoxDecoration(
+                          color: selected ? pal.accent : pal.surface,
+                          borderRadius: BorderRadius.circular(21),
+                          border: Border.all(
+                            color: selected ? pal.accent : Colors.white12,
+                          ),
+                        ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        filters[i].$1,
+                        appState.community && selected
+                            ? Icons.check_rounded
+                            : filters[i].$1,
                         size: 17,
                         color: selected ? pal.onAccent : Colors.white70,
                       ),
@@ -4159,17 +4520,19 @@ class MediaCard extends StatelessWidget {
               children: [
                 Container(
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.35),
-                        blurRadius: 14,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
+                    borderRadius: BorderRadius.circular(appState.community ? 24 : 18),
+                    boxShadow: appState.community
+                        ? null
+                        : [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.35),
+                              blurRadius: 14,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
                   ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
+                    borderRadius: BorderRadius.circular(appState.community ? 24 : 18),
                     child: SizedBox(width: width, height: width, child: cover),
                   ),
                 ),
@@ -5633,7 +5996,14 @@ class _Interactive3DArtworkState extends State<Interactive3DArtwork>
     return GestureDetector(
       onDoubleTap: () {
         HapticFeedback.mediumImpact();
-        appState.setVinylSpinMode(!spinMode);
+        if (appState.b('double_tap_like')) {
+          appState.toggleLike(widget.track.id);
+          appNotice.value = appState.isLiked(widget.track.id)
+              ? 'Added to Liked Songs'
+              : 'Removed from Liked Songs';
+        } else {
+          appState.setVinylSpinMode(!spinMode);
+        }
       },
       child: AnimatedBuilder(
         animation: _spinCtrl,
@@ -6041,7 +6411,10 @@ class _AlbumArtBackdropState extends State<AlbumArtBackdrop>
                   );
                 },
                 child: ImageFiltered(
-                  imageFilter: ui.ImageFilter.blur(sigmaX: 46, sigmaY: 46),
+                  imageFilter: ui.ImageFilter.blur(
+                    sigmaX: appState.d('art_blur', 46),
+                    sigmaY: appState.d('art_blur', 46),
+                  ),
                   child: CustomAlbumArtwork(track: widget.track),
                 ),
               ),
@@ -6287,75 +6660,109 @@ class TrackRow extends StatelessWidget {
     this.onMore,
   });
 
+  static String fmt(int s) =>
+      s <= 0 ? '' : '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+
   @override
   Widget build(BuildContext context) {
+    final compact = appState.b('compact_rows');
+    final community = appState.community;
+    final showDur = appState.b('show_durations');
+    final art = compact ? 44.0 : 54.0;
+    final row = Row(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(community ? 8 : 12),
+          child: SizedBox(
+            width: art,
+            height: art,
+            child: CustomAlbumArtwork(track: track),
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                track.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: active ? palette.accent : Colors.white,
+                  fontSize: compact ? 15 : 16,
+                  fontWeight: community ? FontWeight.w500 : FontWeight.w700,
+                ),
+              ),
+              SizedBox(height: compact ? 2 : 4),
+              Text(
+                track.isYouTube && community
+                    ? '${track.artist} • YouTube'
+                    : track.artist,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: community
+                      ? appState.scheme.onSurfaceVariant
+                      : const Color(0xFFA6ADB2),
+                  fontSize: compact ? 12.5 : 13.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (showDur && track.durationSeconds > 0)
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Text(
+              fmt(track.durationSeconds),
+              style: const TextStyle(color: Colors.white38, fontSize: 12.5),
+            ),
+          ),
+        if (active)
+          Padding(
+            padding: const EdgeInsets.only(left: 8, right: 4),
+            child: EqBars(color: palette.accent),
+          ),
+        if (onMore != null)
+          SquishyGesture(
+            onTap: onMore,
+            child: const Padding(
+              padding: EdgeInsets.all(6),
+              child: Icon(
+                Icons.more_vert_rounded,
+                color: Colors.white54,
+                size: 20,
+              ),
+            ),
+          ),
+      ],
+    );
     return SquishyGesture(
       pressedScale: 0.97,
       onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 7),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: SizedBox(
-                width: 54,
-                height: 54,
-                child: CustomAlbumArtwork(track: track),
+      child: community
+          ? Container(
+              margin: EdgeInsets.symmetric(vertical: compact ? 1 : 2),
+              padding: EdgeInsets.symmetric(
+                  horizontal: active ? 8 : 0, vertical: compact ? 5 : 6),
+              decoration: BoxDecoration(
+                color: active
+                    ? appState.scheme.secondaryContainer.withOpacity(0.55)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(16),
               ),
+              child: row,
+            )
+          : Padding(
+              padding: EdgeInsets.symmetric(vertical: compact ? 4 : 7),
+              child: row,
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    track.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: active ? palette.accent : Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    track.artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFA6ADB2),
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (active)
-              Padding(
-                padding: const EdgeInsets.only(left: 8, right: 4),
-                child: EqBars(color: palette.accent),
-              ),
-            if (onMore != null)
-              SquishyGesture(
-                onTap: onMore,
-                child: const Padding(
-                  padding: EdgeInsets.all(6),
-                  child: Icon(
-                    Icons.more_vert_rounded,
-                    color: Colors.white54,
-                    size: 20,
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
     );
   }
 }
+
 
 /// Thin Apple-Music-style seek bar: grows while you drag, times underneath.
 class AppleSeekBar extends StatefulWidget {
@@ -6618,8 +7025,10 @@ class _MiniPlayerState extends State<MiniPlayer>
       pressedScale: 0.97,
       onTap: () => openPlayer(context),
       child: LiquidGlassBox(
-        borderRadius: BorderRadius.circular(34),
-        fallbackColor: palette.surface,
+        borderRadius: BorderRadius.circular(appState.community ? 22 : 34),
+        fallbackColor: appState.community
+            ? appState.scheme.surfaceContainerHighest
+            : palette.surface,
         padding: const EdgeInsets.symmetric(horizontal: 10),
         boxShadow: _shadow,
         child: SizedBox(
@@ -8466,252 +8875,579 @@ void showAddMusicSheet(BuildContext context) {
 }
 
 void showSettingsSheet(BuildContext context) {
-  _sheet(
-    context,
-    (ctx) => ListenableBuilder(
-      listenable: appState,
-      builder: (ctx, _) {
+  Navigator.of(context).push(
+    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+  );
+}
+
+/// Full-screen settings, grouped Google-style. Everything here is saved.
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([appState, ytAccount, audioHandler.sleepLabel]),
+      builder: (context, _) {
         final pal = appState.palette;
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'AlexLMP Settings',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Made by Alex Desrosier',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: pal.accent,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Color Theme',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ThemeChip(
-                        label: 'Adaptive',
-                        selected: appState.isAdaptive,
-                        swatch: const [
-                          Color(0xFFFF6FAE),
-                          Color(0xFFFFC94D),
-                          Color(0xFF2EE6C8),
-                          Color(0xFF2E9BFF),
-                        ],
-                        accent: pal.accent,
-                        onAccent: pal.onAccent,
-                        onTap: () => appState.setTheme(AppPalette.adaptiveName),
-                      ),
-                      for (final t in AppPalette.all)
-                        ThemeChip(
-                          label: t.name.split(' ').first,
-                          selected: appState.themeName == t.name,
-                          swatch: [t.accent, t.playerButton, t.bg],
-                          accent: t.accent,
-                          onAccent: t.onAccent,
-                          onTap: () => appState.setTheme(t.name),
-                        ),
-                    ],
-                  ),
-                  if (appState.isAdaptive)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        'Colors change to match the album art of what\'s playing.',
-                        style: TextStyle(color: pal.accent, fontSize: 12.5),
-                      ),
-                    ),
-                  const SizedBox(height: 12),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      'Animated color backgrounds',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: const Text(
-                      'Slowly moving color glow behind the app and player',
-                    ),
-                    value: appState.animatedBackground,
-                    activeColor: pal.accent,
-                    onChanged: appState.setAnimatedBackground,
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      'Album art background in player',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: const Text(
-                      'Blurred cover art fills the Now Playing screen',
-                    ),
-                    value: appState.artBackdrop,
-                    activeColor: pal.accent,
-                    onChanged: appState.setArtBackdrop,
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      'Swipe right for next song',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: Text(
-                      appState.swipeRightForNext
-                          ? 'On the album art: swipe right = next, left = previous'
-                          : 'On the album art: swipe left = next, right = previous',
-                    ),
-                    value: appState.swipeRightForNext,
-                    activeColor: pal.accent,
-                    onChanged: appState.setSwipeRightForNext,
-                  ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      'Player style',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: const Text('How the Now Playing controls look'),
-                    trailing: DropdownButton<String>(
-                      value: appState.playerStyle,
-                      dropdownColor: pal.surface,
-                      borderRadius: BorderRadius.circular(16),
-                      underline: const SizedBox.shrink(),
-                      style: TextStyle(
-                        color: pal.accent,
-                        fontWeight: FontWeight.w700,
-                      ),
-                      items: const [
-                        DropdownMenuItem(value: 'alex', child: Text('AlexLMP')),
-                        DropdownMenuItem(value: 'simp', child: Text('SimpMusic')),
-                        DropdownMenuItem(
-                            value: 'apple', child: Text('Apple Music (Beta)')),
-                      ],
-                      onChanged: (v) {
-                        if (v != null) appState.setPlayerStyle(v);
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Row(
-                      children: [
-                        const Text(
-                          'iOS 27 Liquid Glass UI',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: pal.accent.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: pal.accent),
-                          ),
-                          child: Text(
-                            'BETA',
-                            style: TextStyle(
-                              color: pal.accent,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.6,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    subtitle: const Text(
-                      'Experimental frosted blur cards & aurora plasma mesh (Off by default)',
-                    ),
-                    value: appState.liquidGlass,
-                    activeColor: pal.accent,
-                    onChanged: appState.setLiquidGlass,
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      'Spinning Vinyl Artwork Mode',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: const Text(
-                      'Rotates album art like a turntable record (or double-tap art)',
-                    ),
-                    value: appState.vinylSpinMode,
-                    activeColor: pal.accent,
-                    onChanged: appState.setVinylSpinMode,
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Stop music on task clear'),
-                    subtitle: const Text(
-                      'Stops playback when swiped away from recents',
-                    ),
-                    value: appState.stopOnTaskClear,
-                    activeColor: pal.accent,
-                    onChanged: appState.setStopOnTaskClear,
-                  ),
-                  _sheetTile(
-                    pal,
-                    Icons.refresh_rounded,
-                    'Rescan music library',
-                    'Pick up newly added songs',
-                    () {
-                      Navigator.pop(ctx);
-                      scanDeviceAudio();
-                    },
-                  ),
-                  FutureBuilder<bool>(
-                    future: Permission.ignoreBatteryOptimizations.isGranted,
-                    builder: (context, snap) {
-                      final ok = snap.data ?? false;
-                      return _sheetTile(
-                        pal,
-                        ok
-                            ? Icons.battery_charging_full_rounded
-                            : Icons.battery_alert_rounded,
-                        'Background playback',
-                        ok
-                            ? 'Battery optimization is off for AlexLMP'
-                            : 'Tap to stop Android pausing music in the background',
-                        () async {
-                          await Permission.ignoreBatteryOptimizations.request();
-                          appState.refresh();
-                        },
-                      );
-                    },
-                  ),
-                ],
+        final cs = appState.scheme;
+        return Scaffold(
+          backgroundColor: pal.bg,
+          body: CustomScrollView(
+            slivers: [
+              SliverAppBar.large(
+                backgroundColor: pal.bg,
+                surfaceTintColor: Colors.transparent,
+                title: const Text('Settings'),
               ),
-            ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 48),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 0, 4, 14),
+                      child: Text(
+                        'Made by Alex Desrosier',
+                        style: TextStyle(
+                          color: pal.accent,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    ..._appearance(context, pal, cs),
+                    ..._nowPlaying(context, pal),
+                    ..._playback(context, pal),
+                    ..._youtube(context, pal),
+                    ..._library(context, pal),
+                    ..._labs(context, pal),
+                    ..._about(context, pal),
+                  ]),
+                ),
+              ),
+            ],
           ),
         );
       },
-    ),
-    scroll: true,
-  );
+    );
+  }
+
+  // ── Building blocks ────────────────────────────────────────────────────
+
+  static Widget _section(AppPalette pal, String title, IconData icon,
+      List<Widget> children, {bool labs = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),
+            child: Row(
+              children: [
+                Icon(icon, size: 18, color: pal.accent),
+                const SizedBox(width: 8),
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: pal.accent,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                if (labs) ...[
+                  const SizedBox(width: 8),
+                  _badge(pal, 'EXPERIMENTAL'),
+                ],
+              ],
+            ),
+          ),
+          Container(
+            decoration: BoxDecoration(
+              color: appState.community
+                  ? appState.scheme.surfaceContainer
+                  : pal.surface,
+              borderRadius: BorderRadius.circular(appState.community ? 28 : 24),
+            ),
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(children: children),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _badge(AppPalette pal, String text) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        decoration: BoxDecoration(
+          color: pal.accent.withOpacity(0.18),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: pal.accent.withOpacity(0.7)),
+        ),
+        child: Text(
+          text,
+          style: TextStyle(
+            color: pal.accent,
+            fontSize: 9.5,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.6,
+          ),
+        ),
+      );
+
+  static Widget _lead(AppPalette pal, IconData icon) => Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: pal.container,
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: pal.accent, size: 21),
+      );
+
+  static Widget _switch(
+    AppPalette pal,
+    IconData icon,
+    String title,
+    String subtitle,
+    bool value,
+    ValueChanged<bool>? onChanged, {
+    String? badge,
+  }) {
+    return SwitchListTile(
+      secondary: _lead(pal, icon),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+          ),
+          if (badge != null) ...[
+            const SizedBox(width: 8),
+            _badge(pal, badge),
+          ],
+        ],
+      ),
+      subtitle: Text(subtitle),
+      value: value,
+      activeColor: pal.accent,
+      onChanged: onChanged,
+    );
+  }
+
+  static Widget _flag(AppPalette pal, IconData icon, String key, String title,
+      String subtitle,
+      {bool def = false, String? badge, ValueChanged<bool>? after}) {
+    return _switch(pal, icon, title, subtitle, appState.b(key, def), (v) {
+      appState.setB(key, v);
+      after?.call(v);
+    }, badge: badge);
+  }
+
+  static Widget _tile(AppPalette pal, IconData icon, String title,
+      String subtitle, VoidCallback onTap,
+      {Widget? trailing}) {
+    return ListTile(
+      leading: _lead(pal, icon),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+      subtitle: Text(subtitle),
+      trailing: trailing ?? const Icon(Icons.chevron_right_rounded),
+      onTap: onTap,
+    );
+  }
+
+  static Widget _dropdown<T>(AppPalette pal, IconData icon, String title,
+      String subtitle, T value, Map<T, String> options, ValueChanged<T> onChanged) {
+    return ListTile(
+      leading: _lead(pal, icon),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+      subtitle: Text(subtitle),
+      trailing: DropdownButton<T>(
+        value: value,
+        dropdownColor: pal.surface,
+        borderRadius: BorderRadius.circular(16),
+        underline: const SizedBox.shrink(),
+        style: TextStyle(color: pal.accent, fontWeight: FontWeight.w700),
+        items: [
+          for (final e in options.entries)
+            DropdownMenuItem<T>(value: e.key, child: Text(e.value)),
+        ],
+        onChanged: (v) {
+          if (v != null) onChanged(v);
+        },
+      ),
+    );
+  }
+
+  static Widget _segments(AppPalette pal, IconData icon, String title,
+      double value, Map<double, String> options, ValueChanged<double> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _lead(pal, icon),
+              const SizedBox(width: 16),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<double>(
+              segments: [
+                for (final e in options.entries)
+                  ButtonSegment<double>(value: e.key, label: Text(e.value)),
+              ],
+              selected: {
+                options.keys.firstWhere((k) => (k - value).abs() < 0.001,
+                    orElse: () => options.keys.first)
+              },
+              showSelectedIcon: false,
+              onSelectionChanged: (sel) => onChanged(sel.first),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Sections ───────────────────────────────────────────────────────────
+
+  List<Widget> _appearance(BuildContext context, AppPalette pal, ColorScheme cs) {
+    final hasWallpaper = appState.wallpaperColor != null;
+    return [
+      _section(pal, 'Appearance', Icons.palette_rounded, [
+        _dropdown<String>(
+          pal,
+          Icons.style_rounded,
+          'App style',
+          'Look and shapes of the whole app (not the player controls)',
+          appState.appStyle,
+          const {'alex': 'AlexLMP', 'community': 'Community Suggested'},
+          (v) => appState.setStr('app_style', v),
+        ),
+        if (appState.community)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              'Community Suggested: official Material 3 colors and shapes, a standard navigation bar, flat tonal cards and lighter Google-style type.',
+              style: TextStyle(color: Colors.white54, fontSize: 12.5),
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Color theme',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ThemeChip(
+                    label: 'Adaptive',
+                    selected: appState.isAdaptive,
+                    swatch: const [
+                      Color(0xFFFF6FAE),
+                      Color(0xFFFFC94D),
+                      Color(0xFF2EE6C8),
+                      Color(0xFF2E9BFF),
+                    ],
+                    accent: pal.accent,
+                    onAccent: pal.onAccent,
+                    onTap: () => appState.setTheme(AppPalette.adaptiveName),
+                  ),
+                  for (final t in AppPalette.all)
+                    ThemeChip(
+                      label: t.name.split(' ').first,
+                      selected: appState.themeName == t.name,
+                      swatch: [t.accent, t.playerButton, t.bg],
+                      accent: t.accent,
+                      onAccent: t.onAccent,
+                      onTap: () => appState.setTheme(t.name),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        _switch(
+          pal,
+          Icons.wallpaper_rounded,
+          'Wallpaper colors',
+          hasWallpaper
+              ? 'Material You: match your phone\'s wallpaper (overrides the theme above)'
+              : 'Needs Android 12 or newer',
+          appState.b('use_wallpaper_colors'),
+          hasWallpaper ? (v) => appState.setB('use_wallpaper_colors', v) : null,
+        ),
+        _flag(pal, Icons.dark_mode_rounded, 'pure_black', 'Pure black',
+            'True black backgrounds for OLED screens'),
+        _switch(pal, Icons.blur_on_rounded, 'Animated color backgrounds',
+            'Slowly moving color glow behind the app', appState.animatedBackground,
+            appState.setAnimatedBackground),
+        _switch(pal, Icons.water_drop_rounded, 'Liquid Glass UI',
+            'Frosted glass cards and the draggable glass navigation bar',
+            appState.liquidGlass, appState.setLiquidGlass,
+            badge: 'BETA'),
+        _segments(pal, Icons.format_size_rounded, 'Text size',
+            appState.d('text_scale', 1.0),
+            const {0.9: 'Small', 1.0: 'Default', 1.15: 'Large'},
+            (v) => appState.setD('text_scale', v)),
+      ]),
+    ];
+  }
+
+  List<Widget> _nowPlaying(BuildContext context, AppPalette pal) {
+    return [
+      _section(pal, 'Now Playing', Icons.music_note_rounded, [
+        _dropdown<String>(
+          pal,
+          Icons.tune_rounded,
+          'Player style',
+          'How the player controls look',
+          appState.playerStyle,
+          const {
+            'alex': 'AlexLMP',
+            'simp': 'SimpMusic',
+            'apple': 'Apple Music (Beta)',
+          },
+          appState.setPlayerStyle,
+        ),
+        _switch(pal, Icons.image_rounded, 'Album art background',
+            'Blurred cover art fills the player', appState.artBackdrop,
+            appState.setArtBackdrop),
+        if (appState.artBackdrop)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(72, 0, 16, 4),
+            child: Row(
+              children: [
+                const Text('Blur', style: TextStyle(color: Colors.white70)),
+                Expanded(
+                  child: Slider(
+                    value: appState.d('art_blur', 46).clamp(10, 80).toDouble(),
+                    min: 10,
+                    max: 80,
+                    activeColor: pal.accent,
+                    onChanged: (v) => appState.setD('art_blur', v),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        _switch(pal, Icons.album_rounded, 'Spinning vinyl artwork',
+            'Album art spins like a record', appState.vinylSpinMode,
+            appState.setVinylSpinMode),
+        _switch(
+          pal,
+          Icons.swipe_rounded,
+          'Swipe right for next song',
+          appState.swipeRightForNext
+              ? 'Swipe right = next, left = previous (art & mini player)'
+              : 'Swipe left = next, right = previous (art & mini player)',
+          appState.swipeRightForNext,
+          appState.setSwipeRightForNext,
+        ),
+        _flag(pal, Icons.favorite_rounded, 'double_tap_like',
+            'Double-tap art to like', 'Instead of toggling vinyl mode'),
+        _flag(pal, Icons.light_mode_rounded, 'keep_screen_on', 'Keep screen on',
+            'Screen stays on while AlexLMP is open',
+            after: (_) => applyNativeSettings()),
+      ]),
+    ];
+  }
+
+  List<Widget> _playback(BuildContext context, AppPalette pal) {
+    final sleep = audioHandler.sleepLabel.value;
+    return [
+      _section(pal, 'Playback', Icons.play_circle_rounded, [
+        _tile(pal, Icons.bedtime_rounded, 'Sleep timer', sleep ?? 'Off',
+            () => _sleepSheet(context, pal)),
+        _tile(pal, Icons.speed_rounded, 'Speed & pitch',
+            '${appState.speed.toStringAsFixed(2)}x speed • ${appState.pitch.toStringAsFixed(2)}x pitch',
+            () => showPlaybackSheet(context)),
+        _flag(pal, Icons.graphic_eq_rounded, 'smooth_fade', 'Smooth play/pause',
+            'Gently fades the volume in and out'),
+        _flag(pal, Icons.fast_forward_rounded, 'skip_silence', 'Skip silence',
+            'Skips silent parts of songs automatically',
+            after: (v) => audioHandler.player.setSkipSilenceEnabled(v)),
+        _flag(pal, Icons.history_rounded, 'resume_last', 'Resume where you left off',
+            'Opens on the song and spot you were at last time',
+            def: true),
+        _switch(pal, Icons.cleaning_services_rounded, 'Stop music on task clear',
+            'Stops playback when swiped away from recents',
+            appState.stopOnTaskClear, appState.setStopOnTaskClear),
+        FutureBuilder<bool>(
+          future: Permission.ignoreBatteryOptimizations.isGranted,
+          builder: (context, snap) {
+            final ok = snap.data ?? false;
+            return _tile(
+              pal,
+              ok ? Icons.battery_charging_full_rounded : Icons.battery_alert_rounded,
+              'Background playback',
+              ok
+                  ? 'Battery optimization is off for AlexLMP'
+                  : 'Tap so Android never pauses music in the background',
+              () async {
+                await Permission.ignoreBatteryOptimizations.request();
+                appState.refresh();
+              },
+            );
+          },
+        ),
+      ]),
+    ];
+  }
+
+  void _sleepSheet(BuildContext context, AppPalette pal) {
+    _sheet(context, (ctx) {
+      Widget opt(String label, VoidCallback onTap) => ListTile(
+            title: Text(label),
+            onTap: () {
+              onTap();
+              Navigator.pop(ctx);
+            },
+          );
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text('Sleep timer',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+            ),
+            opt('Off', () => audioHandler.setSleepTimer(null)),
+            for (final m in [5, 15, 30, 45, 60, 90])
+              opt('$m minutes',
+                  () => audioHandler.setSleepTimer(Duration(minutes: m))),
+            opt('End of this song',
+                () => audioHandler.setSleepTimer(null, endOfSong: true)),
+          ],
+        ),
+      );
+    });
+  }
+
+  List<Widget> _youtube(BuildContext context, AppPalette pal) {
+    final acc = ytAccount.value;
+    return [
+      _section(pal, 'YouTube Music', Icons.play_circle_fill_rounded, [
+        _tile(
+          pal,
+          acc.signedIn ? Icons.verified_user_rounded : Icons.login_rounded,
+          acc.signedIn ? (acc.name ?? 'Signed in') : 'Sign in',
+          acc.signedIn
+              ? 'Your playlists & likes (read-only)'
+              : 'See your YouTube Music library in AlexLMP',
+          () => showYtAccountSheet(context),
+        ),
+        _flag(pal, Icons.data_saver_on_rounded, 'yt_data_saver', 'Data saver',
+            'Stream lower-quality audio to use less data',
+            after: (_) => applyNativeSettings()),
+        _flag(pal, Icons.downloading_rounded, 'prefetch_next', 'Pre-load next song',
+            'Starts loading the next song early so it plays instantly',
+            def: true),
+        _flag(pal, Icons.manage_search_rounded, 'search_yt_default',
+            'Open search on YouTube Music', 'Instead of your library'),
+        _flag(pal, Icons.history_toggle_off_rounded, 'search_history',
+            'Search history', 'Show your recent YouTube Music searches',
+            def: true),
+        _tile(pal, Icons.delete_sweep_rounded, 'Clear YouTube cache',
+            'Saved playlist lists and temporary song downloads', () async {
+          final p = YouTubeMusic.prefs;
+          if (p != null) {
+            for (final k in p.getKeys().toList()) {
+              if (k.startsWith('ytpl_') || k == 'yt_library') p.remove(k);
+            }
+          }
+          try {
+            await _ytChannel.invokeMethod('ytClearCache');
+          } catch (_) {}
+          appNotice.value = 'YouTube cache cleared';
+        }, trailing: const SizedBox.shrink()),
+      ]),
+    ];
+  }
+
+  List<Widget> _library(BuildContext context, AppPalette pal) {
+    return [
+      _section(pal, 'Library', Icons.library_music_rounded, [
+        _flag(pal, Icons.radar_rounded, 'auto_scan', 'Scan music on launch',
+            'Look for new songs on your phone every time the app opens',
+            def: true),
+        _flag(pal, Icons.timer_off_rounded, 'hide_short_tracks',
+            'Hide short audio', 'Skip clips under 30 seconds (voice notes, ringtones)',
+            after: (_) => scanDeviceAudio()),
+        _flag(pal, Icons.density_small_rounded, 'compact_rows', 'Compact lists',
+            'Smaller song rows so more fit on screen'),
+        _flag(pal, Icons.schedule_rounded, 'show_durations', 'Show song lengths',
+            'Display how long each song is in lists'),
+        _tile(pal, Icons.refresh_rounded, 'Rescan music library',
+            'Pick up newly added songs', () => scanDeviceAudio(),
+            trailing: const SizedBox.shrink()),
+      ]),
+    ];
+  }
+
+  List<Widget> _labs(BuildContext context, AppPalette pal) {
+    return [
+      _section(pal, 'Labs', Icons.science_rounded, labs: true, [
+        _flag(pal, Icons.radio_rounded, 'autoplay_radio', 'Autoplay radio',
+            'When your queue ends, keep playing similar songs from YouTube Music',
+            badge: 'NEW'),
+        _segments(pal, Icons.animation_rounded, 'Animation speed',
+            appState.d('animation_speed', 1.0),
+            const {0.6: 'Fast', 1.0: 'Normal', 2.0: 'Slow-mo'}, (v) {
+          timeDilation = v;
+          appState.setD('animation_speed', v);
+        }),
+        _tile(pal, Icons.restart_alt_rounded, 'Reset settings',
+            'Put every option on this page back to default (keeps your music, likes & playlists)',
+            () async {
+          final p = YouTubeMusic.prefs;
+          if (p != null) {
+            for (final k in const [
+              'app_style', 'use_wallpaper_colors', 'pure_black', 'text_scale',
+              'art_blur', 'double_tap_like', 'keep_screen_on', 'smooth_fade',
+              'skip_silence', 'resume_last', 'yt_data_saver', 'prefetch_next',
+              'search_yt_default', 'search_history', 'auto_scan',
+              'hide_short_tracks', 'compact_rows', 'show_durations',
+              'autoplay_radio', 'animation_speed', 'player_style',
+            ]) {
+              await p.remove(k);
+            }
+          }
+          timeDilation = 1.0;
+          await appState.load();
+          await applyNativeSettings();
+          appNotice.value = 'Settings reset';
+        }, trailing: const SizedBox.shrink()),
+      ]),
+    ];
+  }
+
+  List<Widget> _about(BuildContext context, AppPalette pal) {
+    return [
+      _section(pal, 'About', Icons.info_rounded, [
+        _tile(pal, Icons.music_note_rounded, 'AlexLMP',
+            'Material You music player • GPL-3.0', () {},
+            trailing: const SizedBox.shrink()),
+        _tile(pal, Icons.description_rounded, 'Open-source licenses',
+            'Libraries that make AlexLMP work', () {
+          showLicensePage(
+            context: context,
+            applicationName: 'AlexLMP',
+            applicationLegalese: 'Licensed under GPL-3.0',
+          );
+        }),
+      ]),
+    ];
+  }
 }
 
 void showPlaybackSheet(BuildContext context) {
@@ -9261,7 +9997,8 @@ class _SearchSheetState extends State<SearchSheet> {
   static int _lastTab = 0; // 0 = Library, 1 = YouTube Music (kept while app runs)
 
   String _query = '';
-  int _tab = _lastTab;
+  int _tab = appState.b('search_yt_default') ? 1 : _lastTab;
+  final TextEditingController _ctrl = TextEditingController();
   Timer? _debounce;
   int _ytSeq = 0;
   String _ytQuery = '';
@@ -9277,7 +10014,27 @@ class _SearchSheetState extends State<SearchSheet> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _ctrl.dispose();
     super.dispose();
+  }
+
+  // Recent searches (YouTube Music tab).
+  List<String> get _history =>
+      YouTubeMusic.prefs?.getStringList('search_history') ?? const [];
+
+  void _remember(String q) {
+    if (!appState.b('search_history', true)) return;
+    final list = [q, ..._history.where((x) => x.toLowerCase() != q.toLowerCase())]
+        .take(12)
+        .toList();
+    YouTubeMusic.prefs?.setStringList('search_history', list);
+  }
+
+  void _useHistory(String q) {
+    _ctrl.text = q;
+    _ctrl.selection = TextSelection.collapsed(offset: q.length);
+    setState(() => _query = q);
+    _searchYt(q);
   }
 
   void _setTab(int t) {
@@ -9312,6 +10069,7 @@ class _SearchSheetState extends State<SearchSheet> {
   void _searchYt(String q) {
     final seq = ++_ytSeq;
     _ytQuery = q;
+    _remember(q);
     setState(() {
       _songsLoading = _artistsLoading = _albumsLoading = true;
       _songsError = null;
@@ -9460,17 +10218,44 @@ class _SearchSheetState extends State<SearchSheet> {
 
   List<Widget> _ytResults(AppPalette pal) {
     if (_query.trim().length < 2) {
+      final history = appState.b('search_history', true) ? _history : const <String>[];
       return [
-        const Padding(
-          padding: EdgeInsets.only(top: 40),
-          child: Center(
-            child: Text(
-              'Search YouTube Music for songs, artists and albums.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white54),
+        if (history.isNotEmpty) ...[
+          Row(
+            children: [
+              Expanded(child: ytSectionHeader('Recent searches')),
+              TextButton(
+                onPressed: () {
+                  YouTubeMusic.prefs?.remove('search_history');
+                  setState(() {});
+                },
+                child: const Text('Clear'),
+              ),
+            ],
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final h in history)
+                ActionChip(
+                  avatar: const Icon(Icons.history_rounded, size: 18),
+                  label: Text(h),
+                  onPressed: () => _useHistory(h),
+                ),
+            ],
+          ),
+        ] else
+          const Padding(
+            padding: EdgeInsets.only(top: 40),
+            child: Center(
+              child: Text(
+                'Search YouTube Music for songs, artists and albums.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white54),
+              ),
             ),
           ),
-        ),
       ];
     }
     final out = <Widget>[];
@@ -9540,6 +10325,7 @@ class _SearchSheetState extends State<SearchSheet> {
           child: Column(
             children: [
               TextField(
+                controller: _ctrl,
                 autofocus: true,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
