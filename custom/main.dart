@@ -408,7 +408,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// 'alex' (default look) or 'community' (Google / Material 3 look).
-  String get appStyle => str('app_style', 'alex');
+  String get appStyle => str('app_style', 'prestige');
   bool get community => appStyle == 'community';
 
   /// 'local' (files on your phone) or 'youtube' (your YouTube Music).
@@ -10616,22 +10616,28 @@ class _SwipeArtCarouselState extends State<SwipeArtCarousel>
   }
 
   Widget _face(TrackItem t, {bool live = false}) {
-    Widget art = ClipRRect(
-      borderRadius: BorderRadius.circular(widget.radius),
-      child: live
-          ? Interactive3DArtwork(track: t, playing: widget.playing)
-          : CustomAlbumArtwork(track: t),
-    );
-    if (!live) return art;
-    if (appState.b('player_lyrics', true)) {
-      art = Stack(
-        fit: StackFit.expand,
-        children: [
-          art,
-          PlayerLyricsOverlay(track: t, radius: widget.radius),
-        ],
+    if (!live) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(widget.radius),
+        child: CustomAlbumArtwork(track: t),
       );
     }
+    final art3d = Interactive3DArtwork(track: t, playing: widget.playing);
+    // Artwork and lyrics share ONE rounded clip. Two separate clips left a
+    // hairline of artwork between their edges that flickered while the
+    // artwork breathed.
+    Widget art = ClipRRect(
+      borderRadius: BorderRadius.circular(widget.radius),
+      child: appState.b('player_lyrics', true)
+          ? Stack(
+              fit: StackFit.expand,
+              children: [
+                art3d,
+                PlayerLyricsOverlay(track: t, radius: widget.radius),
+              ],
+            )
+          : art3d,
+    );
     if (appState.b('breathing_art', true)) {
       art = BreathingArt(playing: widget.playing, child: art);
     }
@@ -24029,8 +24035,7 @@ class PlayerLyricsOverlay extends StatelessWidget {
                   child: GestureDetector(
                     behavior: HitTestBehavior.translucent,
                     onTap: () => showLyricsSheet(context, track),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(radius),
+                    child: SizedBox.expand(
                       child: Align(
                         alignment: Alignment.bottomCenter,
                         child: Container(
