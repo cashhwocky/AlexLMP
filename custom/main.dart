@@ -20445,6 +20445,9 @@ void startWidgetSync() {
   _widgetSyncStarted = true;
   void push() => _pushWidget();
   audioHandler.currentIndex.addListener(push);
+  audioHandler.currentIndex.addListener(prefetchNeighbourArt);
+  audioHandler.upNextRevision.addListener(prefetchNeighbourArt);
+  prefetchNeighbourArt();
   audioHandler.libraryRevision.addListener(push);
   audioHandler.playbackState.listen((st) {
     if (st.playing != _widgetPlaying) push();
@@ -22211,6 +22214,22 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
 
 final Map<String, Object?> _artCache = {};
 
+/// Artwork that has finished loading, so it can be drawn on the very first
+/// frame (no placeholder flash when the player opens or you swipe songs).
+final Map<String, Uint8List> _artReady = {};
+
+/// Starts loading the art for the songs around the current one, so swiping
+/// to them shows the cover instantly.
+void prefetchNeighbourArt() {
+  for (final t in [
+    audioHandler.currentTrack,
+    audioHandler.peekNext,
+    audioHandler.peekPrevious,
+  ]) {
+    if (t != null) loadArt(t);
+  }
+}
+
 Future<Uint8List?> loadArt(TrackItem t) {
   final existing = _artCache[t.id];
   if (existing is Future<Uint8List?>) return existing;
@@ -22222,6 +22241,9 @@ Future<Uint8List?> loadArt(TrackItem t) {
           ? _fetchArtFromUrl(url)
           : _fetchArtFromChannel(t);
   _artCache[t.id] = fut;
+  fut.then((b) {
+    if (b != null && b.isNotEmpty) _artReady[t.id] = b;
+  }, onError: (_) {});
   return fut;
 }
 
@@ -22271,6 +22293,19 @@ class CustomAlbumArtwork extends StatelessWidget {
       ),
       child: const SizedBox.expand(),
     );
+    // Already loaded: draw it right away, no fade, no placeholder.
+    final ready = _artReady[track.id];
+    if (ready != null) {
+      return SizedBox.expand(
+        child: Image.memory(
+          ready,
+          fit: BoxFit.cover,
+          cacheWidth: 512,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) => placeholder,
+        ),
+      );
+    }
     return FutureBuilder<Uint8List?>(
       future: loadArt(track),
       builder: (context, snap) {
