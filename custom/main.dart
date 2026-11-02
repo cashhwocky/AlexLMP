@@ -316,6 +316,7 @@ class AppState extends ChangeNotifier {
   bool stopOnTaskClear = true;
   bool linkSpeedAndPitch = false;
   bool swipeRightForNext = true;
+  String playerStyle = 'alex'; // 'alex' = default design, 'simp' = SimpMusic design
   bool animatedBackground = true;
   bool artBackdrop = true;
   AppPalette? _adaptivePalette;
@@ -347,6 +348,12 @@ class AppState extends ChangeNotifier {
     if (isAdaptive) notifyListeners();
   }
 
+  void setPlayerStyle(String v) {
+    playerStyle = v;
+    _prefs?.setString('player_style', v);
+    notifyListeners();
+  }
+
   void setSwipeRightForNext(bool v) {
     swipeRightForNext = v;
     _prefs?.setBool('swipe_right_next', v);
@@ -374,6 +381,7 @@ class AppState extends ChangeNotifier {
     stopOnTaskClear = prefs.getBool('stop_on_task_clear') ?? true;
     linkSpeedAndPitch = prefs.getBool('link_speed_pitch') ?? false;
     swipeRightForNext = prefs.getBool('swipe_right_next') ?? true;
+    playerStyle = prefs.getString('player_style') ?? 'alex';
     animatedBackground = prefs.getBool('animated_bg') ?? true;
     artBackdrop = prefs.getBool('art_backdrop') ?? true;
     speed = prefs.getDouble('playback_speed') ?? 1.0;
@@ -1902,6 +1910,7 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
 
   double _tabW = 100;
   bool _dragging = false;
+  int _tapTarget = 0;
   int _hovered = -1;
   Duration? _lastTs;
 
@@ -1941,15 +1950,15 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     _press.animateTo(1, curve: Curves.easeOutBack);
     _springPos(_tabAt(localX));
     _hovered = _tabAt(localX).round();
+    _tapTarget = _hovered;
   }
 
-  void _release({double velocityTabs = 0, bool select = true}) {
+  void _release({double velocityTabs = 0, bool select = true, int? forceTarget}) {
     _dragging = false;
     _lastTs = null;
-    final target = (_pos.value + velocityTabs * 0.08)
-        .round()
-        .clamp(0, _n - 1)
-        .toInt();
+    // A tap goes straight to the tapped tab (the lens may still be moving).
+    final target = forceTarget ??
+        (_pos.value + velocityTabs * 0.08).round().clamp(0, _n - 1).toInt();
     _press.animateBack(0, curve: Curves.easeOutCubic);
     _stretch.animateWith(SpringSimulation(
       const SpringDescription(mass: 1, stiffness: 300, damping: 18),
@@ -1997,7 +2006,7 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTapDown: (d) => _pressDown(d.localPosition.dx),
-        onTapUp: (_) => _release(),
+        onTapUp: (_) => _release(forceTarget: _tapTarget),
         onTapCancel: () {
           // A tap turns into a drag by cancelling first; only reset if no
           // drag actually started (e.g. the touch became a scroll).
@@ -6742,190 +6751,203 @@ class NowPlayingScreen extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(height: 14),
-                            Reveal(
-                              delayMs: 220,
-                              child: Row(
-                                children: [
-                                  SquishyGesture(
-                                    onTap: audioHandler.skipToPrevious,
-                                    child: LiquidGlassBox(
-                                      borderRadius: BorderRadius.circular(35),
-                                      fallbackColor: pal.playerButton,
-                                      child: const SizedBox(
-                                        width: 88,
-                                        height: 70,
-                                        child: Icon(
-                                          Icons.skip_previous_rounded,
-                                          color: Color(0xFFF6E6DF),
-                                          size: 32,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: SquishyGesture(
-                                      pressedScale: 0.94,
-                                      onTap: () => playing
-                                          ? audioHandler.pause()
-                                          : audioHandler.play(),
-                                      child: AnimatedContainer(
-                                        duration: const Duration(
-                                          milliseconds: 450,
-                                        ),
-                                        curve: kEmphasized,
-                                        height: 70,
-                                        decoration: BoxDecoration(
-                                          color: pal.accent,
-                                          borderRadius: BorderRadius.circular(
-                                            playing ? 22 : 35,
+                            if (appState.playerStyle == 'simp') ...[
+                              Reveal(
+                                delayMs: 220,
+                                child: Row(
+                                  children: [
+                                    SquishyGesture(
+                                      onTap: audioHandler.skipToPrevious,
+                                      child: LiquidGlassBox(
+                                        borderRadius: BorderRadius.circular(35),
+                                        fallbackColor: pal.playerButton,
+                                        child: const SizedBox(
+                                          width: 88,
+                                          height: 70,
+                                          child: Icon(
+                                            Icons.skip_previous_rounded,
+                                            color: Color(0xFFF6E6DF),
+                                            size: 32,
                                           ),
                                         ),
-                                        child: loading
-                                            ? Center(
-                                                child: SizedBox(
-                                                  width: 26,
-                                                  height: 26,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                    strokeWidth: 3,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: SquishyGesture(
+                                        pressedScale: 0.94,
+                                        onTap: () => playing
+                                            ? audioHandler.pause()
+                                            : audioHandler.play(),
+                                        child: AnimatedContainer(
+                                          duration: const Duration(
+                                            milliseconds: 450,
+                                          ),
+                                          curve: kEmphasized,
+                                          height: 70,
+                                          decoration: BoxDecoration(
+                                            color: pal.accent,
+                                            borderRadius: BorderRadius.circular(
+                                              playing ? 22 : 35,
+                                            ),
+                                          ),
+                                          child: loading
+                                              ? Center(
+                                                  child: SizedBox(
+                                                    width: 26,
+                                                    height: 26,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                      strokeWidth: 3,
+                                                      color: pal.onAccent,
+                                                    ),
+                                                  ),
+                                                )
+                                              : AnimatedSwitcher(
+                                                  duration: const Duration(
+                                                    milliseconds: 200,
+                                                  ),
+                                                  transitionBuilder: (c, a) =>
+                                                      ScaleTransition(
+                                                    scale: a,
+                                                    child: FadeTransition(
+                                                      opacity: a,
+                                                      child: c,
+                                                    ),
+                                                  ),
+                                                  child: Icon(
+                                                    playing
+                                                        ? Icons.pause_rounded
+                                                        : Icons
+                                                            .play_arrow_rounded,
+                                                    key: ValueKey(playing),
                                                     color: pal.onAccent,
+                                                    size: 36,
                                                   ),
                                                 ),
-                                              )
-                                            : AnimatedSwitcher(
-                                                duration: const Duration(
-                                                  milliseconds: 200,
-                                                ),
-                                                transitionBuilder: (c, a) =>
-                                                    ScaleTransition(
-                                                  scale: a,
-                                                  child: FadeTransition(
-                                                    opacity: a,
-                                                    child: c,
-                                                  ),
-                                                ),
-                                                child: Icon(
-                                                  playing
-                                                      ? Icons.pause_rounded
-                                                      : Icons
-                                                          .play_arrow_rounded,
-                                                  key: ValueKey(playing),
-                                                  color: pal.onAccent,
-                                                  size: 36,
-                                                ),
-                                              ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  SquishyGesture(
-                                    onTap: audioHandler.skipToNext,
-                                    child: LiquidGlassBox(
-                                      borderRadius: BorderRadius.circular(35),
-                                      fallbackColor: pal.playerButton,
-                                      child: const SizedBox(
-                                        width: 88,
-                                        height: 70,
-                                        child: Icon(
-                                          Icons.skip_next_rounded,
-                                          color: Color(0xFFF6E6DF),
-                                          size: 32,
                                         ),
                                       ),
                                     ),
-                                  ),
-                                ],
+                                    const SizedBox(width: 12),
+                                    SquishyGesture(
+                                      onTap: audioHandler.skipToNext,
+                                      child: LiquidGlassBox(
+                                        borderRadius: BorderRadius.circular(35),
+                                        fallbackColor: pal.playerButton,
+                                        child: const SizedBox(
+                                          width: 88,
+                                          height: 70,
+                                          child: Icon(
+                                            Icons.skip_next_rounded,
+                                            color: Color(0xFFF6E6DF),
+                                            size: 32,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 18),
-                            Reveal(
-                              delayMs: 280,
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(26),
-                                child: SizedBox(
-                                  height: 52,
-                                  child: Row(
-                                    children: [
-                                      _segBtn(
-                                        pal,
-                                        Icons.info_rounded,
-                                        false,
-                                        () =>
-                                            showTrackInfoDialog(context, track),
-                                        isFirst: true,
-                                      ),
-                                      const SizedBox(width: 3),
-                                      _segBtn(
-                                        pal,
-                                        Icons.tune_rounded,
-                                        appState.speed != 1.0 ||
-                                            appState.pitch != 1.0,
-                                        () => showPlaybackSheet(context),
-                                      ),
-                                      const SizedBox(width: 3),
-                                      _segBtn(
-                                        pal,
-                                        Icons.shuffle_rounded,
-                                        shuffle,
-                                        () {
-                                          audioHandler.setShuffleMode(
-                                            shuffle
-                                                ? AudioServiceShuffleMode.none
-                                                : AudioServiceShuffleMode.all,
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(width: 3),
-                                      _segBtn(
-                                        pal,
-                                        repeat == AudioServiceRepeatMode.one
-                                            ? Icons.repeat_one_rounded
-                                            : Icons.repeat_rounded,
-                                        repeat != AudioServiceRepeatMode.none,
-                                        () {
-                                          final next = switch (repeat) {
-                                            AudioServiceRepeatMode.none =>
-                                              AudioServiceRepeatMode.all,
-                                            AudioServiceRepeatMode.all =>
-                                              AudioServiceRepeatMode.one,
-                                            _ => AudioServiceRepeatMode.none,
-                                          };
-                                          audioHandler.setRepeatMode(next);
-                                        },
-                                      ),
-                                      const SizedBox(width: 3),
-                                      _segBtn(
-                                        pal,
-                                        Icons.playlist_add_rounded,
-                                        false,
-                                        () => showAddToPlaylistSheet(
-                                          context,
-                                          track,
+                              const SizedBox(height: 18),
+                              Reveal(
+                                delayMs: 280,
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(26),
+                                  child: SizedBox(
+                                    height: 52,
+                                    child: Row(
+                                      children: [
+                                        _segBtn(
+                                          pal,
+                                          Icons.info_rounded,
+                                          false,
+                                          () =>
+                                              showTrackInfoDialog(context, track),
+                                          isFirst: true,
                                         ),
-                                      ),
-                                      const SizedBox(width: 3),
-                                      _segBtn(
-                                        pal,
-                                        Icons.queue_music_rounded,
-                                        false,
-                                        () => showQueueSheet(context),
-                                      ),
-                                      const SizedBox(width: 3),
-                                      _segBtn(
-                                        pal,
-                                        Icons.album_rounded,
-                                        appState.vinylSpinMode,
-                                        () => appState.setVinylSpinMode(
-                                          !appState.vinylSpinMode,
+                                        const SizedBox(width: 3),
+                                        _segBtn(
+                                          pal,
+                                          Icons.tune_rounded,
+                                          appState.speed != 1.0 ||
+                                              appState.pitch != 1.0,
+                                          () => showPlaybackSheet(context),
                                         ),
-                                        isLast: true,
-                                      ),
-                                    ],
+                                        const SizedBox(width: 3),
+                                        _segBtn(
+                                          pal,
+                                          Icons.shuffle_rounded,
+                                          shuffle,
+                                          () {
+                                            audioHandler.setShuffleMode(
+                                              shuffle
+                                                  ? AudioServiceShuffleMode.none
+                                                  : AudioServiceShuffleMode.all,
+                                            );
+                                          },
+                                        ),
+                                        const SizedBox(width: 3),
+                                        _segBtn(
+                                          pal,
+                                          repeat == AudioServiceRepeatMode.one
+                                              ? Icons.repeat_one_rounded
+                                              : Icons.repeat_rounded,
+                                          repeat != AudioServiceRepeatMode.none,
+                                          () {
+                                            final next = switch (repeat) {
+                                              AudioServiceRepeatMode.none =>
+                                                AudioServiceRepeatMode.all,
+                                              AudioServiceRepeatMode.all =>
+                                                AudioServiceRepeatMode.one,
+                                              _ => AudioServiceRepeatMode.none,
+                                            };
+                                            audioHandler.setRepeatMode(next);
+                                          },
+                                        ),
+                                        const SizedBox(width: 3),
+                                        _segBtn(
+                                          pal,
+                                          Icons.playlist_add_rounded,
+                                          false,
+                                          () => showAddToPlaylistSheet(
+                                            context,
+                                            track,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 3),
+                                        _segBtn(
+                                          pal,
+                                          Icons.queue_music_rounded,
+                                          false,
+                                          () => showQueueSheet(context),
+                                        ),
+                                        const SizedBox(width: 3),
+                                        _segBtn(
+                                          pal,
+                                          Icons.album_rounded,
+                                          appState.vinylSpinMode,
+                                          () => appState.setVinylSpinMode(
+                                            !appState.vinylSpinMode,
+                                          ),
+                                          isLast: true,
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
+                            ] else
+                              ...[
+                                Reveal(
+                                  delayMs: 220,
+                                  child: _transportRow(pal, playing, loading, shuffle, repeat),
+                                ),
+                                const SizedBox(height: 18),
+                                Reveal(
+                                  delayMs: 280,
+                                  child: _toolbar(context, pal, track),
+                                ),
+                              ],
                             const SizedBox(height: 10),
                           ],
                         ),
@@ -6938,6 +6960,185 @@ class NowPlayingScreen extends StatelessWidget {
           },
         );
       },
+    );
+  }
+
+  // ── Default ("AlexLMP") player controls ────────────────────────────────
+  // Shuffle · previous · big morphing play button · next · repeat, then a
+  // floating tool bar. (Settings → "SimpMusic design" switches back to the
+  // classic pill buttons + segmented bar.)
+
+  Widget _transportRow(
+    AppPalette pal,
+    bool playing,
+    bool loading,
+    bool shuffle,
+    AudioServiceRepeatMode repeat,
+  ) {
+    Widget toggle(IconData icon, bool on, VoidCallback onTap) {
+      return SquishyGesture(
+        pressedScale: 0.85,
+        onTap: onTap,
+        child: SizedBox(
+          width: 48,
+          height: 64,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon,
+                  size: 24, color: on ? pal.accent : const Color(0xFFD8D0CC)),
+              const SizedBox(height: 4),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                width: on ? 5 : 0,
+                height: 5,
+                decoration:
+                    BoxDecoration(color: pal.accent, shape: BoxShape.circle),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget skip(IconData icon, VoidCallback onTap) {
+      return SquishyGesture(
+        pressedScale: 0.88,
+        onTap: onTap,
+        child: LiquidGlassBox(
+          borderRadius: BorderRadius.circular(32),
+          fallbackColor: pal.playerSurface,
+          child: SizedBox(
+            width: 64,
+            height: 64,
+            child: Icon(icon, color: const Color(0xFFF6E6DF), size: 30),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        toggle(Icons.shuffle_rounded, shuffle, () {
+          audioHandler.setShuffleMode(
+            shuffle ? AudioServiceShuffleMode.none : AudioServiceShuffleMode.all,
+          );
+        }),
+        skip(Icons.skip_previous_rounded, audioHandler.skipToPrevious),
+        SquishyGesture(
+          pressedScale: 0.9,
+          onTap: () => playing ? audioHandler.pause() : audioHandler.play(),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 420),
+            curve: kEmphasized,
+            width: 92,
+            height: 92,
+            decoration: BoxDecoration(
+              color: pal.accent,
+              // Playing: rounded square. Paused: full circle.
+              borderRadius: BorderRadius.circular(playing ? 30 : 46),
+              boxShadow: [
+                BoxShadow(
+                  color: pal.accent.withOpacity(playing ? 0.45 : 0.25),
+                  blurRadius: playing ? 28 : 16,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: loading
+                ? Center(
+                    child: SizedBox(
+                      width: 30,
+                      height: 30,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 3,
+                        color: pal.onAccent,
+                      ),
+                    ),
+                  )
+                : AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    transitionBuilder: (c, a) => RotationTransition(
+                      turns: Tween<double>(begin: -0.12, end: 0).animate(a),
+                      child: ScaleTransition(scale: a, child: c),
+                    ),
+                    child: Icon(
+                      playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      key: ValueKey(playing),
+                      color: pal.onAccent,
+                      size: 44,
+                    ),
+                  ),
+          ),
+        ),
+        skip(Icons.skip_next_rounded, audioHandler.skipToNext),
+        toggle(
+          repeat == AudioServiceRepeatMode.one
+              ? Icons.repeat_one_rounded
+              : Icons.repeat_rounded,
+          repeat != AudioServiceRepeatMode.none,
+          () {
+            final next = switch (repeat) {
+              AudioServiceRepeatMode.none => AudioServiceRepeatMode.all,
+              AudioServiceRepeatMode.all => AudioServiceRepeatMode.one,
+              _ => AudioServiceRepeatMode.none,
+            };
+            audioHandler.setRepeatMode(next);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _toolbar(BuildContext context, AppPalette pal, TrackItem track) {
+    Widget btn(IconData icon, bool active, VoidCallback onTap) {
+      return SquishyGesture(
+        pressedScale: 0.85,
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: active ? pal.accent : Colors.transparent,
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            icon,
+            size: 21,
+            color: active ? pal.onAccent : const Color(0xFFEAE0DC),
+          ),
+        ),
+      );
+    }
+
+    return Center(
+      child: LiquidGlassBox(
+        borderRadius: BorderRadius.circular(30),
+        fallbackColor: pal.playerSurface,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            btn(Icons.info_outline_rounded, false,
+                () => showTrackInfoDialog(context, track)),
+            const SizedBox(width: 10),
+            btn(Icons.tune_rounded,
+                appState.speed != 1.0 || appState.pitch != 1.0,
+                () => showPlaybackSheet(context)),
+            const SizedBox(width: 10),
+            btn(Icons.playlist_add_rounded, false,
+                () => showAddToPlaylistSheet(context, track)),
+            const SizedBox(width: 10),
+            btn(Icons.queue_music_rounded, false,
+                () => showQueueSheet(context)),
+            const SizedBox(width: 10),
+            btn(Icons.album_rounded, appState.vinylSpinMode,
+                () => appState.setVinylSpinMode(!appState.vinylSpinMode)),
+          ],
+        ),
+      ),
     );
   }
 
@@ -7904,6 +8105,19 @@ void showSettingsSheet(BuildContext context) {
                     value: appState.swipeRightForNext,
                     activeColor: pal.accent,
                     onChanged: appState.setSwipeRightForNext,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'SimpMusic design',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: const Text(
+                      'Use the classic pill player buttons and segmented bar',
+                    ),
+                    value: appState.playerStyle == 'simp',
+                    activeColor: pal.accent,
+                    onChanged: (v) => appState.setPlayerStyle(v ? 'simp' : 'alex'),
                   ),
                   const SizedBox(height: 16),
                   SwitchListTile(
