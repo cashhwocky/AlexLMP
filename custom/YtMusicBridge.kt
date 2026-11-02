@@ -179,6 +179,15 @@ object YtMusicBridge {
                 val ref = call.argument<String>("ref") ?: ""
                 runAsync(result, "YT_ALBUM") { Account.albumPage(ref) }
             }
+            "ytRate" -> {
+                val id = call.argument<String>("videoId") ?: ""
+                val like = call.argument<Boolean>("like") ?: true
+                runAsync(result, "YT_RATE") {
+                    require(VIDEO_ID.matches(id)) { "Bad videoId" }
+                    Account.rate(id, like)
+                    true
+                }
+            }
             "ytLyrics" -> {
                 val id = call.argument<String>("videoId") ?: ""
                 runAsync(result, "YT_LYRICS") {
@@ -1859,6 +1868,15 @@ object Account {
     }
 
     /** Artist + album for a song (used by "Go to artist" / "Go to album"). */
+    /** Likes (or un-likes) a song on your YouTube Music account. */
+    fun rate(videoId: String, like: Boolean) {
+        call(
+            if (like) "like/like" else "like/removelike",
+            JSONObject().put("target", JSONObject().put("videoId", videoId)),
+            auth = true,
+        )
+    }
+
     /** YouTube Music's own lyrics for a song: plain text plus the source line. */
     fun lyrics(videoId: String): Map<String, Any?>? {
         val r = call(
