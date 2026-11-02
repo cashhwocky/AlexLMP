@@ -346,11 +346,11 @@ class AppState extends ChangeNotifier {
   SharedPreferences? _prefs;
   String themeName = 'AMOLED';
   bool liquidGlass = false;
-  bool vinylSpinMode = false;
+  final bool vinylSpinMode = false; // removed feature, always off
   bool stopOnTaskClear = true;
   bool linkSpeedAndPitch = false;
   bool swipeRightForNext = false; // default: swipe left = next (like a carousel)
-  String playerStyle = 'alex'; // alex (default), modern, expressive, apple, simp, jog
+  String playerStyle = 'simp'; // simp = "AlexLMP" (default), alex = "AlexLMP Classic"
   bool animatedBackground = false;
   bool artBackdrop = false;
   AppPalette? _adaptivePalette;
@@ -533,7 +533,6 @@ class AppState extends ChangeNotifier {
       ..addAll(prefs.getStringList('recent_ids') ?? const []);
     themeName = prefs.getString('theme_name') ?? themeName;
     liquidGlass = prefs.getBool('liquid_glass_beta') ?? false;
-    vinylSpinMode = prefs.getBool('vinyl_spin_mode') ?? false;
     stopOnTaskClear = prefs.getBool('stop_on_task_clear') ?? true;
     linkSpeedAndPitch = prefs.getBool('link_speed_pitch') ?? false;
     // Swipe left = next is now the default (the old default felt backwards).
@@ -542,7 +541,7 @@ class AppState extends ChangeNotifier {
       await prefs.setBool('swipe_left_default_v1', true);
     }
     swipeRightForNext = prefs.getBool('swipe_right_next') ?? false;
-    playerStyle = prefs.getString('player_style') ?? 'alex';
+    playerStyle = prefs.getString('player_style') ?? 'simp';
     animatedBackground = prefs.getBool('animated_bg') ?? false;
     artBackdrop = prefs.getBool('art_backdrop') ?? false;
     speed = prefs.getDouble('playback_speed') ?? 1.0;
@@ -668,11 +667,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setVinylSpinMode(bool v) {
-    vinylSpinMode = v;
-    _prefs?.setBool('vinyl_spin_mode', v);
-    notifyListeners();
-  }
+  /// Vinyl mode was removed; kept as a no-op so old calls still compile.
+  void setVinylSpinMode(bool v) {}
 
   void setStopOnTaskClear(bool v) {
     stopOnTaskClear = v;
@@ -3784,10 +3780,23 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     super.dispose();
   }
 
+  /// Only real problems get a pop-up (with their raw error). Confirmations
+  /// and progress messages ("Finding artist…", "Added to likes",
+  /// "Playing next", "Saving…") are skipped.
+  static bool _worthShowing(String m) {
+    final s = m.toLowerCase();
+    return s.contains('couldn\'t') ||
+        s.contains('failed') ||
+        s.contains('interrupted') ||
+        s.contains('isn\'t') ||
+        s.contains('up to date');
+  }
+
   void _onNotice() {
     final msg = appNotice.value;
     if (msg == null || !mounted) return;
     appNotice.value = null;
+    if (!_worthShowing(msg)) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -10454,11 +10463,8 @@ class _Interactive3DArtworkState extends State<Interactive3DArtwork>
         HapticFeedback.mediumImpact();
         if (appState.b('double_tap_like')) {
           appState.toggleLike(widget.track.id);
-          appNotice.value = appState.isLiked(widget.track.id)
-              ? 'Added to Liked Songs'
-              : 'Removed from Liked Songs';
-        } else {
-          appState.setVinylSpinMode(!spinMode);
+        } else if (kImmersivePlayers.contains(appState.playerStyle)) {
+          appState.setB('immersive_art', !appState.b('immersive_art'));
         }
       },
       child: AnimatedBuilder(
@@ -10502,11 +10508,15 @@ class SwipeArtCarousel extends StatefulWidget {
   final bool playing;
   final double radius;
 
+  /// Big edge-to-edge artwork: no lyrics overlay and no breathing.
+  final bool plain;
+
   const SwipeArtCarousel({
     super.key,
     required this.track,
     required this.playing,
     required this.radius,
+    this.plain = false,
   });
 
   @override
@@ -10628,7 +10638,7 @@ class _SwipeArtCarouselState extends State<SwipeArtCarousel>
     // artwork breathed.
     Widget art = ClipRRect(
       borderRadius: BorderRadius.circular(widget.radius),
-      child: appState.b('player_lyrics', true)
+      child: !widget.plain && appState.b('player_lyrics', true)
           ? Stack(
               fit: StackFit.expand,
               children: [
@@ -10638,7 +10648,7 @@ class _SwipeArtCarouselState extends State<SwipeArtCarousel>
             )
           : art3d,
     );
-    if (appState.b('breathing_art', true)) {
+    if (!widget.plain && appState.b('breathing_art', true)) {
       art = BreathingArt(playing: widget.playing, child: art);
     }
     return art;
@@ -12162,6 +12172,17 @@ class _MiniPlayerState extends State<MiniPlayer>
 class NowPlayingScreen extends StatelessWidget {
   const NowPlayingScreen({super.key});
 
+  /// Smooth crossfade when double-tap switches to/from big artwork.
+  static Widget _artModeSwitch(Widget player) => AnimatedSwitcher(
+        duration: const Duration(milliseconds: 320),
+        switchInCurve: Curves.easeOut,
+        switchOutCurve: Curves.easeIn,
+        child: KeyedSubtree(
+          key: ValueKey(appState.b('immersive_art')),
+          child: player,
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -12201,14 +12222,14 @@ class NowPlayingScreen extends StatelessWidget {
             }
             if (appState.playerStyle == 'alex') {
               return SwipeDownDismiss(
-                child: AlexPlayerView(
+                child: _artModeSwitch(AlexPlayerView(
                   track: track,
                   playing: playing,
                   loading: loading,
                   shuffle: shuffle,
                   repeat: repeat,
                   liked: liked,
-                ),
+                )),
               );
             }
             if (appState.playerStyle == 'expressive') {
@@ -12225,26 +12246,26 @@ class NowPlayingScreen extends StatelessWidget {
             }
             if (appState.playerStyle == 'simp') {
               return SwipeDownDismiss(
-                child: SimpPlayerView(
+                child: _artModeSwitch(SimpPlayerView(
                   track: track,
                   playing: playing,
                   loading: loading,
                   shuffle: shuffle,
                   repeat: repeat,
                   liked: liked,
-                ),
+                )),
               );
             }
             if (appState.playerStyle == 'prestige') {
               return SwipeDownDismiss(
-                child: PrestigePlayerView(
+                child: _artModeSwitch(PrestigePlayerView(
                   track: track,
                   playing: playing,
                   loading: loading,
                   shuffle: shuffle,
                   repeat: repeat,
                   liked: liked,
-                ),
+                )),
               );
             }
             if (appState.playerStyle == 'apple') {
@@ -12728,11 +12749,9 @@ class NowPlayingScreen extends StatelessWidget {
                                         const SizedBox(width: 3),
                                         _segBtn(
                                           pal,
-                                          Icons.album_rounded,
-                                          appState.vinylSpinMode,
-                                          () => appState.setVinylSpinMode(
-                                            !appState.vinylSpinMode,
-                                          ),
+                                          Icons.lyrics_outlined,
+                                          false,
+                                          () => showLyricsSheet(context, track),
                                           isLast: true,
                                         ),
                                       ],
@@ -13071,8 +13090,8 @@ class NowPlayingScreen extends StatelessWidget {
             btn(Icons.queue_music_rounded, false,
                 () => showQueueSheet(context)),
             const SizedBox(width: 10),
-            btn(Icons.album_rounded, appState.vinylSpinMode,
-                () => appState.setVinylSpinMode(!appState.vinylSpinMode)),
+            btn(Icons.lyrics_outlined, false,
+                () => showLyricsSheet(context, track)),
           ],
         ),
       ),
@@ -14272,8 +14291,8 @@ class SettingsScreen extends StatelessWidget {
           'How the player controls look',
           appState.playerStyle,
           const {
-            'alex': 'AlexLMP (Default)',
-            'simp': 'SimpMusic',
+            'simp': 'AlexLMP (Default)',
+            'alex': 'AlexLMP Classic',
             'prestige': 'Prestige',
             'modern': 'Modern',
             'expressive': 'Expressive',
@@ -14377,9 +14396,6 @@ class SettingsScreen extends StatelessWidget {
               ],
             ),
           ),
-        _switch(pal, Icons.album_rounded, 'Spinning vinyl artwork',
-            'Album art spins like a record', appState.vinylSpinMode,
-            appState.setVinylSpinMode),
         _switch(
           pal,
           Icons.swipe_rounded,
@@ -14391,7 +14407,7 @@ class SettingsScreen extends StatelessWidget {
           appState.setSwipeRightForNext,
         ),
         _flag(pal, Icons.favorite_rounded, 'double_tap_like',
-            'Double-tap art to like', 'Instead of toggling vinyl mode'),
+            'Double-tap art to like', 'Instead of switching to big artwork'),
         _flag(pal, Icons.air_rounded, 'breathing_art', 'Breathing artwork',
             'Art gently breathes while playing and shrinks when paused',
             def: true),
@@ -18103,6 +18119,57 @@ class _LyricsScreenState extends State<LyricsScreen> {
               appBar: AppBar(
                 backgroundColor: Colors.transparent,
                 foregroundColor: cs.onSurface,
+                actions: [
+                  // Turns the lyrics shown over the player artwork on/off.
+                  ListenableBuilder(
+                    listenable: appState,
+                    builder: (context, _) {
+                      final on = appState.b('player_lyrics', true);
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 12),
+                        child: SquishyGesture(
+                          pressedScale: 0.9,
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            appState.setB('player_lyrics', !on);
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: on
+                                  ? cs.primary
+                                  : cs.onSurface.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  on
+                                      ? Icons.subtitles_rounded
+                                      : Icons.subtitles_off_outlined,
+                                  size: 18,
+                                  color: on ? cs.onPrimary : cs.onSurface,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'On artwork',
+                                  style: TextStyle(
+                                    color: on ? cs.onPrimary : cs.onSurface,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
                 title: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -18415,6 +18482,7 @@ class AlexPlayerView extends StatelessWidget {
 
   Widget _body(BuildContext context, ColorScheme cs, Color seed) {
     final glass = appState.liquidGlass;
+    final immersive = appState.b('immersive_art');
     final accent = Color.lerp(cs.primary, Colors.white, 0.35)!;
 
     Widget pane(Widget child, {double r = 22, EdgeInsets? padding}) => glass
@@ -18514,7 +18582,7 @@ class AlexPlayerView extends StatelessWidget {
               ],
             ),
             // ── Artwork with a colour glow
-            Expanded(
+            if (immersive) const Spacer() else Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(8, 18, 8, 18),
                 child: Center(
@@ -18784,6 +18852,13 @@ class AlexPlayerView extends StatelessWidget {
                   stops: const [0.0, 0.55, 1.0],
                 ),
               ),
+            ),
+          if (immersive)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: ImmersiveArt(track: track, playing: playing),
             ),
           content,
         ],
@@ -20163,8 +20238,8 @@ class _SetupScreenState extends State<SetupScreen> {
       'apple': 'Apple Music',
     };
     const players = {
-      'alex': 'AlexLMP',
-      'simp': 'SimpMusic',
+      'simp': 'AlexLMP',
+      'alex': 'Classic',
       'prestige': 'Prestige',
       'modern': 'Modern',
       'expressive': 'Expressive',
@@ -20546,6 +20621,64 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 }
 
+// ═══════════════════════ Big artwork (double-tap) ═══════════════════════
+
+/// Player styles that support big edge-to-edge artwork.
+const kImmersivePlayers = {'simp', 'alex', 'prestige'};
+
+/// Edge-to-edge artwork filling the top of the player, fading out at the
+/// bottom into whatever is behind it. Double-tap it to go back.
+class ImmersiveArt extends StatelessWidget {
+  final TrackItem track;
+  final bool playing;
+  const ImmersiveArt({super.key, required this.track, required this.playing});
+
+  @override
+  Widget build(BuildContext context) {
+    final h = MediaQuery.of(context).size.height * 0.6;
+    return SizedBox(
+      height: h,
+      width: double.infinity,
+      child: RepaintBoundary(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ShaderMask(
+              blendMode: BlendMode.dstIn,
+              shaderCallback: (r) => const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.white, Colors.white, Colors.transparent],
+                stops: [0, 0.6, 1],
+              ).createShader(r),
+              child: Hero(
+                tag: 'now_playing_art',
+                createRectTween: _arcTween,
+                flightShuttleBuilder: _artShuttle,
+                child: SwipeArtCarousel(
+                    track: track, playing: playing, radius: 0, plain: true),
+              ),
+            ),
+            // Keeps the top buttons readable on bright covers.
+            const IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0x73000000), Color(0x00000000)],
+                    stops: [0, 0.25],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ═══════════════════════ SimpMusic-style player ═══════════════════════
 // Connected button groups: pressing a button stretches it wider and squeezes
 // its neighbours, then everything springs back with a little bounce. The
@@ -20813,6 +20946,7 @@ class SimpPlayerView extends StatelessWidget {
 
   Widget _body(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final immersive = appState.b('immersive_art');
     final source = liked
         ? 'Your likes'
         : track.isYouTube
@@ -20856,6 +20990,13 @@ class SimpPlayerView extends StatelessWidget {
               ),
             ),
           ),
+          if (immersive)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: ImmersiveArt(track: track, playing: playing),
+            ),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -20874,7 +21015,7 @@ class SimpPlayerView extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           color: cs.onSurfaceVariant, fontSize: 12.5)),
-                  Expanded(
+                  if (immersive) const Spacer() else Expanded(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 22),
                       child: Center(
@@ -22062,6 +22203,7 @@ class PrestigePlayerView extends StatelessWidget {
 
   Widget _body(BuildContext context, Color accent) {
     final radius = appState.vinylSpinMode ? 999.0 : 26.0;
+    final immersive = appState.b('immersive_art');
     final source = liked
         ? 'Your likes'
         : track.isYouTube
@@ -22115,6 +22257,13 @@ class PrestigePlayerView extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           PrestigeBackdrop(track: track, dim: 0.3, animate: false),
+          if (immersive)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: ImmersiveArt(track: track, playing: playing),
+            ),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -22153,7 +22302,7 @@ class PrestigePlayerView extends StatelessWidget {
                           onTap: () => showAddToPlaylistSheet(context, track)),
                     ],
                   ),
-                  Expanded(
+                  if (immersive) const Spacer() else Expanded(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(18, 24, 18, 24),
                       child: Center(
