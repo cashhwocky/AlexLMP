@@ -94,6 +94,9 @@ Future<void> main() async {
     audioHandler.restoreTracks(appState.savedYouTubeTracks());
   } catch (_) {}
 
+  // Listening stats (counted on the phone only).
+  unawaited(ListenStats.i.start());
+
   runApp(const AlexLmpApp());
 }
 
@@ -1045,6 +1048,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     );
 
     player.positionStream.listen(_maybeCrossfade);
+    player.positionStream.listen(_maybeEndFade);
     player.positionStream.listen((p) {
       if (p > Duration.zero) _saveSession(p);
       if (p > Duration.zero) _lastGoodPosition = p;
@@ -1230,7 +1234,26 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   Future<void> _load(int i, {bool play = true}) async {
     if (i < 0 || i >= tracks.length) return;
+    // Remember the real volume (not a mid-fade or end-of-song-dipped one).
+    if (_fadeSeq == 0 &&
+        _endFadedSeq != _loadSeq &&
+        !_crossfading &&
+        player.volume > 0.05) {
+      _userVolume = player.volume;
+    }
     final seq = ++_loadSeq;
+    // Smooth switch: the old song fades out (and stops) straight away instead
+    // of playing on while the new one loads, then the new one fades in.
+    // Crossfade handles its own volumes, so it's left alone.
+    final smooth = play && !_crossfading;
+    Future<void>? fadeOut;
+    if (smooth) {
+      if (player.playing &&
+          player.volume > 0.01 &&
+          player.processingState != ProcessingState.completed) {
+        fadeOut = _fadeOutOld(seq);
+      }
+    }
     _index = i;
     currentIndex.value = i;
     final t = tracks[i];
@@ -1243,9 +1266,11 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     _endRecoverCount = 0;
     try {
       if (t.isYouTube) {
-        await _setYouTubeSource(t, seq);
+        await _setYouTubeSource(t, seq, before: fadeOut);
         if (seq != _loadSeq) return;
       } else {
+        if (fadeOut != null) await fadeOut;
+        if (seq != _loadSeq) return;
         try {
           await player.setAudioSource(AudioSource.uri(t.playbackUri));
         } catch (_) {
@@ -1259,12 +1284,19 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       _loadedId = t.id;
       await _applySpeedAndPitch();
       if (play) {
-        player.play();
+        if (smooth) {
+          await player.setVolume(0);
+          player.play();
+          unawaited(_fadeVolume(_userVolume, 450, seq));
+        } else {
+          player.play();
+        }
       }
       _prefetchNextYouTube();
     } catch (e) {
       if (seq != _loadSeq) return;
       _loadedId = null;
+      _restoreVolume();
       if (t.isYouTube && play) {
         final detail = e is PlatformException ? (e.message ?? e.code) : '$e';
         appNotice.value =
@@ -1275,10 +1307,13 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// Resolves the song through the native bridge and loads it. If the first
   /// attempt fails (stale/expired stream), it re-resolves once and tries again.
-  Future<void> _setYouTubeSource(TrackItem t, int seq) async {
+  Future<void> _setYouTubeSource(TrackItem t, int seq,
+      {Future<void>? before}) async {
     final id = t.ytVideoId!;
     try {
       final uri = await YouTubeMusic.prepare(id);
+      // Let the old song finish fading out (it fades while this resolves).
+      if (before != null) await before;
       if (seq != _loadSeq) return;
       await player.setAudioSource(AudioSource.uri(uri, tag: t.id));
     } catch (e) {
@@ -1356,6 +1391,8 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       );
       if (seq != _loadSeq) return;
       await _applySpeedAndPitch();
+      _endFadedSeq = -1;
+      _restoreVolume();
       player.play();
     } catch (_) {
       // Couldn't recover: behave like a normal song end.
@@ -1525,9 +1562,11 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       sleepLabel.value = null;
       await player.pause();
       await player.seek(Duration.zero);
+      _restoreVolume();
       return;
     }
     if (_repeat == AudioServiceRepeatMode.one) {
+      _restoreVolume();
       await player.seek(Duration.zero);
       player.play();
       return;
@@ -1537,6 +1576,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       // Labs: keep the music going with similar songs from YouTube Music.
       if (await _autoplayRadio()) return;
       await _load(0, play: false);
+      _restoreVolume();
     } else {
       _history.add(_index);
       await _load(n, play: true);
@@ -1550,6 +1590,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       await _load(_index, play: true);
     } else {
       await _applySpeedAndPitch();
+      if (!player.playing && _fadeSeq == 0 && !_crossfading) {
+        if (player.volume < 0.01) await player.setVolume(_userVolume);
+      }
       if (appState.b('smooth_fade') && !player.playing) {
         if (player.volume > 0.01) _userVolume = player.volume;
         await player.setVolume(0);
@@ -1682,6 +1725,71 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   double _userVolume = 1.0;
 
+  /// Bumped by every fade; a running fade stops when a newer one starts.
+  int _fadeSeq = 0;
+  int _endFadedSeq = -1;
+
+  /// Smoothly moves the main player's volume to [to] over [ms]. Stops early
+  /// if another fade starts or a different song begins loading.
+  Future<void> _fadeVolume(double to, int ms, int loadSeq) async {
+    final my = ++_fadeSeq;
+    final from = player.volume;
+    const stepMs = 30;
+    final steps = max(1, ms ~/ stepMs);
+    try {
+      for (var i = 1; i <= steps; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: stepMs));
+        if (my != _fadeSeq || loadSeq != _loadSeq) return;
+        // Ease-out curve so it sounds natural rather than linear.
+        final x = i / steps;
+        final eased = 1 - pow(1 - x, 2).toDouble();
+        await player.setVolume(from + (to - from) * eased);
+      }
+    } catch (_) {
+    } finally {
+      if (my == _fadeSeq) _fadeSeq = 0;
+    }
+  }
+
+  /// Quickly fades the song that's playing out, then pauses it so it doesn't
+  /// keep playing while the next one loads.
+  Future<void> _fadeOutOld(int seq) async {
+    await _fadeVolume(0, 220, seq);
+    if (seq == _loadSeq) {
+      try {
+        await player.pause();
+      } catch (_) {}
+    }
+  }
+
+  /// Puts the volume back if a fade left it at zero (e.g. you seeked back
+  /// during the end-of-song fade, or the queue ran out).
+  void _restoreVolume() {
+    if (_crossfading || _ghost != null) return;
+    _fadeSeq++; // stops any fade that's still running
+    _fadeSeq = 0;
+    if (player.volume < _userVolume - 0.01) {
+      player.setVolume(_userVolume).catchError((_) {});
+    }
+  }
+
+  /// When crossfade is off: a short fade out over the last moment of a song
+  /// (the next song then fades in from _load).
+  void _maybeEndFade(Duration pos) {
+    if (_crossfading || appState.b('crossfade_on') || !player.playing) return;
+    if (_endFadedSeq == _loadSeq) return;
+    if (_repeat == AudioServiceRepeatMode.one || stopAfterCurrent) return;
+    final dur = player.duration;
+    if (dur == null || dur.inSeconds < 20) return;
+    final left = dur - pos;
+    if (left > const Duration(milliseconds: 900) || left <= Duration.zero) {
+      return;
+    }
+    _endFadedSeq = _loadSeq;
+    if (_fadeSeq == 0 && player.volume > 0.05) _userVolume = player.volume;
+    unawaited(_fadeVolume(_userVolume * 0.15, left.inMilliseconds - 100, _loadSeq));
+  }
+
   Future<void> _fade(double from, double to, {int ms = 260}) async {
     const steps = 8;
     for (var i = 1; i <= steps; i++) {
@@ -1774,7 +1882,13 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   @override
-  Future<void> seek(Duration position) => player.seek(position);
+  Future<void> seek(Duration position) {
+    if (_endFadedSeq == _loadSeq) {
+      _endFadedSeq = -1;
+      _restoreVolume();
+    }
+    return player.seek(position);
+  }
 
   @override
   Future<void> skipToNext() async {
@@ -4194,7 +4308,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(bottom: 220),
       children: [
-        amTitle('Home', actions: [_amMenu(context, pal)]),
+        amTitle('Home', actions: [const StatsButton(apple: true), _amMenu(context, pal)]),
         amSection('Top Picks for You'),
         SizedBox(
           height: pickW * 1.33,
@@ -6522,6 +6636,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               ),
             ),
           ),
+          const SizedBox(width: 8),
+          const StatsButton(),
           const SizedBox(width: 8),
           Container(
             decoration: BoxDecoration(
@@ -19928,6 +20044,1550 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 }
 
+// ═══════════════════════ Listening stats ═══════════════════════
+// Counts how long you actually listen (wall-clock, only while playing), per
+// song, per day and per hour of the day. Kept in a small JSON file on the
+// phone; nothing leaves the device.
+
+class ListenStats {
+  ListenStats._();
+  static final ListenStats i = ListenStats._();
+
+  /// yyyy-mm-dd → track id → seconds listened.
+  final Map<String, Map<String, int>> days = {};
+
+  /// yyyy-mm-dd → seconds listened in each hour of the day (24 slots).
+  final Map<String, List<int>> hours = {};
+
+  /// yyyy-mm-dd → track id → plays (a play counts after 30 s of listening).
+  final Map<String, Map<String, int>> plays = {};
+
+  /// track id → saved details, so removed songs still show up in stats.
+  final Map<String, Map<String, dynamic>> meta = {};
+
+  File? _file;
+  Timer? _tick;
+  AppLifecycleListener? _life;
+  bool _started = false;
+  bool _dirty = false;
+  DateTime _lastSave = DateTime.now();
+  DateTime? _lastTick;
+  String? _sessionId;
+  int _sessionSecs = 0;
+  bool _sessionCounted = false;
+  Duration _lastPos = Duration.zero;
+
+  static String dayKey(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  static DateTime today() {
+    final n = DateTime.now();
+    return DateTime(n.year, n.month, n.day);
+  }
+
+  Future<void> start() async {
+    if (_started) return;
+    _started = true;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      _file = File('${dir.path}/listen_stats.json');
+      if (await _file!.exists()) {
+        final m = jsonDecode(await _file!.readAsString()) as Map<String, dynamic>;
+        Map<String, int> ints(dynamic v) => {
+              for (final e in (v as Map).entries)
+                e.key.toString(): (e.value as num).toInt()
+            };
+        (m['days'] as Map?)?.forEach((k, v) => days[k.toString()] = ints(v));
+        (m['plays'] as Map?)?.forEach((k, v) => plays[k.toString()] = ints(v));
+        (m['hours'] as Map?)?.forEach((k, v) {
+          final l = [for (final x in (v as List)) (x as num).toInt()];
+          if (l.length == 24) hours[k.toString()] = l;
+        });
+        (m['meta'] as Map?)?.forEach((k, v) =>
+            meta[k.toString()] = Map<String, dynamic>.from(v as Map));
+      }
+    } catch (_) {}
+    _prune();
+    _lastTick = DateTime.now();
+    _tick = Timer.periodic(const Duration(seconds: 5), (_) => _onTick());
+    _life = AppLifecycleListener(
+      onPause: save,
+      onHide: save,
+      onDetach: save,
+    );
+  }
+
+  void _prune() {
+    // Keep about three years.
+    final cutoff = dayKey(today().subtract(const Duration(days: 1100)));
+    for (final map in [days, hours, plays]) {
+      map.removeWhere((k, _) => k.compareTo(cutoff) < 0);
+    }
+  }
+
+  void _onTick() {
+    final now = DateTime.now();
+    final last = _lastTick ?? now;
+    _lastTick = now;
+    final h = audioHandler;
+    if (!h.player.playing) return;
+    if (h.player.processingState != ProcessingState.ready) return;
+    final t = h.currentTrack;
+    if (t == null) return;
+    final secs = (now.difference(last).inMilliseconds / 1000).round().clamp(0, 10);
+    if (secs == 0) return;
+
+    final pos = h.player.position;
+    if (t.id != _sessionId) {
+      _sessionId = t.id;
+      _sessionSecs = 0;
+      _sessionCounted = false;
+      _remember(t);
+    } else if (pos + const Duration(seconds: 10) < _lastPos) {
+      // Song restarted (repeat one / seeked back to the start): new play.
+      if (pos < const Duration(seconds: 10)) {
+        _sessionSecs = 0;
+        _sessionCounted = false;
+      }
+    }
+    _lastPos = pos;
+
+    final k = dayKey(now);
+    final d = days.putIfAbsent(k, () => {});
+    d[t.id] = (d[t.id] ?? 0) + secs;
+    final hr = hours.putIfAbsent(k, () => List<int>.filled(24, 0));
+    hr[now.hour] += secs;
+    _sessionSecs += secs;
+    if (!_sessionCounted && _sessionSecs >= 30) {
+      _sessionCounted = true;
+      final p = plays.putIfAbsent(k, () => {});
+      p[t.id] = (p[t.id] ?? 0) + 1;
+    }
+    _dirty = true;
+    if (now.difference(_lastSave).inSeconds >= 60) save();
+  }
+
+  void _remember(TrackItem t) {
+    meta[t.id] = {
+      't': t.title,
+      'a': t.artist,
+      'al': t.album,
+      if (t.ytVideoId != null) 'v': t.ytVideoId,
+      if (t.artworkUrl != null) 'u': t.artworkUrl,
+      if (t.filePath != null) 'fp': t.filePath,
+      's': t.source,
+    };
+  }
+
+  Future<void> save() async {
+    if (!_dirty || _file == null) return;
+    _dirty = false;
+    _lastSave = DateTime.now();
+    try {
+      await _file!.writeAsString(jsonEncode({
+        'v': 1,
+        'days': days,
+        'hours': hours,
+        'plays': plays,
+        'meta': meta,
+      }));
+    } catch (_) {
+      _dirty = true;
+    }
+  }
+
+  Future<void> clear() async {
+    days.clear();
+    hours.clear();
+    plays.clear();
+    meta.clear();
+    _dirty = true;
+    await save();
+  }
+
+  // ── Reading ─────────────────────────────────────────────────────────
+
+  int dayTotal(String k) {
+    final d = days[k];
+    if (d == null) return 0;
+    var s = 0;
+    for (final v in d.values) {
+      s += v;
+    }
+    return s;
+  }
+
+  String? get firstDay {
+    if (days.isEmpty) return null;
+    final keys = days.keys.toList()..sort();
+    return keys.first;
+  }
+
+  String titleOf(String id) =>
+      audioHandler.trackById(id)?.title ?? (meta[id]?['t'] as String?) ?? 'Unknown song';
+
+  String artistOf(String id) =>
+      audioHandler.trackById(id)?.artist ??
+      (meta[id]?['a'] as String?) ??
+      'Unknown Artist';
+
+  /// A TrackItem for artwork / playback, even if the song left the library.
+  TrackItem? trackFor(String id) {
+    final t = audioHandler.trackById(id);
+    if (t != null) return t;
+    final m = meta[id];
+    if (m == null) return null;
+    final v = m['v'] as String?;
+    if (v != null) {
+      return TrackItem.fromYtJson({
+        'videoId': v,
+        'title': m['t'],
+        'artist': m['a'],
+        'album': m['al'],
+        'thumbnail': m['u'],
+        'durationSeconds': 0,
+      }, id.hashCode.abs());
+    }
+    final pal = kArtPalettes[id.hashCode.abs() % kArtPalettes.length];
+    return TrackItem(
+      id: id,
+      title: cleanText(m['t'], 'Unknown Track'),
+      artist: cleanText(m['a'], 'Unknown Artist'),
+      album: cleanText(m['al'], 'Unknown Album'),
+      durationSeconds: 0,
+      artColors: pal.colors,
+      source: (m['s'] as String?) ?? '',
+      filePath: m['fp'] as String?,
+    );
+  }
+
+  StatsSummary summarize(DateTime from, DateTime to) {
+    final a = dayKey(from), b = dayKey(to);
+    final s = StatsSummary();
+    for (final e in days.entries) {
+      if (e.key.compareTo(a) < 0 || e.key.compareTo(b) > 0) continue;
+      var dayT = 0;
+      e.value.forEach((id, secs) {
+        dayT += secs;
+        s.songSecs[id] = (s.songSecs[id] ?? 0) + secs;
+      });
+      s.total += dayT;
+      if (dayT >= 60) s.activeDays++;
+      final hr = hours[e.key];
+      if (hr != null) {
+        for (var i = 0; i < 24; i++) {
+          s.hours[i] += hr[i];
+        }
+      }
+      plays[e.key]?.forEach((id, n) => s.songPlays[id] = (s.songPlays[id] ?? 0) + n);
+    }
+    // Artists: credit every artist on a song ("A, B & C").
+    final best = <String, int>{};
+    s.songSecs.forEach((id, secs) {
+      final names = artistOf(id)
+          .split(RegExp(r',\s*|\s+&\s+|\s+feat\.?\s+|\s+ft\.?\s+|\s+x\s+',
+              caseSensitive: false))
+          .map((x) => x.trim())
+          .where((x) => x.isNotEmpty && x != 'Unknown Artist');
+      for (final n in names) {
+        s.artistSecs[n] = (s.artistSecs[n] ?? 0) + secs;
+        if (secs > (best[n] ?? -1)) {
+          best[n] = secs;
+          s.artistTopSong[n] = id;
+        }
+      }
+    });
+    return s;
+  }
+
+  int totalBetween(DateTime from, DateTime to) {
+    final a = dayKey(from), b = dayKey(to);
+    var s = 0;
+    for (final k in days.keys) {
+      if (k.compareTo(a) >= 0 && k.compareTo(b) <= 0) s += dayTotal(k);
+    }
+    return s;
+  }
+
+  /// Days in a row (up to today) with at least a minute of listening.
+  int streak() {
+    var d = today();
+    if (dayTotal(dayKey(d)) < 60) d = d.subtract(const Duration(days: 1));
+    var n = 0;
+    while (dayTotal(dayKey(d)) >= 60) {
+      n++;
+      d = d.subtract(const Duration(days: 1));
+    }
+    return n;
+  }
+}
+
+class StatsSummary {
+  int total = 0;
+  int activeDays = 0;
+  final Map<String, int> songSecs = {};
+  final Map<String, int> songPlays = {};
+  final Map<String, int> artistSecs = {};
+  final Map<String, String> artistTopSong = {};
+  final List<int> hours = List<int>.filled(24, 0);
+
+  List<MapEntry<String, int>> get topSongs =>
+      songSecs.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+
+  List<MapEntry<String, int>> get topArtists =>
+      artistSecs.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+}
+
+class _StatBucket {
+  final String short;
+  final String long;
+  final int secs;
+  const _StatBucket(this.short, this.long, this.secs);
+}
+
+const _kMonthShort = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+];
+const _kDayShort = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+String _statNum(int n) {
+  final s = n.toString();
+  final b = StringBuffer();
+  for (var i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 == 0) b.write(',');
+    b.write(s[i]);
+  }
+  return b.toString();
+}
+
+String _statMins(int secs) {
+  final m = (secs / 60).round();
+  if (m < 60) return '$m min';
+  final h = m ~/ 60, r = m % 60;
+  return r == 0 ? '$h hr' : '$h hr $r min';
+}
+
+String _hourLabel(int h) {
+  final x = h % 12 == 0 ? 12 : h % 12;
+  return '$x ${h < 12 ? 'AM' : 'PM'}';
+}
+
+// ── Opening animation: a circle grows out of the button ──────────────────
+
+class _CircleRevealClipper extends CustomClipper<Path> {
+  final Offset center;
+  final double radius;
+  _CircleRevealClipper(this.center, this.radius);
+
+  @override
+  Path getClip(Size size) =>
+      Path()..addOval(Rect.fromCircle(center: center, radius: radius));
+
+  @override
+  bool shouldReclip(_CircleRevealClipper old) =>
+      old.radius != radius || old.center != center;
+}
+
+Future<void> openListeningStats(BuildContext context, {Offset? from}) {
+  HapticFeedback.mediumImpact();
+  final size = MediaQuery.of(context).size;
+  final o = from ?? Offset(size.width - 40, 70);
+  final maxR = sqrt(pow(max(o.dx, size.width - o.dx), 2) +
+      pow(max(o.dy, size.height - o.dy), 2)).toDouble();
+  return Navigator.of(context).push(PageRouteBuilder<void>(
+    opaque: false,
+    transitionDuration: const Duration(milliseconds: 700),
+    reverseTransitionDuration: const Duration(milliseconds: 450),
+    pageBuilder: (_, __, ___) => const ListeningStatsScreen(),
+    transitionsBuilder: (context, a, _, child) {
+      final c = CurvedAnimation(
+          parent: a, curve: kEmphasizedDecel, reverseCurve: Curves.easeInCubic);
+      return AnimatedBuilder(
+        animation: c,
+        child: child,
+        builder: (_, child) {
+          if (c.value >= 0.999) return child!;
+          return ClipPath(
+            clipper: _CircleRevealClipper(o, max(1.0, maxR * c.value)),
+            child: child,
+          );
+        },
+      );
+    },
+  ));
+}
+
+/// Round chart button for the home screen header.
+class StatsButton extends StatelessWidget {
+  final bool apple;
+  const StatsButton({super.key, this.apple = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return SquishyGesture(
+      pressedScale: 0.86,
+      onTap: () {
+        final box = context.findRenderObject() as RenderBox?;
+        final c = box == null
+            ? null
+            : box.localToGlobal(box.size.center(Offset.zero));
+        openListeningStats(context, from: c);
+      },
+      child: Container(
+        width: apple ? 38 : 48,
+        height: apple ? 38 : 48,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: apple ? const Color(0xFF2C2C2E) : null,
+          border: apple ? null : Border.all(color: Colors.white24, width: 1.4),
+        ),
+        child: Icon(Icons.bar_chart_rounded,
+            color: apple ? kAmRed : Colors.white, size: apple ? 22 : 24),
+      ),
+    );
+  }
+}
+
+// ── The screen ───────────────────────────────────────────────────────────
+
+class ListeningStatsScreen extends StatefulWidget {
+  const ListeningStatsScreen({super.key});
+
+  @override
+  State<ListeningStatsScreen> createState() => _ListeningStatsScreenState();
+}
+
+class _ListeningStatsScreenState extends State<ListeningStatsScreen>
+    with SingleTickerProviderStateMixin {
+  static const _periods = ['Week', 'Month', 'Year', 'All time'];
+  static const _card = Color(0xFF0E0E12);
+  static const _soft = Color(0xFF9A9CAB);
+
+  int _period = 0;
+  int? _sel;
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 7),
+  )..repeat();
+
+  ListenStats get _s => ListenStats.i;
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  // ── Period maths ──────────────────────────────────────────────────────
+
+  (DateTime, DateTime) _range(int p) {
+    final t = ListenStats.today();
+    switch (p) {
+      case 0:
+        return (t.subtract(const Duration(days: 6)), t);
+      case 1:
+        return (t.subtract(const Duration(days: 29)), t);
+      case 2:
+        return (DateTime(t.year, t.month - 11, 1), t);
+      default:
+        final f = _s.firstDay;
+        return (f == null ? t : DateTime.parse(f), t);
+    }
+  }
+
+  (int, String)? _compare(int p) {
+    final t = ListenStats.today();
+    switch (p) {
+      case 0:
+        return (
+          _s.totalBetween(t.subtract(const Duration(days: 13)),
+              t.subtract(const Duration(days: 7))),
+          'last week'
+        );
+      case 1:
+        return (
+          _s.totalBetween(t.subtract(const Duration(days: 59)),
+              t.subtract(const Duration(days: 30))),
+          'the month before'
+        );
+      case 2:
+        final start = DateTime(t.year, t.month - 11, 1);
+        return (
+          _s.totalBetween(DateTime(start.year - 1, start.month, 1),
+              start.subtract(const Duration(days: 1))),
+          'the year before'
+        );
+      default:
+        return null;
+    }
+  }
+
+  int _monthTotal(int y, int m) {
+    final pre = '${y.toString().padLeft(4, '0')}-${m.toString().padLeft(2, '0')}';
+    var s = 0;
+    for (final k in _s.days.keys) {
+      if (k.startsWith(pre)) s += _s.dayTotal(k);
+    }
+    return s;
+  }
+
+  List<_StatBucket> _buckets(int p) {
+    final t = ListenStats.today();
+    if (p == 0 || p == 1) {
+      final n = p == 0 ? 7 : 30;
+      return [
+        for (var i = n - 1; i >= 0; i--)
+          () {
+            final d = t.subtract(Duration(days: i));
+            final short = p == 0
+                ? _kDayShort[d.weekday - 1].substring(0, 1)
+                : ((n - 1 - i) % 7 == 0 || i == 0 ? '${d.day}' : '');
+            final long = i == 0
+                ? 'Today'
+                : '${_kDayShort[d.weekday - 1]}, ${_kMonthShort[d.month - 1]} ${d.day}';
+            return _StatBucket(short, long, _s.dayTotal(ListenStats.dayKey(d)));
+          }(),
+      ];
+    }
+    var months = 12;
+    if (p == 3) {
+      final f = _s.firstDay;
+      if (f != null) {
+        final fd = DateTime.parse(f);
+        final span = (t.year - fd.year) * 12 + t.month - fd.month + 1;
+        if (span > 24) {
+          // Long history: one bar per year.
+          return [
+            for (var y = fd.year; y <= t.year; y++)
+              _StatBucket('$y', '$y',
+                  [for (var m = 1; m <= 12; m++) _monthTotal(y, m)].fold(0, (a, b) => a + b)),
+          ];
+        }
+        months = max(6, span);
+      }
+    }
+    return [
+      for (var j = months - 1; j >= 0; j--)
+        () {
+          final d = DateTime(t.year, t.month - j, 1);
+          return _StatBucket(_kMonthShort[d.month - 1].substring(0, 1),
+              '${_kMonthShort[d.month - 1]} ${d.year}', _monthTotal(d.year, d.month));
+        }(),
+    ];
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Color.lerp(appState.palette.accent, Colors.white, 0.12)!;
+    final top = MediaQuery.of(context).padding.top;
+    final (from, to) = _range(_period);
+    final sum = _s.summarize(from, to);
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          AmoledGlow(accent: accent),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 320),
+            switchInCurve: kEmphasizedDecel,
+            transitionBuilder: (c, a) => FadeTransition(opacity: a, child: c),
+            child: ListView(
+              key: ValueKey(_period),
+              physics: const BouncingScrollPhysics(),
+              padding: EdgeInsets.fromLTRB(18, top + 132, 18, 60),
+              children: sum.total < 60
+                  ? [_empty(accent)]
+                  : _content(sum, accent),
+            ),
+          ),
+          // Header stays put while the content scrolls underneath.
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            child: Container(
+              padding: EdgeInsets.fromLTRB(18, top + 8, 18, 14),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black,
+                    Colors.black.withOpacity(0.92),
+                    Colors.black.withOpacity(0),
+                  ],
+                  stops: const [0, 0.7, 1],
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Reveal(
+                          child: Text('Your stats',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 32,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -1,
+                              )),
+                        ),
+                      ),
+                      SquishyGesture(
+                        onTap: () => Navigator.of(context).pop(),
+                        child: Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withOpacity(0.08),
+                          ),
+                          child: const Icon(Icons.close_rounded,
+                              color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Reveal(delayMs: 60, child: _periodPicker(accent)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _periodPicker(Color accent) {
+    return LayoutBuilder(builder: (context, c) {
+      final w = c.maxWidth / _periods.length;
+      return Container(
+        height: 44,
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Stack(
+          children: [
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 380),
+              curve: Curves.easeOutBack,
+              left: w * _period + 3,
+              top: 3,
+              bottom: 3,
+              width: w - 6,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: BorderRadius.circular(19),
+                  boxShadow: [
+                    BoxShadow(color: accent.withOpacity(0.45), blurRadius: 16),
+                  ],
+                ),
+              ),
+            ),
+            Row(
+              children: [
+                for (var i = 0; i < _periods.length; i++)
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        if (i == _period) return;
+                        HapticFeedback.selectionClick();
+                        setState(() {
+                          _period = i;
+                          _sel = null;
+                        });
+                      },
+                      child: Center(
+                        child: AnimatedDefaultTextStyle(
+                          duration: const Duration(milliseconds: 250),
+                          style: TextStyle(
+                            color: i == _period ? Colors.black : Colors.white70,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                          ),
+                          child: Text(_periods[i]),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
+  Widget _empty(Color accent) {
+    final none = _s.days.isEmpty;
+    return Reveal(
+      delayMs: 120,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 60),
+        child: Column(
+          children: [
+            AlexLogo(size: 110, color: accent),
+            const SizedBox(height: 28),
+            Text(
+              none ? 'Your stats start now' : 'Nothing here yet',
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              none
+                  ? 'Play some music and this page fills up with your top songs, artists and listening habits.'
+                  : 'You haven\'t listened much in this time range. Try a longer one.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: _soft, fontSize: 15.5, height: 1.45),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _content(StatsSummary s, Color accent) {
+    final songs = s.topSongs;
+    final artists = s.topArtists;
+    return [
+      Reveal(delayMs: 80, child: _hero(s, accent)),
+      const SizedBox(height: 14),
+      Reveal(delayMs: 160, child: _chartCard(accent)),
+      if (songs.isNotEmpty) ...[
+        _section('Top song', 220),
+        Reveal(delayMs: 240, child: _spotlight(songs.first, s, accent)),
+      ],
+      if (songs.length > 1) ...[
+        _section('Top songs', 0),
+        for (var i = 1; i < min(10, songs.length); i++)
+          Reveal(
+            delayMs: 40 * i,
+            child: _songRow(i + 1, songs[i], songs.first.value, s, accent),
+          ),
+      ],
+      if (artists.isNotEmpty) ...[
+        _section('Top artists', 0),
+        Reveal(child: _artistRow(artists, s, accent)),
+      ],
+      _section('When you listen', 0),
+      Reveal(child: _clockCard(s, accent)),
+      _section('By the numbers', 0),
+      Reveal(child: _facts(s, accent)),
+      const SizedBox(height: 26),
+      const Center(
+        child: Text('Your stats are saved on this phone only.',
+            style: TextStyle(color: Colors.white38, fontSize: 12.5)),
+      ),
+    ];
+  }
+
+  Widget _section(String t, int delay) => Reveal(
+        delayMs: delay,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(4, 28, 4, 12),
+          child: Text(t,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 21,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.4)),
+        ),
+      );
+
+  BoxDecoration _box({Color? border}) => BoxDecoration(
+        color: _card.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: border ?? Colors.white10),
+      );
+
+  Widget _countUp(int value, TextStyle style, {String suffix = ''}) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: value.toDouble()),
+      duration: const Duration(milliseconds: 1400),
+      curve: Curves.easeOutCubic,
+      builder: (_, v, __) => Text('${_statNum(v.round())}$suffix', style: style),
+    );
+  }
+
+  // Big minutes number inside a slowly spinning gradient border.
+  Widget _hero(StatsSummary s, Color accent) {
+    final mins = (s.total / 60).round();
+    final cmp = _compare(_period);
+    int? pct;
+    if (cmp != null && cmp.$1 >= 60) {
+      pct = (((s.total - cmp.$1) / cmp.$1) * 100).round();
+    }
+    final second = Color.lerp(accent, const Color(0xFFFF6FD8), 0.55)!;
+    return AnimatedBuilder(
+      animation: _spin,
+      builder: (_, child) => Container(
+        padding: const EdgeInsets.all(1.6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(28),
+          gradient: SweepGradient(
+            transform: GradientRotation(_spin.value * 2 * pi),
+            colors: [
+              accent,
+              Colors.white10,
+              second,
+              Colors.white10,
+              accent,
+            ],
+          ),
+        ),
+        child: child,
+      ),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(26.4),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color.lerp(Colors.black, accent, 0.16)!,
+              const Color(0xFF07070A),
+            ],
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _period == 3 ? 'ALL TIME' : 'THIS ${_periods[_period].toUpperCase()}',
+              style: TextStyle(
+                  color: accent,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.6),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                _countUp(
+                  mins,
+                  const TextStyle(
+                    color: Colors.white,
+                    fontSize: 62,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -2.5,
+                    height: 1,
+                    fontFeatures: [ui.FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Text('minutes',
+                    style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w700)),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (mins >= 60)
+                  _pill(Icons.schedule_rounded,
+                      '${(mins / 60).toStringAsFixed(mins >= 600 ? 0 : 1)} hours', Colors.white),
+                if (pct != null)
+                  _pill(
+                    pct >= 0 ? Icons.trending_up_rounded : Icons.trending_down_rounded,
+                    '${pct >= 0 ? '+' : ''}$pct% vs ${cmp!.$2}',
+                    pct >= 0 ? const Color(0xFF7CF2A4) : const Color(0xFFFF8A8A),
+                  ),
+                _pill(Icons.music_note_rounded,
+                    '${_statNum(s.songSecs.length)} songs', Colors.white),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pill(IconData icon, String text, Color c) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+        decoration: BoxDecoration(
+          color: c.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: c.withOpacity(0.25)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: c),
+            const SizedBox(width: 6),
+            Text(text,
+                style: TextStyle(
+                    color: c, fontSize: 13.5, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      );
+
+  Widget _chartCard(Color accent) {
+    final b = _buckets(_period);
+    final total = b.fold<int>(0, (a, x) => a + x.secs);
+    final avg = b.isEmpty ? 0 : total ~/ b.length;
+    final unit = _period <= 1 ? 'Daily' : (b.length > 0 && b.first.long.length == 4 ? 'Yearly' : 'Monthly');
+    final sel = _sel != null && _sel! < b.length ? b[_sel!] : null;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+      decoration: _box(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            transitionBuilder: (c, a) => FadeTransition(
+              opacity: a,
+              child: SlideTransition(
+                position: Tween(begin: const Offset(0, 0.25), end: Offset.zero)
+                    .animate(a),
+                child: c,
+              ),
+            ),
+            child: Row(
+              key: ValueKey(sel?.long ?? 'avg'),
+              children: [
+                Expanded(
+                  child: Text(
+                    sel?.long ?? '$unit average',
+                    style: const TextStyle(color: _soft, fontSize: 14.5),
+                  ),
+                ),
+                Text(
+                  _statMins(sel?.secs ?? avg),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          LayoutBuilder(builder: (context, c) {
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (d) => _pick(d.localPosition.dx, c.maxWidth, b.length),
+              onHorizontalDragUpdate: (d) =>
+                  _pick(d.localPosition.dx, c.maxWidth, b.length),
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 1100),
+                builder: (_, t, __) => CustomPaint(
+                  size: Size(c.maxWidth, 170),
+                  painter: _BarsPainter(
+                    values: [for (final x in b) x.secs.toDouble()],
+                    labels: [for (final x in b) x.short],
+                    t: t,
+                    color: accent,
+                    selected: _sel,
+                    avg: avg.toDouble(),
+                  ),
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  void _pick(double x, double w, int n) {
+    if (n == 0) return;
+    final i = (x / (w / n)).floor().clamp(0, n - 1);
+    if (i != _sel) {
+      HapticFeedback.selectionClick();
+      setState(() => _sel = i);
+    }
+  }
+
+  Widget _art(TrackItem? t, double size, {double radius = 12}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: t == null
+            ? Container(
+                color: Colors.white10,
+                child: const Icon(Icons.music_note_rounded, color: Colors.white38))
+            : CustomAlbumArtwork(track: t),
+      ),
+    );
+  }
+
+  void _play(String id) {
+    final t = _s.trackFor(id);
+    if (t == null) return;
+    HapticFeedback.selectionClick();
+    if (audioHandler.trackById(id) != null) {
+      audioHandler.playTrackById(id);
+    } else if (t.isYouTube) {
+      audioHandler.playYouTubeTrack(t);
+    } else {
+      appNotice.value = '"${t.title}" isn\'t in your library anymore.';
+    }
+  }
+
+  // #1 song: big artwork with a soft glow in the song's own colours.
+  Widget _spotlight(MapEntry<String, int> e, StatsSummary s, Color accent) {
+    final t = _s.trackFor(e.key);
+    final glow = t?.artColors.first ?? accent;
+    final plays = s.songPlays[e.key] ?? 0;
+    return SquishyGesture(
+      pressedScale: 0.97,
+      onTap: () => _play(e.key),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(color: glow.withOpacity(0.35)),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color.lerp(Colors.black, glow, 0.32)!,
+              const Color(0xFF08080B),
+            ],
+          ),
+        ),
+        child: Row(
+          children: [
+            AnimatedBuilder(
+              animation: _spin,
+              builder: (_, child) => Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                      color: glow.withOpacity(0.35 + 0.15 * sin(_spin.value * 2 * pi)),
+                      blurRadius: 30,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: child,
+              ),
+              child: _art(t, 118, radius: 18),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: accent,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text('#1',
+                        style: TextStyle(
+                            color: Colors.black,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900)),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(_s.titleOf(e.key),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          height: 1.15)),
+                  const SizedBox(height: 3),
+                  Text(_s.artistOf(e.key),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: _soft, fontSize: 14.5)),
+                  const SizedBox(height: 10),
+                  Text(
+                    '${plays > 0 ? '$plays ${plays == 1 ? 'play' : 'plays'} · ' : ''}${_statMins(e.value)}',
+                    style: TextStyle(
+                        color: Colors.white.withOpacity(0.85),
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _songRow(int rank, MapEntry<String, int> e, int topSecs,
+      StatsSummary s, Color accent) {
+    final t = _s.trackFor(e.key);
+    return SquishyGesture(
+      pressedScale: 0.97,
+      onTap: () => _play(e.key),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.fromLTRB(12, 10, 14, 10),
+        decoration: _box(),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 30,
+              child: Text('$rank',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: rank <= 3 ? accent : Colors.white54,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900)),
+            ),
+            const SizedBox(width: 8),
+            _art(t, 50),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_s.titleOf(e.key),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w700)),
+                  Text(_s.artistOf(e.key),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: _soft, fontSize: 13)),
+                  const SizedBox(height: 7),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0, end: e.value / max(1, topSecs)),
+                      duration: Duration(milliseconds: 700 + rank * 60),
+                      curve: Curves.easeOutCubic,
+                      builder: (_, v, __) => LinearProgressIndicator(
+                        value: v,
+                        minHeight: 4,
+                        backgroundColor: Colors.white.withOpacity(0.06),
+                        valueColor: AlwaysStoppedAnimation(
+                            accent.withOpacity(rank <= 3 ? 0.95 : 0.6)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(_statMins(e.value),
+                style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _artistRow(
+      List<MapEntry<String, int>> artists, StatsSummary s, Color accent) {
+    final list = artists.take(10).toList();
+    return SizedBox(
+      height: 168,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        itemCount: list.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 14),
+        itemBuilder: (_, i) {
+          final a = list[i];
+          final songId = s.artistTopSong[a.key];
+          final t = songId == null ? null : _s.trackFor(songId);
+          final size = i == 0 ? 104.0 : 88.0;
+          return TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: Duration(milliseconds: 500 + i * 90),
+            curve: Curves.easeOutBack,
+            builder: (_, v, child) => Transform.scale(scale: v, child: child),
+            child: SizedBox(
+              width: 104,
+              child: Column(
+                children: [
+                  SizedBox(
+                    height: 108,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      alignment: Alignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(2.5),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: i < 3
+                                ? SweepGradient(colors: [
+                                    accent,
+                                    Colors.white24,
+                                    accent,
+                                  ])
+                                : null,
+                            color: i < 3 ? null : Colors.white12,
+                          ),
+                          child: _art(t, size - 5, radius: size),
+                        ),
+                        Positioned(
+                          bottom: 0,
+                          right: i == 0 ? 0 : 8,
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: i < 3 ? accent : const Color(0xFF2A2A30),
+                              border: Border.all(color: Colors.black, width: 2.5),
+                            ),
+                            child: Text('${i + 1}',
+                                style: TextStyle(
+                                    color: i < 3 ? Colors.black : Colors.white,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w900)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(a.key,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700)),
+                  Text(_statMins(a.value),
+                      style: const TextStyle(color: _soft, fontSize: 12.5)),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _clockCard(StatsSummary s, Color accent) {
+    var peak = 0;
+    for (var i = 1; i < 24; i++) {
+      if (s.hours[i] > s.hours[peak]) peak = i;
+    }
+    final (name, icon) = switch (peak) {
+      >= 5 && < 11 => ('Early riser', Icons.wb_twilight_rounded),
+      >= 11 && < 17 => ('Daytime listener', Icons.wb_sunny_rounded),
+      >= 17 && < 22 => ('Evening listener', Icons.nights_stay_outlined),
+      _ => ('Night owl', Icons.dark_mode_rounded),
+    };
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _box(),
+      child: Column(
+        children: [
+          LayoutBuilder(builder: (context, c) {
+            final side = min(c.maxWidth, 280.0);
+            return SizedBox(
+              width: side,
+              height: side,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: 1),
+                    duration: const Duration(milliseconds: 1400),
+                    builder: (_, t, __) => CustomPaint(
+                      size: Size(side, side),
+                      painter: _ClockPainter(
+                          hours: s.hours, t: t, color: accent, peak: peak),
+                    ),
+                  ),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, color: accent, size: 28),
+                      const SizedBox(height: 6),
+                      Text(name,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16.5,
+                              fontWeight: FontWeight.w800)),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 10),
+          Text(
+            'You listen the most around ${_hourLabel(peak)}.',
+            style: const TextStyle(color: _soft, fontSize: 14.5),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _facts(StatsSummary s, Color accent) {
+    final streak = _s.streak();
+    final items = [
+      (Icons.local_fire_department_rounded, streak, streak == 1 ? 'day streak' : 'day streak', const Color(0xFFFFA45C)),
+      (Icons.calendar_month_rounded, s.activeDays, s.activeDays == 1 ? 'day listened' : 'days listened', accent),
+      (Icons.album_rounded, s.songSecs.length, s.songSecs.length == 1 ? 'song played' : 'songs played', const Color(0xFF7CF2A4)),
+      (Icons.mic_external_on_rounded, s.artistSecs.length, s.artistSecs.length == 1 ? 'artist' : 'artists', const Color(0xFFFF7FC8)),
+    ];
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 10,
+      crossAxisSpacing: 10,
+      childAspectRatio: 1.3,
+      padding: EdgeInsets.zero,
+      children: [
+        for (final (i, f) in items.indexed)
+          Reveal(
+            delayMs: i * 70,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: _box(border: f.$4.withOpacity(0.22)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(f.$1, color: f.$4, size: 24),
+                  const Spacer(),
+                  _countUp(
+                    f.$2,
+                    const TextStyle(
+                      color: Colors.white,
+                      fontSize: 30,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -1,
+                      height: 1,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(f.$3,
+                      style: const TextStyle(color: _soft, fontSize: 13.5)),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// ── Painters ─────────────────────────────────────────────────────────────
+
+class _BarsPainter extends CustomPainter {
+  final List<double> values;
+  final List<String> labels;
+  final double t;
+  final Color color;
+  final int? selected;
+  final double avg;
+
+  _BarsPainter({
+    required this.values,
+    required this.labels,
+    required this.t,
+    required this.color,
+    required this.selected,
+    required this.avg,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final n = values.length;
+    if (n == 0) return;
+    const labelH = 22.0;
+    final chartH = size.height - labelH;
+    final maxV = values.reduce(max);
+    final slot = size.width / n;
+    final barW = min(slot * 0.62, 26.0);
+
+    final grid = Paint()
+      ..color = Colors.white.withOpacity(0.05)
+      ..strokeWidth = 1;
+    for (var g = 1; g <= 3; g++) {
+      final y = chartH * g / 4;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+
+    var peak = 0;
+    for (var i = 1; i < n; i++) {
+      if (values[i] > values[peak]) peak = i;
+    }
+
+    for (var i = 0; i < n; i++) {
+      final delay = i / n * 0.45;
+      final local = ((t - delay) / 0.55).clamp(0.0, 1.0);
+      final eased = Curves.easeOutBack.transform(local);
+      final v = maxV <= 0 ? 0.0 : values[i] / maxV;
+      final h = max(values[i] > 0 ? 5.0 : 3.0, (chartH - 8) * v * eased);
+      final cx = slot * i + slot / 2;
+      final rect = Rect.fromLTWH(cx - barW / 2, chartH - h, barW, h);
+      final active = selected == null ? i == peak : selected == i;
+      final c = active ? color : color.withOpacity(values[i] > 0 ? 0.42 : 0.15);
+      final paint = Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [c, c.withOpacity(c.opacity * 0.35)],
+        ).createShader(rect);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, Radius.circular(min(barW / 2, 8))),
+        paint,
+      );
+      if (active && values[i] > 0) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(rect.inflate(3), Radius.circular(min(barW / 2, 8) + 3)),
+          Paint()
+            ..color = color.withOpacity(0.25 * local)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+        );
+      }
+      if (labels[i].isNotEmpty) {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: labels[i],
+            style: TextStyle(
+              color: active ? Colors.white : Colors.white54,
+              fontSize: 11.5,
+              fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(canvas, Offset(cx - tp.width / 2, chartH + 6));
+      }
+    }
+
+    // Dashed average line.
+    if (maxV > 0 && avg > 0) {
+      final y = chartH - (chartH - 8) * (avg / maxV) * Curves.easeOut.transform(t);
+      final dash = Paint()
+        ..color = Colors.white.withOpacity(0.35 * t)
+        ..strokeWidth = 1.2;
+      for (var x = 0.0; x < size.width; x += 9) {
+        canvas.drawLine(Offset(x, y), Offset(min(x + 4.5, size.width), y), dash);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BarsPainter o) =>
+      o.t != t || o.selected != selected || o.values != values || o.color != color;
+}
+
+/// 24 rays around a circle, one per hour of the day.
+class _ClockPainter extends CustomPainter {
+  final List<int> hours;
+  final double t;
+  final Color color;
+  final int peak;
+
+  _ClockPainter({
+    required this.hours,
+    required this.t,
+    required this.color,
+    required this.peak,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r0 = size.width * 0.27;
+    final maxLen = size.width * 0.17;
+    final maxV = hours.reduce(max).toDouble();
+
+    canvas.drawCircle(
+      c,
+      r0 - 8,
+      Paint()
+        ..color = Colors.white.withOpacity(0.06)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+
+    final w = (2 * pi * r0 / 24) * 0.5;
+    for (var h = 0; h < 24; h++) {
+      final a = -pi / 2 + h * 2 * pi / 24;
+      final delay = h / 24 * 0.5;
+      final local = ((t - delay) / 0.5).clamp(0.0, 1.0);
+      final eased = Curves.easeOutBack.transform(local);
+      final v = maxV <= 0 ? 0.0 : hours[h] / maxV;
+      final len = 3 + maxLen * v * eased;
+      final dir = Offset(cos(a), sin(a));
+      final isPeak = h == peak && maxV > 0;
+      final p = Paint()
+        ..strokeCap = StrokeCap.round
+        ..strokeWidth = w
+        ..color = isPeak
+            ? color
+            : color.withOpacity(0.18 + 0.55 * v);
+      canvas.drawLine(c + dir * r0, c + dir * (r0 + len), p);
+      if (isPeak) {
+        canvas.drawLine(
+          c + dir * r0,
+          c + dir * (r0 + len),
+          Paint()
+            ..strokeCap = StrokeCap.round
+            ..strokeWidth = w + 6
+            ..color = color.withOpacity(0.3 * local)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+        );
+      }
+    }
+
+    // Labels at 12 AM / 6 AM / 12 PM / 6 PM.
+    const marks = {0: '12AM', 6: '6AM', 12: '12PM', 18: '6PM'};
+    marks.forEach((h, label) {
+      final a = -pi / 2 + h * 2 * pi / 24;
+      final pos = c + Offset(cos(a), sin(a)) * (r0 + maxLen + 18);
+      final tp = TextPainter(
+        text: TextSpan(
+          text: label,
+          style: TextStyle(
+              color: Colors.white.withOpacity(0.45 * t),
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, pos - Offset(tp.width / 2, tp.height / 2));
+    });
+  }
+
+  @override
+  bool shouldRepaint(_ClockPainter o) => o.t != t || o.color != color || o.peak != peak;
+}
+
 // ═══════════════════════ Update checker (GitHub Releases) ═══════════════════
 // On launch (at most every 6 hours) the app asks GitHub for the latest
 // release. If its tag is newer than kAppVersion it shows a dialog with the
@@ -19936,7 +21596,7 @@ class _SetupScreenState extends State<SetupScreen> {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.6.0';
+const String kAppVersion = '2.7.0';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
