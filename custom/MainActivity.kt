@@ -55,6 +55,21 @@ class MainActivity : AudioServiceActivity() {
                             result.success(0)
                         }
                     }
+                    "updateWidget" -> {
+                        try {
+                            AlexWidget.update(
+                                applicationContext,
+                                call.argument<String>("title") ?: "Nothing playing",
+                                call.argument<String>("artist") ?: "",
+                                call.argument<Boolean>("playing") ?: false,
+                                call.argument<String>("art"),
+                                call.argument<Boolean>("artChanged") ?: false,
+                            )
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("WIDGET", e.toString(), null)
+                        }
+                    }
                     "setReverb" -> {
                         val session = call.argument<Int>("session") ?: 0
                         val level = (call.argument<Double>("level") ?: 0.0).coerceIn(0.0, 1.0)
