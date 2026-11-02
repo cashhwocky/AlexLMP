@@ -10323,24 +10323,18 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
             final pal = appState.palette;
             return Stack(
               children: [
-                Positioned.fill(child: ColoredBox(color: Colors.black)),
                 Transform.translate(
-                  offset: Offset(0, _c.value * 0.55),
-                  child: Transform.scale(
-                    scale: 1 - 0.07 * up,
-                    alignment: Alignment.bottomCenter,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(up * 34),
-                      child: child,
-                    ),
-                  ),
+                  offset: Offset(0, _c.value * 0.45),
+                  child: child,
                 ),
                 Positioned(
                   left: 0,
                   right: 0,
                   bottom: 18 + 40 * up,
                   child: IgnorePointer(
-                    child: Opacity(
+                    child: Material(
+                      type: MaterialType.transparency,
+                      child: Opacity(
                       opacity: up,
                       child: Center(
                         child: Container(
@@ -10367,12 +10361,14 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
                                   color: Colors.white,
                                   fontWeight: FontWeight.w700,
                                   fontSize: 14,
+                                  decoration: TextDecoration.none,
                                 ),
                               ),
                             ],
                           ),
                         ),
                       ),
+                    ),
                     ),
                   ),
                 ),
@@ -13646,14 +13642,6 @@ class SettingsScreen extends StatelessWidget {
         _tile(pal, Icons.speed_rounded, 'Speed & pitch',
             '${appState.speed.toStringAsFixed(2)}x speed • ${appState.pitch.toStringAsFixed(2)}x pitch',
             () => showPlaybackSheet(context)),
-        _flag(pal, Icons.compare_arrows_rounded, 'crossfade_on', 'Crossfade',
-            'Fades each song into the next one',
-            badge: 'BETA'),
-        if (appState.b('crossfade_on'))
-          _segments(pal, Icons.timer_outlined, 'Crossfade length',
-              appState.d('crossfade_secs', 6.0),
-              <double, String>{3: '3 s', 6: '6 s', 10: '10 s'},
-              (v) => appState.setD('crossfade_secs', v)),
         _flag(pal, Icons.graphic_eq_rounded, 'smooth_fade', 'Smooth play/pause',
             'Gently fades the volume in and out'),
         _flag(pal, Icons.fast_forward_rounded, 'skip_silence', 'Skip silence',
@@ -13782,6 +13770,14 @@ class SettingsScreen extends StatelessWidget {
   List<Widget> _labs(BuildContext context, AppPalette pal) {
     return [
       _section(pal, 'Labs', Icons.science_rounded, labs: true, [
+        _flag(pal, Icons.compare_arrows_rounded, 'crossfade_on', 'Crossfade',
+            'Fades each song into the next one',
+            badge: 'BETA'),
+        if (appState.b('crossfade_on'))
+          _segments(pal, Icons.timer_outlined, 'Crossfade length',
+              appState.d('crossfade_secs', 6.0),
+              <double, String>{3: '3 s', 6: '6 s', 10: '10 s'},
+              (v) => appState.setD('crossfade_secs', v)),
         _flag(pal, Icons.radio_rounded, 'autoplay_radio', 'Autoplay radio',
             'When your queue ends, keep playing similar songs from YouTube Music',
             badge: 'NEW'),
@@ -14166,165 +14162,334 @@ void showPlaybackSheet(BuildContext context) {
   );
 }
 
-Future<void> showQueueSheet(BuildContext context) {
-  return _sheet(
-    context,
-    (ctx) => SizedBox(
-      height: MediaQuery.of(ctx).size.height * 0.7,
-      child: ListenableBuilder(
-        listenable: Listenable.merge([
-          audioHandler.libraryRevision,
-          audioHandler.currentIndex,
-          audioHandler.upNextRevision,
-          appState,
-        ]),
-        builder: (ctx, _) {
-          final pal = appState.palette;
-          final tracks = audioHandler.tracks;
-          final upNext = audioHandler.upNext;
-          Widget label(String text) => Padding(
-                padding: const EdgeInsets.fromLTRB(2, 10, 2, 6),
-                child: Text(
-                  text,
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.9,
-                  ),
-                ),
-              );
-          final upNextSection = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(child: label('UP NEXT (${upNext.length})')),
-                  if (upNext.isNotEmpty)
-                    TextButton.icon(
-                      onPressed: () {
-                        HapticFeedback.mediumImpact();
-                        audioHandler.clearQueue();
-                      },
-                      icon: const Icon(Icons.clear_all_rounded, size: 20),
-                      label: const Text('Clear queue'),
-                      style: TextButton.styleFrom(foregroundColor: pal.accent),
-                    ),
-                ],
+/// The queue's contents (Up next + the rest), shared by the queue screen.
+Widget _queueBody() => ListenableBuilder(
+    listenable: Listenable.merge([
+      audioHandler.libraryRevision,
+      audioHandler.currentIndex,
+      audioHandler.upNextRevision,
+      appState,
+    ]),
+    builder: (ctx, _) {
+      final pal = appState.palette;
+      final tracks = audioHandler.tracks;
+      final upNext = audioHandler.upNext;
+      Widget label(String text) => Padding(
+            padding: const EdgeInsets.fromLTRB(2, 10, 2, 6),
+            child: Text(
+              text,
+              style: const TextStyle(
+                color: Colors.white54,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.9,
               ),
-              if (upNext.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 6),
-                  child: Text(
-                    'Nothing queued. Use "Play next" or "Add to queue" in a song\'s ⋮ menu.',
-                    style: TextStyle(color: Colors.white38, fontSize: 13),
-                  ),
-                ),
-              for (var q = 0; q < upNext.length; q++)
-                ListTile(
-                  key: ValueKey('up_${q}_${upNext[q].id}'),
-                  contentPadding: EdgeInsets.zero,
-                  leading: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: CustomAlbumArtwork(track: upNext[q]),
-                    ),
-                  ),
-                  title: Text(
-                    upNext[q].title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w700),
-                  ),
-                  subtitle: Text(
-                    upNext[q].artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close_rounded, color: Colors.white54),
-                    onPressed: () => audioHandler.removeFromQueue(q),
-                  ),
-                ),
-              label('THEN FROM YOUR LIBRARY'),
-            ],
+            ),
           );
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              children: [
-                const Text(
-                  'Queue',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+      final upNextSection = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: label('UP NEXT (${upNext.length})')),
+              if (upNext.isNotEmpty)
+                TextButton.icon(
+                  onPressed: () {
+                    HapticFeedback.mediumImpact();
+                    audioHandler.clearQueue();
+                  },
+                  icon: const Icon(Icons.clear_all_rounded, size: 20),
+                  label: const Text('Clear queue'),
+                  style: TextButton.styleFrom(foregroundColor: pal.accent),
                 ),
-                const SizedBox(height: 4),
-                Expanded(
-                  child: ReorderableListView.builder(
-                    header: upNextSection,
-                    buildDefaultDragHandles: false,
-                    itemCount: tracks.length,
-                    onReorder: (oldIndex, newIndex) {
-                      if (newIndex > oldIndex) newIndex -= 1;
-                      audioHandler.moveTrack(oldIndex, newIndex);
-                    },
-                    itemBuilder: (_, i) {
-                      final t = tracks[i];
-                      final active = i == audioHandler.index;
-                      return ListTile(
-                        key: ValueKey(t.id),
-                        contentPadding: EdgeInsets.zero,
-                        leading: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: SizedBox(
-                            width: 44,
-                            height: 44,
-                            child: CustomAlbumArtwork(track: t),
-                          ),
-                        ),
-                        title: Text(
-                          t.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: active ? pal.accent : Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        subtitle: Text(
-                          t.artist,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.white70),
-                        ),
-                        trailing: ReorderableDragStartListener(
-                          index: i,
-                          child: const Icon(
-                            Icons.drag_handle_rounded,
-                            color: Colors.white54,
-                          ),
-                        ),
-                        onTap: () => audioHandler.playIndex(i),
-                      );
-                    },
-                  ),
+            ],
+          ),
+          if (upNext.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 6),
+              child: Text(
+                'Nothing queued. Use "Play next" or "Add to queue" in a song\'s ⋮ menu.',
+                style: TextStyle(color: Colors.white38, fontSize: 13),
+              ),
+            ),
+          for (var q = 0; q < upNext.length; q++)
+            ListTile(
+              key: ValueKey('up_${q}_${upNext[q].id}'),
+              contentPadding: EdgeInsets.zero,
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: CustomAlbumArtwork(track: upNext[q]),
+                ),
+              ),
+              title: Text(
+                upNext[q].title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(
+                upNext[q].artist,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white70),
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.close_rounded, color: Colors.white54),
+                onPressed: () => audioHandler.removeFromQueue(q),
+              ),
+            ),
+          label('THEN FROM YOUR LIBRARY'),
+        ],
+      );
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          children: [
+            const Text(
+              'Queue',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: ReorderableListView.builder(
+                header: upNextSection,
+                buildDefaultDragHandles: false,
+                itemCount: tracks.length,
+                onReorder: (oldIndex, newIndex) {
+                  if (newIndex > oldIndex) newIndex -= 1;
+                  audioHandler.moveTrack(oldIndex, newIndex);
+                },
+                itemBuilder: (_, i) {
+                  final t = tracks[i];
+                  final active = i == audioHandler.index;
+                  return ListTile(
+                    key: ValueKey(t.id),
+                    contentPadding: EdgeInsets.zero,
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: CustomAlbumArtwork(track: t),
+                      ),
+                    ),
+                    title: Text(
+                      t.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: active ? pal.accent : Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    subtitle: Text(
+                      t.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                    trailing: ReorderableDragStartListener(
+                      index: i,
+                      child: const Icon(
+                        Icons.drag_handle_rounded,
+                        color: Colors.white54,
+                      ),
+                    ),
+                    onTap: () => audioHandler.playIndex(i),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+
+/// Opens the queue full screen, sliding up over the player.
+Future<void> showQueueSheet(BuildContext context) {
+  return Navigator.of(context).push(PageRouteBuilder<void>(
+    transitionDuration: const Duration(milliseconds: 420),
+    reverseTransitionDuration: const Duration(milliseconds: 300),
+    pageBuilder: (_, __, ___) => const QueueScreen(),
+    transitionsBuilder: (_, anim, __, child) {
+      final c = CurvedAnimation(
+          parent: anim, curve: kEmphasizedDecel, reverseCurve: kEmphasizedAccel);
+      return SlideTransition(
+        position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
+            .animate(c),
+        child: child,
+      );
+    },
+  ));
+}
+
+/// True-black background with soft colour glows drifting slowly: your theme
+/// colour plus the current song's colour. Plain gradients, no blur.
+class AmoledGlow extends StatefulWidget {
+  final Color accent;
+  const AmoledGlow({super.key, required this.accent});
+
+  @override
+  State<AmoledGlow> createState() => _AmoledGlowState();
+}
+
+class _AmoledGlowState extends State<AmoledGlow>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _t = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 32),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _t.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final track = audioHandler.currentTrack;
+    return FutureBuilder<Color>(
+      future: track == null ? null : artSeedFor(track),
+      builder: (context, snap) {
+        final song = snap.data ?? track?.artColors.first ?? widget.accent;
+        return IgnorePointer(
+          child: RepaintBoundary(
+            child: AnimatedBuilder(
+              animation: _t,
+              builder: (context, _) => CustomPaint(
+                painter: _GlowPainter(_t.value, widget.accent, song),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _GlowPainter extends CustomPainter {
+  final double t;
+  final Color a;
+  final Color b;
+  _GlowPainter(this.t, this.a, this.b);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = Colors.black);
+    final w = size.width, h = size.height;
+    final ang = t * 2 * pi;
+    void glow(Offset c, double r, Color col, double o) {
+      canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..shader = RadialGradient(
+            colors: [col.withOpacity(o), col.withOpacity(0)],
+          ).createShader(Rect.fromCircle(center: c, radius: r)),
+      );
+    }
+
+    glow(Offset(w * (0.15 + 0.2 * sin(ang)), h * (0.12 + 0.06 * cos(ang * 1.3))),
+        w * 0.9, a, 0.30);
+    glow(Offset(w * (0.9 + 0.12 * cos(ang * 0.8)), h * (0.55 + 0.1 * sin(ang))),
+        w * 0.85, b, 0.26);
+    glow(Offset(w * (0.3 + 0.2 * cos(ang * 1.2)), h * (1.0 + 0.04 * sin(ang * 0.7))),
+        w * 0.8, Color.lerp(a, b, 0.5)!, 0.18);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GlowPainter old) =>
+      old.t != t || old.a != a || old.b != b;
+}
+
+class QueueScreen extends StatefulWidget {
+  const QueueScreen({super.key});
+
+  @override
+  State<QueueScreen> createState() => _QueueScreenState();
+}
+
+class _QueueScreenState extends State<QueueScreen> {
+  double _drag = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    // Drag the top bar down (or flick it) to go back to the player.
+    final handle = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragUpdate: (d) =>
+          setState(() => _drag = max(0, _drag + d.delta.dy)),
+      onVerticalDragEnd: (d) {
+        if (_drag > 90 || d.velocity.pixelsPerSecond.dy > 600) {
+          Navigator.of(context).pop();
+        } else {
+          setState(() => _drag = 0);
+        }
+      },
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
+        child: Column(
+          children: [
+            Container(
+              width: 40,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.white30,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.keyboard_arrow_down_rounded,
+                      color: Colors.white, size: 30),
+                  onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
             ),
-          );
-        },
+          ],
+        ),
       ),
-    ),
-    scroll: true,
-    color: appState.palette.playerSurface,
-  );
+    );
+    return AnimatedContainer(
+      duration: _drag == 0 ? const Duration(milliseconds: 220) : Duration.zero,
+      curve: Curves.easeOutCubic,
+      transform: Matrix4.translationValues(0, _drag, 0),
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            AmoledGlow(accent: pal.accent),
+            SafeArea(
+              child: Column(
+                children: [
+                  handle,
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      child: _queueBody(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 void showTrackInfoDialog(BuildContext context, TrackItem track) {
