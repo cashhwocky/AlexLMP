@@ -71,7 +71,7 @@ object YtMusicBridge {
     private const val DEFAULT_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
     private const val CHUNK_SIZE = 1L shl 20 // 1 MiB per upstream request
-    private const val MAX_CHUNK_RETRIES = 3
+    private const val MAX_CHUNK_RETRIES = 6
 
     private val main = Handler(Looper.getMainLooper())
     private val workers = Executors.newCachedThreadPool()
@@ -733,7 +733,19 @@ object YtMusicBridge {
         private fun openChunk(videoId: String, initial: Resolved, from: Long, to: Long): Chunk {
             var res = initial
             var lastError: IOException? = null
+            // Re-resolve without letting an extraction hiccup abort the retries.
+            fun freshUrl() {
+                try {
+                    res = resolve(videoId, force = true)
+                } catch (e: Throwable) {
+                    lastError = IOException("Re-resolve failed: ${e.message}", e)
+                }
+            }
             for (attempt in 0 until MAX_CHUNK_RETRIES) {
+                if (attempt > 0) {
+                    // Short back-off: 0.4s, 0.8s, 1.2s, ... (YouTube often recovers quickly).
+                    try { Thread.sleep(400L * attempt) } catch (_: InterruptedException) {}
+                }
                 val conn = URL(res.url).openConnection() as HttpURLConnection
                 try {
                     conn.connectTimeout = 15_000
@@ -757,13 +769,14 @@ object YtMusicBridge {
                             conn.disconnect()
                             lastError = IOException("Upstream HTTP $code")
                             // 403/410 usually means the URL expired or was rejected: get a fresh one.
-                            res = resolve(videoId, force = true)
+                            freshUrl()
                         }
                     }
                 } catch (e: IOException) {
                     conn.disconnect()
                     lastError = e
-                    if (attempt == MAX_CHUNK_RETRIES - 2) res = resolve(videoId, force = true)
+                    // Network blip: retry the same URL once, then switch to a fresh one.
+                    if (attempt >= 1) freshUrl()
                 }
             }
             throw lastError ?: IOException("Upstream failed")
