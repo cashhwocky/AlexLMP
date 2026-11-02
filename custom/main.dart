@@ -348,7 +348,7 @@ class AppState extends ChangeNotifier {
   bool linkSpeedAndPitch = false;
   bool swipeRightForNext = true;
   String playerStyle = 'alex'; // 'alex' (default), 'simp' or 'apple'
-  bool animatedBackground = true;
+  bool animatedBackground = false;
   bool artBackdrop = false;
   AppPalette? _adaptivePalette;
   Color? _adaptiveSeed;
@@ -417,8 +417,22 @@ class AppState extends ChangeNotifier {
   /// Android 12+ wallpaper colour (Material You), if the device has one.
   Color? wallpaperColor;
 
+  /// Match the phone's wallpaper (Material You). On by default.
+  bool get useWallpaper => b('use_wallpaper_colors', true);
+
+  /// Songs you played, newest first (track ids).
+  final List<String> recent = [];
+
+  void addRecent(String id) {
+    if (recent.isNotEmpty && recent.first == id) return;
+    recent.remove(id);
+    recent.insert(0, id);
+    if (recent.length > 60) recent.removeRange(60, recent.length);
+    _prefs?.setStringList('recent_ids', recent);
+  }
+
   AppPalette get _basePalette {
-    if (b('use_wallpaper_colors') && wallpaperColor != null) {
+    if (useWallpaper && wallpaperColor != null) {
       return AppPalette.fromSeed('Wallpaper', wallpaperColor!);
     }
     return themeName == AppPalette.adaptiveName
@@ -490,6 +504,16 @@ class AppState extends ChangeNotifier {
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     _prefs = prefs;
+    // One-time switch to the new defaults: Material You wallpaper colors on,
+    // moving background glow off.
+    if (prefs.getBool('polish_defaults_v1') != true) {
+      await prefs.setBool('use_wallpaper_colors', true);
+      await prefs.setBool('animated_bg', false);
+      await prefs.setBool('polish_defaults_v1', true);
+    }
+    recent
+      ..clear()
+      ..addAll(prefs.getStringList('recent_ids') ?? const []);
     themeName = prefs.getString('theme_name') ?? themeName;
     liquidGlass = prefs.getBool('liquid_glass_beta') ?? false;
     vinylSpinMode = prefs.getBool('vinyl_spin_mode') ?? false;
@@ -497,7 +521,7 @@ class AppState extends ChangeNotifier {
     linkSpeedAndPitch = prefs.getBool('link_speed_pitch') ?? false;
     swipeRightForNext = prefs.getBool('swipe_right_next') ?? true;
     playerStyle = prefs.getString('player_style') ?? 'alex';
-    animatedBackground = prefs.getBool('animated_bg') ?? true;
+    animatedBackground = prefs.getBool('animated_bg') ?? false;
     artBackdrop = prefs.getBool('art_backdrop') ?? false;
     speed = prefs.getDouble('playback_speed') ?? 1.0;
     pitch = prefs.getDouble('playback_pitch') ?? 1.0;
@@ -611,6 +635,8 @@ class AppState extends ChangeNotifier {
   void setTheme(String name) {
     themeName = name;
     _prefs?.setString('theme_name', name);
+    // Picking a theme by hand turns off wallpaper matching.
+    _prefs?.setBool('use_wallpaper_colors', false);
     notifyListeners();
   }
 
@@ -3020,6 +3046,41 @@ class AlexLmpApp extends StatelessWidget {
             bottomSheetTheme: BottomSheetThemeData(
               backgroundColor: community ? cs.surfaceContainerLow : null,
             ),
+            popupMenuTheme: PopupMenuThemeData(
+              color: cs.surfaceContainerHigh,
+              elevation: 6,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
+            ),
+            dialogTheme: DialogTheme(
+              backgroundColor: cs.surfaceContainerHigh,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28)),
+            ),
+            snackBarTheme: SnackBarThemeData(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: cs.inverseSurface,
+              contentTextStyle: TextStyle(
+                color: cs.onInverseSurface,
+                fontWeight: FontWeight.w500,
+                fontSize: 14.5,
+              ),
+              actionTextColor: cs.inversePrimary,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+            ),
+            tooltipTheme: TooltipThemeData(
+              decoration: BoxDecoration(
+                color: cs.inverseSurface,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              textStyle: TextStyle(color: cs.onInverseSurface),
+            ),
+            progressIndicatorTheme: ProgressIndicatorThemeData(
+              color: cs.primary,
+              linearTrackColor: cs.primary.withOpacity(0.18),
+              circularTrackColor: Colors.transparent,
+            ),
           ),
           builder: (context, child) {
             final mq = MediaQuery.of(context);
@@ -3081,10 +3142,22 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   int _dir = 1;
   int _libraryFilter = 0;
 
+  AppLifecycleListener? _life;
+
+  void _trackRecent() {
+    final t = audioHandler.currentTrack;
+    if (t != null) appState.addRecent(t.id);
+  }
+
   @override
   void initState() {
     super.initState();
     appNotice.addListener(_onNotice);
+    audioHandler.currentIndex.addListener(_trackRecent);
+    // Pick up a new wallpaper colour when you come back to the app.
+    _life = AppLifecycleListener(onResume: () {
+      applyNativeSettings();
+    });
     _askPermissionsThenScan();
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotice());
   }
@@ -3111,6 +3184,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   @override
   void dispose() {
     appNotice.removeListener(_onNotice);
+    audioHandler.currentIndex.removeListener(_trackRecent);
+    _life?.dispose();
     super.dispose();
   }
 
@@ -3303,6 +3378,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   showSearchSheet(context);
                   return;
                 }
+                if (i != _tab) HapticFeedback.selectionClick();
                 setState(() {
                   _dir = i >= _tab ? 1 : -1;
                   _tab = i;
@@ -3344,11 +3420,14 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     // YouTube Music home and library.
     final tracks = allTracks.where((t) => yt ? t.isYouTube : !t.isYouTube).toList();
     if (yt) {
+      // Same layouts as Local mode, filled with YouTube Music.
       switch (_tab) {
         case 1:
-          return _mixTab(context, pal, tracks);
+          return _ytMixTab(context, pal);
         case 2:
-          return _ytLibraryTab(context, pal);
+          return m3
+              ? _libraryTabM3(context, pal, tracks)
+              : _libraryTab(context, pal, tracks);
         default:
           return _ytHomeTab(context, pal);
       }
@@ -3443,13 +3522,165 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
+  // YouTube Music mode reuses the Local layouts (Home / Mix / Library) and
+  // only swaps in YouTube Music content.
   static Future<List<YtShelf>>? _homeFuture;
-  int _ytLibFilter = 0;
+  static Future<YtAlbumPage?>? _ytLikedFuture;
+  static Future<List<YtPlaylistRef>>? _ytPlFuture;
+  static Future<List<YtAlbum>>? _ytAlbumsFuture;
+  static Future<List<YtArtist>>? _ytArtistsFuture;
+
+  /// Forget loaded YouTube home/library (after signing in or out).
+  static void resetYtCaches() {
+    _homeFuture = null;
+    _ytLikedFuture = null;
+    _ytPlFuture = null;
+    _ytAlbumsFuture = null;
+    _ytArtistsFuture = null;
+    YouTubeMusic.prefs?.remove('yt_home');
+  }
+
+  static YtAlbumPage? _cachedYtLiked() =>
+      YouTubeMusic.cachedPlaylistPage('LM', title: 'Liked on YouTube');
+
+  static Future<List<YtShelf>> _loadYtHome({bool refresh = false}) async {
+    try {
+      return await YouTubeMusic.homeFeed(refresh: refresh);
+    } catch (e) {
+      final cached = YouTubeMusic.cachedHomeFeed();
+      if (cached != null && cached.isNotEmpty) return cached;
+      rethrow;
+    }
+  }
+
+  void _ytEnsureLoaded() {
+    _homeFuture ??= _loadYtHome();
+    _ytLikedFuture ??= YouTubeMusic.playlistPage('LM', title: 'Liked on YouTube')
+        .then<YtAlbumPage?>((p) => p)
+        .catchError((_) => _cachedYtLiked());
+    _ytPlFuture ??= YouTubeMusic.libraryPlaylists()
+        .catchError((_) => YouTubeMusic.cachedLibrary() ?? <YtPlaylistRef>[]);
+  }
+
+  Future<void> _ytRefresh() async {
+    final home = _loadYtHome(refresh: true);
+    final liked = YouTubeMusic.playlistPage('LM', title: 'Liked on YouTube')
+        .then<YtAlbumPage?>((p) => p)
+        .catchError((_) => _cachedYtLiked());
+    final pls = YouTubeMusic.libraryPlaylists(refresh: true)
+        .catchError((_) => YouTubeMusic.cachedLibrary() ?? <YtPlaylistRef>[]);
+    setState(() {
+      _homeFuture = home;
+      _ytLikedFuture = liked;
+      _ytPlFuture = pls;
+      _ytAlbumsFuture = null;
+      _ytArtistsFuture = null;
+    });
+    try {
+      await Future.wait<Object?>([home, liked, pls]);
+    } catch (_) {}
+  }
+
+  /// Loads home feed + liked songs + playlists, then builds with them.
+  Widget _ytData(Widget Function(YtHomeData d, Object? err, bool loading) build) {
+    _ytEnsureLoaded();
+    return FutureBuilder<List<YtShelf>>(
+      future: _homeFuture,
+      initialData: YouTubeMusic.cachedHomeFeed(),
+      builder: (context, hs) => FutureBuilder<YtAlbumPage?>(
+        future: _ytLikedFuture,
+        initialData: _cachedYtLiked(),
+        builder: (context, ls) => FutureBuilder<List<YtPlaylistRef>>(
+          future: _ytPlFuture,
+          initialData: YouTubeMusic.cachedLibrary(),
+          builder: (context, ps) => build(
+            YtHomeData.from(
+              hs.data ?? const <YtShelf>[],
+              ls.data?.tracks ?? const <TrackItem>[],
+              ps.data ?? const <YtPlaylistRef>[],
+            ),
+            hs.data == null && hs.hasError ? hs.error : null,
+            hs.data == null && !hs.hasError,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _ytPlay(List<TrackItem> list, int i) {
+    if (list.isEmpty) return;
+    audioHandler.playYouTubeList(list, i < 0 ? 0 : i);
+    openPlayer(context);
+  }
+
+  void _ytShuffle(List<TrackItem> list) {
+    if (list.isEmpty) return;
+    audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
+    _ytPlay(list, Random().nextInt(list.length));
+  }
+
+  Widget _ytTrackRow(
+      BuildContext context, AppPalette pal, List<TrackItem> list, int i) {
+    final t = list[i];
+    return Reveal(
+      delayMs: min(i, 8) * 40,
+      dy: 16,
+      child: TrackRow(
+        track: t,
+        palette: pal,
+        active: audioHandler.currentTrack?.id == t.id,
+        onTap: () => _ytPlay(list, i),
+        onMore: () => showYtAddToPlaylist(context, t),
+      ),
+    );
+  }
+
+  Widget _ytCard(BuildContext context, YtShelfItem it, double w) {
+    return MediaCard(
+      width: w,
+      cover: it.kind == 'artist'
+          ? YtNetworkImage(
+              url: it.thumbnail,
+              size: w,
+              circle: true,
+              fallbackIcon: Icons.person_rounded)
+          : YtNetworkImage(url: it.thumbnail, size: w),
+      title: it.title,
+      subtitle: it.subtitle,
+      onTap: () => openYtShelfItem(context, it),
+    );
+  }
+
+  Widget _ytHomeStatus(AppPalette pal, Object? err, bool loading) {
+    if (err != null) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+        child: SelectableText(
+          'Couldn\'t load your YouTube Music home.\n\nDetails: ${err is PlatformException ? (err.message ?? err.code) : err}',
+          style: const TextStyle(color: Colors.white54),
+        ),
+      );
+    }
+    if (loading) return const HomeSkeleton();
+    return const SizedBox.shrink();
+  }
+
+  // ───────────────────────── YouTube Music: HOME ─────────────────────────
 
   Widget _ytHomeTab(BuildContext context, AppPalette pal) {
-    _homeFuture ??= YouTubeMusic.homeFeed();
+    return RefreshIndicator(
+      color: pal.accent,
+      onRefresh: _ytRefresh,
+      child: _ytData((d, err, loading) => appState.community
+          ? _ytHomeM3(context, pal, d, err, loading)
+          : _ytHomeAlex(context, pal, d, err, loading)),
+    );
+  }
+
+  Widget _ytHomeAlex(BuildContext context, AppPalette pal, YtHomeData d,
+      Object? err, bool loading) {
     final header = Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
           Expanded(
@@ -3458,14 +3689,11 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               children: [
                 _modeSwitcher(context, pal),
                 const SizedBox(height: 2),
-                Text(
-                  _greeting(),
-                  style: TextStyle(
+                _greetingText(style: const TextStyle(
                     color: Colors.white,
-                    fontSize: appState.community ? 30 : 28,
-                    fontWeight:
-                        appState.community ? FontWeight.w400 : FontWeight.w800,
-                    letterSpacing: appState.community ? 0 : -0.6,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.6,
                   ),
                 ),
               ],
@@ -3479,209 +3707,786 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         ],
       ),
     );
-    return RefreshIndicator(
-      color: pal.accent,
-      onRefresh: () async {
-        final f = YouTubeMusic.homeFeed(refresh: true);
-        setState(() => _homeFuture = f);
-        try {
-          await f;
-        } catch (_) {}
-      },
-      child: FutureBuilder<List<YtShelf>>(
-        future: _homeFuture,
-        initialData: YouTubeMusic.cachedHomeFeed(),
-        builder: (context, snap) {
-          final shelves = snap.data;
-          return ListView(
-            padding: const EdgeInsets.only(top: 0, bottom: 185),
-            children: [
-              header,
-              const SizedBox(height: 8),
-              if (shelves == null && snap.hasError)
-                Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: SelectableText(
-                    'Couldn\'t load your YouTube Music home.\n\nDetails: ${snap.error is PlatformException ? ((snap.error as PlatformException).message ?? '') : snap.error}',
-                    style: const TextStyle(color: Colors.white54),
-                  ),
-                )
-              else if (shelves == null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 60),
-                  child: Center(child: CircularProgressIndicator(color: pal.accent)),
-                )
-              else
-                ...ytShelfWidgets(context, pal, shelves),
-            ],
-          );
-        },
+
+    final current = audioHandler.currentTrack;
+    final screenW = MediaQuery.of(context).size.width;
+    final tileW = (screenW - 32 - 10) / 2;
+    final colWidth = screenW - 42;
+    final quick = d.quick.take(8).toList();
+    final shuffleSource = d.liked.isNotEmpty ? d.liked : d.quick;
+
+    final tiles = <Widget>[
+      QuickTile(
+        width: tileW,
+        cover: GradientCover(
+          icon: Icons.favorite_rounded,
+          colors: [pal.accent, pal.playerButton],
+          size: 54,
+          iconColor: pal.onAccent,
+        ),
+        title: 'Liked Songs',
+        onTap: () => openYtLikedMusic(context),
       ),
-    );
-  }
-
-  static Future<List<YtAlbum>>? _ytAlbumsFuture;
-  static Future<List<YtArtist>>? _ytArtistsFuture;
-
-  /// Forget loaded YouTube home/library (after signing in or out).
-  static void resetYtCaches() {
-    _homeFuture = null;
-    _ytAlbumsFuture = null;
-    _ytArtistsFuture = null;
-    YouTubeMusic.prefs?.remove('yt_home');
-  }
-
-  Widget _ytLibraryTab(BuildContext context, AppPalette pal) {
-    const filters = ['Playlists', 'Albums', 'Artists'];
-    final cw = _gridItemWidth(context, 2);
-    Widget body;
-    switch (_ytLibFilter) {
-      case 1:
-        _ytAlbumsFuture ??= YouTubeMusic.libraryAlbums();
-        body = FutureBuilder<List<YtAlbum>>(
-          future: _ytAlbumsFuture,
-          builder: (context, snap) {
-            if (snap.hasError) return _ytLibError(snap.error);
-            if (!snap.hasData) return _ytSpinner(pal);
-            final list = snap.data!;
-            if (list.isEmpty) return _ytEmpty('No saved albums in your library.');
-            if (_listView) {
-              return Column(children: [
-                for (final a in list)
-                  _libRow(pal,
-                      cover: YtNetworkImage(url: a.thumbnail, size: 60),
-                      title: a.title,
-                      subtitle: a.artist,
-                      onTap: () => openYtAlbum(context, a)),
-              ]);
-            }
-            return Wrap(spacing: 14, runSpacing: 18, children: [
-              for (final a in list)
-                MediaCard(
-                  width: cw,
-                  cover: YtNetworkImage(url: a.thumbnail, size: cw),
-                  title: a.title,
-                  subtitle: a.artist,
-                  onTap: () => openYtAlbum(context, a),
-                ),
-            ]);
-          },
-        );
-        break;
-      case 2:
-        _ytArtistsFuture ??= YouTubeMusic.libraryArtists();
-        body = FutureBuilder<List<YtArtist>>(
-          future: _ytArtistsFuture,
-          builder: (context, snap) {
-            if (snap.hasError) return _ytLibError(snap.error);
-            if (!snap.hasData) return _ytSpinner(pal);
-            final list = snap.data!;
-            if (list.isEmpty) return _ytEmpty('No artists in your library yet.');
-            return Column(children: [
-              for (final a in list)
-                _libRow(pal,
-                    cover: YtNetworkImage(
-                        url: a.thumbnail,
-                        size: 60,
-                        circle: true,
-                        fallbackIcon: Icons.person_rounded),
-                    circle: true,
-                    title: a.name,
-                    subtitle: 'Artist',
-                    onTap: () => openYtArtist(context, a.url, a.name,
-                        thumbnail: a.thumbnail)),
-            ]);
-          },
-        );
-        break;
-      default:
-        body = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _libRow(
-              pal,
-              cover: GradientCover(
-                icon: Icons.thumb_up_alt_rounded,
-                colors: [const Color(0xFFFF4D5E), pal.playerButton],
-                size: 60,
-                iconColor: Colors.white,
-              ),
-              title: 'Liked songs',
-              subtitle: 'Auto playlist • YouTube Music',
-              onTap: () => openYtLikedMusic(context),
-            ),
-            const SizedBox(height: 6),
-            _ytPlaylistGrid(context, pal, cw),
-          ],
-        );
-    }
+      QuickTile(
+        width: tileW,
+        cover: GradientCover(
+          icon: Icons.shuffle_rounded,
+          colors: [pal.playerButton, pal.accent],
+          size: 54,
+          iconColor: pal.onAccent,
+        ),
+        title: 'Shuffle all',
+        onTap: () => _ytShuffle(shuffleSource),
+      ),
+      for (final p in d.playlists.take(4))
+        QuickTile(
+          width: tileW,
+          cover: YtNetworkImage(url: p.thumbnail, size: 54),
+          title: p.title,
+          onTap: () => openYtAccountPlaylist(context, p),
+        ),
+      if (d.playlists.length < 4)
+        for (final m in d.mixes.take(4 - d.playlists.length))
+          QuickTile(
+            width: tileW,
+            cover: YtNetworkImage(url: m.thumbnail, size: 54),
+            title: m.title,
+            onTap: () => openYtShelfItem(context, m),
+          ),
+    ];
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(0, 14, 0, 185),
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(top: 14, bottom: 185),
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _modeSwitcher(context, pal),
-                    const SizedBox(height: 2),
-                    const Text(
-                      'Library',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 30,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.6,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              _roundIcon(
-                  pal,
-                  _listView ? Icons.grid_view_rounded : Icons.view_list_rounded,
-                  () => appState.setB('lib_list_view', !_listView)),
-              const SizedBox(width: 8),
-              _accountButton(context, pal),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        SizedBox(
-          height: 44,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
+        Reveal(child: header),
+        const SizedBox(height: 18),
+        Reveal(
+          delayMs: 60,
+          child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            children: [
-              for (var i = 0; i < filters.length; i++)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: FilterChip(
-                    selected: _ytLibFilter == i,
-                    showCheckmark: false,
-                    label: Text(filters[i]),
-                    onSelected: (_) => setState(() => _ytLibFilter = i),
-                  ),
-                ),
-            ],
+            child: Wrap(spacing: 10, runSpacing: 10, children: tiles),
           ),
         ),
-        const SizedBox(height: 12),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: body,
-        ),
+        if (current != null) ...[
+          const SizedBox(height: 22),
+          Reveal(
+            delayMs: 120,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: ContinueListeningCard(track: current),
+            ),
+          ),
+        ],
+        if (d.shelves.isEmpty) _ytHomeStatus(pal, err, loading),
+        if (quick.isNotEmpty) ...[
+          const SizedBox(height: 26),
+          _sectionHeader(
+            'START LISTENING',
+            'Quick picks',
+            trailing: _pillButton(pal, 'Play all', () => _ytPlay(quick, 0)),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 280,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(left: 16),
+              children: [
+                for (var c = 0; c < quick.length; c += 4) ...[
+                  if (c > 0) const SizedBox(width: 12),
+                  SizedBox(
+                    width: colWidth,
+                    child: Column(
+                      children: [
+                        for (var i = c; i < min(c + 4, quick.length); i++)
+                          _ytTrackRow(context, pal, quick, i),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+        if (d.mixes.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          _sectionHeader('MADE FOR YOU', 'Your mixes',
+              trailing: _pillButton(pal, 'See all', () {
+            setState(() {
+              _dir = 1;
+              _tab = 1;
+            });
+          })),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 214,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: d.mixes.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 14),
+              itemBuilder: (context, i) => _ytCard(context, d.mixes[i], 156),
+            ),
+          ),
+        ],
+        if (d.again.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          _sectionHeader('JUMP BACK IN', 'Listen again'),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 226,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: d.again.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 14),
+              itemBuilder: (context, i) => _ytCard(context, d.again[i], 164),
+            ),
+          ),
+        ],
+        if (d.liked.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          _sectionHeader('YOUR FAVORITES', 'Liked songs',
+              trailing: _pillButton(pal, 'Open', () => openYtLikedMusic(context))),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              children: [
+                for (var i = 0; i < min(4, d.liked.length); i++)
+                  TrackRow(
+                    track: d.liked[i],
+                    palette: pal,
+                    active: audioHandler.currentTrack?.id == d.liked[i].id,
+                    onTap: () => _ytPlay(d.liked, i),
+                    onMore: () => showYtAddToPlaylist(context, d.liked[i]),
+                  ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 22),
+        _sectionHeader('FROM YOUTUBE MUSIC', 'Your playlists'),
+        const SizedBox(height: 14),
+        SizedBox(height: 214, child: _ytPlaylistRow(context, pal)),
+        if (d.rest.isNotEmpty)
+          ...ytShelfWidgets(
+            context,
+            pal,
+            d.rest,
+            header: (title) => Padding(
+              padding: const EdgeInsets.only(top: 22, bottom: 14),
+              child: _sectionHeader('MORE FOR YOU', title),
+            ),
+          ),
       ],
     );
   }
 
+  Widget _ytHomeM3(BuildContext context, AppPalette pal, YtHomeData d,
+      Object? err, bool loading) {
+    final cs = appState.scheme;
+    final header = Padding(
+      padding: const EdgeInsets.fromLTRB(20, 14, 12, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _modeSwitcher(context, pal),
+                _greetingText(style: TextStyle(
+                    color: cs.onSurface,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.search_rounded),
+            onPressed: () => showSearchSheet(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => showSettingsSheet(context),
+          ),
+          const SizedBox(width: 4),
+          _accountButton(context, pal),
+        ],
+      ),
+    );
+    final quick = d.quick.take(5).toList();
+    final current = audioHandler.currentTrack;
+    final shuffleSource = d.liked.isNotEmpty ? d.liked : d.quick;
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 185),
+      children: [
+        header,
+        SizedBox(
+          height: 56,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+            children: [
+              ActionChip(
+                avatar: const Icon(Icons.favorite_rounded, size: 18),
+                label: const Text('Liked'),
+                onPressed: () => openYtLikedMusic(context),
+              ),
+              const SizedBox(width: 8),
+              ActionChip(
+                avatar: const Icon(Icons.shuffle_rounded, size: 18),
+                label: const Text('Shuffle all'),
+                onPressed: () => _ytShuffle(shuffleSource),
+              ),
+              const SizedBox(width: 8),
+              ActionChip(
+                avatar: const Icon(Icons.sensors_rounded, size: 18),
+                label: const Text('Mixes'),
+                onPressed: () => setState(() {
+                  _dir = 1;
+                  _tab = 1;
+                }),
+              ),
+              const SizedBox(width: 8),
+              ActionChip(
+                avatar: const Icon(Icons.library_music_rounded, size: 18),
+                label: const Text('Library'),
+                onPressed: () => setState(() {
+                  _dir = 1;
+                  _tab = 2;
+                }),
+              ),
+            ],
+          ),
+        ),
+        if (current != null) ...[
+          _m3Title('Continue listening'),
+          _m3ContinueCard(context, current),
+        ],
+        if (d.shelves.isEmpty) _ytHomeStatus(pal, err, loading),
+        if (d.mixes.isNotEmpty) ...[
+          _m3Title('Your mixes', overline: 'Made for you'),
+          SizedBox(
+            height: 210,
+            child: CarouselView(
+              itemExtent: 220,
+              shrinkExtent: 120,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+              onTap: (i) => openYtShelfItem(context, d.mixes[i]),
+              children: [
+                for (final m in d.mixes)
+                  LayoutBuilder(
+                    builder: (context, c) => YtNetworkImage(
+                      url: m.thumbnail,
+                      size: max(c.maxWidth, c.maxHeight),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+        if (quick.isNotEmpty) ...[
+          _m3Title('Quick picks', overline: 'Start listening'),
+          for (var i = 0; i < quick.length; i++)
+            _m3ListItem(
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: CustomAlbumArtwork(track: quick[i]),
+              ),
+              title: quick[i].title,
+              subtitle: quick[i].artist,
+              onTap: () => _ytPlay(quick, i),
+              trailing: IconButton(
+                icon: const Icon(Icons.more_vert_rounded),
+                onPressed: () => showYtAddToPlaylist(context, quick[i]),
+              ),
+            ),
+        ],
+        if (d.again.isNotEmpty) ...[
+          _m3Title('Listen again'),
+          SizedBox(
+            height: 200,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: d.again.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (context, i) => _ytCard(context, d.again[i], 144),
+            ),
+          ),
+        ],
+        _m3Title('Your playlists', overline: 'From YouTube Music'),
+        SizedBox(height: 214, child: _ytPlaylistRow(context, pal)),
+        if (d.rest.isNotEmpty)
+          ...ytShelfWidgets(
+            context,
+            pal,
+            d.rest,
+            header: (title) => _m3Title(title),
+          ),
+      ],
+    );
+  }
+
+  // ───────────────────────── YouTube Music: MIX ─────────────────────────
+
+  Widget _ytMixTab(BuildContext context, AppPalette pal) {
+    final w = MediaQuery.of(context).size.width;
+    final cardW = (w - 32 - 14) / 2;
+    return RefreshIndicator(
+      color: pal.accent,
+      onRefresh: _ytRefresh,
+      child: _ytData((d, err, loading) {
+        final mixes = d.allMixes;
+        return ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 185),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'MADE FOR YOU',
+                        style: TextStyle(
+                          color: pal.accent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        appState.playlistName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.6,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _roundIcon(pal, Icons.edit_rounded,
+                    () => showPlaylistEditDialog(context)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Mixes made for you by YouTube Music.',
+              style: TextStyle(color: Color(0xFFA6ADB2), fontSize: 14),
+            ),
+            const SizedBox(height: 18),
+            if (mixes.isEmpty)
+              (err != null || loading)
+                  ? _ytHomeStatus(pal, err, loading)
+                  : const Padding(
+                      padding: EdgeInsets.all(32),
+                      child: Center(
+                        child: Text(
+                          'No mixes yet — pull down to refresh.',
+                          style: TextStyle(color: Colors.white54),
+                        ),
+                      ),
+                    )
+            else ...[
+              Reveal(child: _ytFeaturedMix(context, pal, mixes.first)),
+              const SizedBox(height: 18),
+              Wrap(
+                spacing: 14,
+                runSpacing: 18,
+                children: [
+                  for (var i = 1; i < mixes.length; i++)
+                    Reveal(
+                      delayMs: min(i, 8) * 50,
+                      child: _ytCard(context, mixes[i], cardW),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _ytFeaturedMix(BuildContext context, AppPalette pal, YtShelfItem m) {
+    return SquishyGesture(
+      pressedScale: 0.97,
+      onTap: () => openYtShelfItem(context, m),
+      child: Container(
+        height: 170,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(26),
+          gradient: LinearGradient(
+            colors: [pal.accent.withOpacity(0.85), pal.playerButton],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Row(
+          children: [
+            YtNetworkImage(url: m.thumbnail, size: 134),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'FEATURED MIX',
+                    style: TextStyle(
+                      color: pal.onAccent.withOpacity(0.8),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    m.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: pal.onAccent,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    m.subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: pal.onAccent.withOpacity(0.8),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────── YouTube Music: LIBRARY ─────────────────────────
+
+  Widget _ytLikedBuilder(
+      AppPalette pal, Widget Function(List<TrackItem> liked, bool loading) build) {
+    _ytEnsureLoaded();
+    return FutureBuilder<YtAlbumPage?>(
+      future: _ytLikedFuture,
+      initialData: _cachedYtLiked(),
+      builder: (context, snap) => build(
+        snap.data?.tracks ?? const <TrackItem>[],
+        snap.data == null && snap.connectionState != ConnectionState.done,
+      ),
+    );
+  }
+
+  void _ytLibraryRefresh() {
+    setState(() {
+      _ytLikedFuture = null;
+      _ytAlbumsFuture = null;
+      _ytArtistsFuture = null;
+      _ytPlFuture = YouTubeMusic.libraryPlaylists(refresh: true)
+          .catchError((_) => YouTubeMusic.cachedLibrary() ?? <YtPlaylistRef>[]);
+    });
+  }
+
+  Widget _ytLibSongs(BuildContext context, AppPalette pal) {
+    return _ytLikedBuilder(pal, (liked, loading) {
+      if (liked.isEmpty && loading) return _ytSpinner(pal);
+      return _librarySongs(context, pal, liked,
+          play: _ytPlay, emptyText: 'No liked songs on YouTube Music yet.');
+    });
+  }
+
+  Widget _ytLibPlaylists(BuildContext context, AppPalette pal) {
+    final cw = _gridItemWidth(context, 2);
+    return _ytLikedBuilder(pal, (liked, _) {
+      final likedSub = liked.isEmpty
+          ? 'YouTube Music'
+          : '${liked.length} ${liked.length == 1 ? 'song' : 'songs'}';
+      return FutureBuilder<List<YtPlaylistRef>>(
+        future: _ytPlFuture,
+        initialData: YouTubeMusic.cachedLibrary(),
+        builder: (context, snap) {
+          final pls = snap.data ?? const <YtPlaylistRef>[];
+          final waiting = snap.data == null &&
+              snap.connectionState != ConnectionState.done;
+          if (_listView) {
+            return Column(
+              children: [
+                _libRow(
+                  pal,
+                  cover: GradientCover(
+                    icon: Icons.favorite_rounded,
+                    colors: [pal.accent, pal.playerButton],
+                    size: 60,
+                    iconColor: pal.onAccent,
+                  ),
+                  title: 'Liked Songs',
+                  subtitle: likedSub,
+                  onTap: () => openYtLikedMusic(context),
+                ),
+                for (final p in pls)
+                  _libRow(
+                    pal,
+                    cover: YtNetworkImage(url: p.thumbnail, size: 60),
+                    title: p.title,
+                    subtitle: p.subtitle.isEmpty ? 'Playlist' : p.subtitle,
+                    onTap: () => openYtAccountPlaylist(context, p),
+                  ),
+                if (waiting) _ytSpinner(pal),
+              ],
+            );
+          }
+          return Column(
+            children: [
+              Wrap(
+                spacing: 14,
+                runSpacing: 18,
+                children: [
+                  MediaCard(
+                    width: cw,
+                    cover: GradientCover(
+                      icon: Icons.favorite_rounded,
+                      colors: [pal.accent, pal.playerButton],
+                      size: cw,
+                      iconColor: pal.onAccent,
+                    ),
+                    title: 'Liked Songs',
+                    subtitle: likedSub,
+                    onTap: () => openYtLikedMusic(context),
+                  ),
+                  for (var i = 0; i < pls.length; i++)
+                    Reveal(
+                      delayMs: min(i, 8) * 40,
+                      child: MediaCard(
+                        width: cw,
+                        cover: YtNetworkImage(url: pls[i].thumbnail, size: cw),
+                        title: pls[i].title,
+                        subtitle: pls[i].subtitle,
+                        onTap: () => openYtAccountPlaylist(context, pls[i]),
+                      ),
+                    ),
+                ],
+              ),
+              if (waiting) _ytSpinner(pal),
+            ],
+          );
+        },
+      );
+    });
+  }
+
+  Widget _ytLibAlbums(BuildContext context, AppPalette pal, {bool m3 = false}) {
+    _ytAlbumsFuture ??= YouTubeMusic.libraryAlbums();
+    return FutureBuilder<List<YtAlbum>>(
+      future: _ytAlbumsFuture,
+      builder: (context, snap) {
+        if (snap.hasError) return _ytLibError(snap.error);
+        if (!snap.hasData) return _ytSpinner(pal);
+        final list = snap.data!;
+        if (list.isEmpty) return _ytEmpty('No albums yet.');
+        if (m3) {
+          return Column(children: [
+            for (final a in list)
+              _m3ListItem(
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: YtNetworkImage(url: a.thumbnail, size: 56),
+                ),
+                title: a.title,
+                subtitle: 'Album • ${a.artist}',
+                onTap: () => openYtAlbum(context, a),
+              ),
+          ]);
+        }
+        if (_listView) {
+          return Column(children: [
+            for (final a in list)
+              _libRow(pal,
+                  cover: YtNetworkImage(url: a.thumbnail, size: 60),
+                  title: a.title,
+                  subtitle: 'Album • ${a.artist}',
+                  onTap: () => openYtAlbum(context, a)),
+          ]);
+        }
+        final cw = _gridItemWidth(context, 2);
+        return Wrap(spacing: 14, runSpacing: 18, children: [
+          for (var i = 0; i < list.length; i++)
+            Reveal(
+              delayMs: min(i, 8) * 40,
+              child: MediaCard(
+                width: cw,
+                cover: YtNetworkImage(url: list[i].thumbnail, size: cw),
+                title: list[i].title,
+                subtitle: list[i].artist,
+                onTap: () => openYtAlbum(context, list[i]),
+              ),
+            ),
+        ]);
+      },
+    );
+  }
+
+  Widget _ytLibArtists(BuildContext context, AppPalette pal, {bool m3 = false}) {
+    _ytArtistsFuture ??= YouTubeMusic.libraryArtists();
+    return FutureBuilder<List<YtArtist>>(
+      future: _ytArtistsFuture,
+      builder: (context, snap) {
+        if (snap.hasError) return _ytLibError(snap.error);
+        if (!snap.hasData) return _ytSpinner(pal);
+        final list = snap.data!;
+        if (list.isEmpty) return _ytEmpty('No artists yet.');
+        void open(YtArtist a) =>
+            openYtArtist(context, a.url, a.name, thumbnail: a.thumbnail);
+        if (m3) {
+          return Column(children: [
+            for (final a in list)
+              _m3ListItem(
+                leading: YtNetworkImage(
+                    url: a.thumbnail,
+                    size: 56,
+                    circle: true,
+                    fallbackIcon: Icons.person_rounded),
+                title: a.name,
+                subtitle: 'Artist',
+                onTap: () => open(a),
+              ),
+          ]);
+        }
+        if (_listView) {
+          return Column(children: [
+            for (final a in list)
+              _libRow(pal,
+                  cover: YtNetworkImage(
+                      url: a.thumbnail,
+                      size: 60,
+                      circle: true,
+                      fallbackIcon: Icons.person_rounded),
+                  circle: true,
+                  title: a.name,
+                  subtitle: 'Artist',
+                  onTap: () => open(a)),
+          ]);
+        }
+        final cw = _gridItemWidth(context, 3, gap: 12);
+        return Wrap(spacing: 12, runSpacing: 18, children: [
+          for (var i = 0; i < list.length; i++)
+            Reveal(
+              delayMs: min(i, 9) * 35,
+              child: SquishyGesture(
+                pressedScale: 0.94,
+                onTap: () => open(list[i]),
+                child: SizedBox(
+                  width: cw,
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(
+                            colors: [pal.accent, pal.playerButton],
+                          ),
+                        ),
+                        child: YtNetworkImage(
+                          url: list[i].thumbnail,
+                          size: cw - 6,
+                          circle: true,
+                          fallbackIcon: Icons.person_rounded,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        list[i].name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13.5,
+                        ),
+                      ),
+                      const Text(
+                        'Artist',
+                        style: TextStyle(color: Color(0xFF9EA6AC), fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ]);
+      },
+    );
+  }
+
+  /// Playlists list for the Community (Material 3) library in YouTube mode.
+  Widget _ytLibPlaylistsM3(BuildContext context, AppPalette pal) {
+    final cs = appState.scheme;
+    return _ytLikedBuilder(pal, (liked, _) => FutureBuilder<List<YtPlaylistRef>>(
+          future: _ytPlFuture,
+          initialData: YouTubeMusic.cachedLibrary(),
+          builder: (context, snap) => Column(
+            children: [
+              _m3ListItem(
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: GradientCover(
+                    icon: Icons.favorite_rounded,
+                    colors: [cs.primary, cs.tertiary],
+                    size: 56,
+                    iconColor: cs.onPrimary,
+                  ),
+                ),
+                title: 'Liked Songs',
+                subtitle: liked.isEmpty
+                    ? 'Auto playlist'
+                    : 'Auto playlist • ${liked.length} ${liked.length == 1 ? 'song' : 'songs'}',
+                onTap: () => openYtLikedMusic(context),
+                trailing: const Icon(Icons.push_pin_rounded, size: 18),
+              ),
+              for (final p in snap.data ?? const <YtPlaylistRef>[])
+                _m3ListItem(
+                  leading: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: YtNetworkImage(url: p.thumbnail, size: 56),
+                  ),
+                  title: p.title,
+                  subtitle: p.subtitle.isEmpty ? 'Playlist' : p.subtitle,
+                  onTap: () => openYtAccountPlaylist(context, p),
+                ),
+              if (snap.data == null &&
+                  snap.connectionState != ConnectionState.done)
+                _ytSpinner(pal),
+            ],
+          ),
+        ));
+  }
+
   Widget _ytSpinner(AppPalette pal) => Padding(
-        padding: const EdgeInsets.only(top: 40),
-        child: Center(child: CircularProgressIndicator(color: pal.accent)),
+        padding: EdgeInsets.fromLTRB(
+            appState.community ? 20 : 0, 8, appState.community ? 20 : 0, 0),
+        child: const ListSkeleton(),
       );
 
   Widget _ytEmpty(String text) => Padding(
@@ -3770,6 +4575,73 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
+  Widget _m3ContinueCard(BuildContext context, TrackItem current) {
+    final cs = appState.scheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Card(
+        color: cs.primaryContainer,
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => openPlayer(context),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: SizedBox(
+                    width: 92,
+                    height: 92,
+                    child: CustomAlbumArtwork(track: current),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(current.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: cs.onPrimaryContainer,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w500)),
+                      const SizedBox(height: 4),
+                      Text(current.artist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: cs.onPrimaryContainer.withOpacity(0.75))),
+                    ],
+                  ),
+                ),
+                StreamBuilder<PlaybackState>(
+                  stream: audioHandler.playbackState,
+                  builder: (context, snap) {
+                    final playing =
+                        (snap.data ?? audioHandler.playbackState.value).playing;
+                    return IconButton.filled(
+                      iconSize: 30,
+                      onPressed: () =>
+                          playing ? audioHandler.pause() : audioHandler.play(),
+                      icon: Icon(playing
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _homeTabM3(BuildContext context, AppPalette pal, List<TrackItem> tracks) {
     final cs = appState.scheme;
     final header = Padding(
@@ -3781,9 +4653,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _modeSwitcher(context, pal),
-                Text(
-                  _greeting(),
-                  style: TextStyle(
+                _greetingText(style: TextStyle(
                     color: cs.onSurface,
                     fontSize: 30,
                     fontWeight: FontWeight.w400,
@@ -3812,8 +4682,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       );
     }
     final mixes = buildMixes(tracks);
-    final quick = tracks.take(5).toList();
-    final again = tracks.reversed.take(10).toList();
+    final quick = _quickPicks(tracks, 5);
+    final again = _recentFrom(tracks);
     final current = audioHandler.currentTrack;
 
     return ListView(
@@ -3866,69 +4736,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         ),
         if (current != null) ...[
           _m3Title('Continue listening'),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Card(
-              color: cs.primaryContainer,
-              elevation: 0,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: () => openPlayer(context),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Row(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(20),
-                        child: SizedBox(
-                          width: 92,
-                          height: 92,
-                          child: CustomAlbumArtwork(track: current),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(current.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    color: cs.onPrimaryContainer,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w500)),
-                            const SizedBox(height: 4),
-                            Text(current.artist,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    color: cs.onPrimaryContainer.withOpacity(0.75))),
-                          ],
-                        ),
-                      ),
-                      StreamBuilder<PlaybackState>(
-                        stream: audioHandler.playbackState,
-                        builder: (context, snap) {
-                          final playing =
-                              (snap.data ?? audioHandler.playbackState.value).playing;
-                          return IconButton.filled(
-                            iconSize: 30,
-                            onPressed: () =>
-                                playing ? audioHandler.pause() : audioHandler.play(),
-                            icon: Icon(playing
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
+          _m3ContinueCard(context, current),
         ],
         if (mixes.isNotEmpty) ...[
           _m3Title('Your mixes', overline: 'Made for you'),
@@ -4003,7 +4811,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   Widget _libraryTabM3(BuildContext context, AppPalette pal, List<TrackItem> tracks) {
     final cs = appState.scheme;
-    const filters = ['Playlists', 'Songs', 'Albums', 'Artists', 'YouTube Music'];
+    final yt = appState.homeMode == 'youtube';
+    final filters = yt
+        ? const ['Playlists', 'Songs', 'Albums', 'Artists']
+        : const ['Playlists', 'Songs', 'Albums', 'Artists', 'YouTube Music'];
     if (_libraryFilter >= filters.length) _libraryFilter = 0;
     final liked = tracks.where((t) => appState.isLiked(t.id)).toList();
 
@@ -4013,7 +4824,24 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         );
 
     final items = <Widget>[];
-    switch (_libraryFilter) {
+    if (yt) {
+      switch (_libraryFilter) {
+        case 1:
+          items.add(Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: _ytLibSongs(context, pal),
+          ));
+          break;
+        case 2:
+          items.add(_ytLibAlbums(context, pal, m3: true));
+          break;
+        case 3:
+          items.add(_ytLibArtists(context, pal, m3: true));
+          break;
+        default:
+          items.add(_ytLibPlaylistsM3(context, pal));
+      }
+    } else switch (_libraryFilter) {
       case 1:
         items.add(Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -4139,8 +4967,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 onPressed: () => showSearchSheet(context),
               ),
               IconButton(
-                icon: const Icon(Icons.folder_open_outlined),
-                onPressed: () => showAddMusicSheet(context),
+                icon: Icon(yt ? Icons.refresh_rounded : Icons.folder_open_outlined),
+                onPressed: yt ? _ytLibraryRefresh : () => showAddMusicSheet(context),
               ),
               const SizedBox(width: 4),
               _accountButton(context, pal),
@@ -4165,7 +4993,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             ],
           ),
         ),
-        if (_libraryFilter == 0)
+        if (_libraryFilter == 0 && !yt)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
             child: Align(
@@ -4215,10 +5043,13 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     return Expanded(
       child: SquishyGesture(
         pressedScale: 0.92,
-        onTap: () => setState(() {
-          _dir = i >= _tab ? 1 : -1;
-          _tab = i;
-        }),
+        onTap: () {
+          if (i != _tab) HapticFeedback.selectionClick();
+          setState(() {
+            _dir = i >= _tab ? 1 : -1;
+            _tab = i;
+          });
+        },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 280),
           curve: Curves.easeOutCubic,
@@ -4259,7 +5090,29 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   // ───────────────────────────── HOME ─────────────────────────────
 
+  /// Greeting that always stays on one line (shrinks if it has to).
+  Widget _greetingText({required TextStyle style}) {
+    return ValueListenableBuilder<YtAccount>(
+      valueListenable: ytAccount,
+      builder: (context, _, __) => FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Text(_greeting(), maxLines: 1, style: style),
+      ),
+    );
+  }
+
   String _greeting() {
+    final g = _greetingBase();
+    final acc = ytAccount.value;
+    final first = (acc.name ?? '').trim().split(RegExp(r'\s+')).first;
+    if (!acc.signedIn || first.isEmpty || !appState.b('greet_name', true)) {
+      return g;
+    }
+    return '$g, $first';
+  }
+
+  String _greetingBase() {
     final h = DateTime.now().hour;
     if (h < 5) return 'Good night';
     if (h < 12) return 'Good morning';
@@ -4328,9 +5181,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               children: [
                 _modeSwitcher(context, pal),
                 const SizedBox(height: 2),
-                Text(
-                  _greeting(),
-                  style: const TextStyle(
+                _greetingText(style: const TextStyle(
                     color: Colors.white,
                     fontSize: 28,
                     fontWeight: FontWeight.w800,
@@ -4363,10 +5214,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     final likedTracks = tracks.where((t) => appState.isLiked(t.id)).toList();
     final pls = appState.playlists;
     final current = audioHandler.currentTrack;
-    final quick = tracks.take(8).toList();
+    final quick = _quickPicks(tracks, 8);
     final col1 = quick.take(4).toList();
     final col2 = quick.skip(4).take(4).toList();
-    final listenAgain = tracks.reversed.take(10).toList();
+    final listenAgain = _recentFrom(tracks);
     final colWidth = MediaQuery.of(context).size.width - 42;
     final mixes = buildMixes(tracks).take(6).toList();
     final screenW = MediaQuery.of(context).size.width;
@@ -4616,6 +5467,38 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
+  /// Daily picks: favourites first, then the rest, reshuffled once a day.
+  List<TrackItem> _quickPicks(List<TrackItem> tracks, int n) {
+    final now = DateTime.now();
+    final rnd = Random(now.year * 10000 + now.month * 100 + now.day);
+    final liked = tracks.where((t) => appState.isLiked(t.id)).toList()
+      ..shuffle(rnd);
+    final others = tracks.where((t) => !appState.isLiked(t.id)).toList()
+      ..shuffle(rnd);
+    final out = <TrackItem>[...liked.take((n / 2).ceil()), ...others];
+    if (out.length < n) {
+      out.addAll(liked.skip((n / 2).ceil()));
+    }
+    return out.take(n).toList();
+  }
+
+  /// What you actually played lately; topped up with newest songs.
+  List<TrackItem> _recentFrom(List<TrackItem> tracks) {
+    final ids = {for (final t in tracks) t.id};
+    final out = <TrackItem>[];
+    for (final id in appState.recent) {
+      if (!ids.contains(id)) continue;
+      final t = audioHandler.trackById(id);
+      if (t != null && !out.contains(t)) out.add(t);
+      if (out.length >= 10) break;
+    }
+    for (final t in tracks.reversed) {
+      if (out.length >= 10) break;
+      if (!out.contains(t)) out.add(t);
+    }
+    return out;
+  }
+
   Widget _pillButton(AppPalette pal, String label, VoidCallback onTap) {
     return SquishyGesture(
       onTap: onTap,
@@ -4837,17 +5720,39 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     AppPalette pal,
     List<TrackItem> tracks,
   ) {
-    const filters = [
-      (Icons.queue_music_rounded, 'Playlists'),
-      (Icons.music_note_rounded, 'Songs'),
-      (Icons.person_rounded, 'Artists'),
-      (Icons.album_rounded, 'Albums'),
-      (Icons.play_circle_fill_rounded, 'YouTube Music'),
-    ];
+    final yt = appState.homeMode == 'youtube';
+    final filters = yt
+        ? const [
+            (Icons.queue_music_rounded, 'Playlists'),
+            (Icons.music_note_rounded, 'Songs'),
+            (Icons.person_rounded, 'Artists'),
+            (Icons.album_rounded, 'Albums'),
+          ]
+        : const [
+            (Icons.queue_music_rounded, 'Playlists'),
+            (Icons.music_note_rounded, 'Songs'),
+            (Icons.person_rounded, 'Artists'),
+            (Icons.album_rounded, 'Albums'),
+            (Icons.play_circle_fill_rounded, 'YouTube Music'),
+          ];
     if (_libraryFilter >= filters.length) _libraryFilter = 0;
 
     Widget body;
-    switch (_libraryFilter) {
+    if (yt) {
+      switch (_libraryFilter) {
+        case 1:
+          body = _ytLibSongs(context, pal);
+          break;
+        case 2:
+          body = _ytLibArtists(context, pal);
+          break;
+        case 3:
+          body = _ytLibAlbums(context, pal);
+          break;
+        default:
+          body = _ytLibPlaylists(context, pal);
+      }
+    } else switch (_libraryFilter) {
       case 1:
         body = _librarySongs(context, pal, tracks);
         break;
@@ -4890,11 +5795,16 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   () => appState.setB(
                       'lib_list_view', !appState.b('lib_list_view'))),
               const SizedBox(width: 8),
-              _roundIcon(pal, Icons.folder_open_rounded,
-                  () => showAddMusicSheet(context)),
+              yt
+                  ? _roundIcon(pal, Icons.refresh_rounded, _ytLibraryRefresh)
+                  : _roundIcon(pal, Icons.folder_open_rounded,
+                      () => showAddMusicSheet(context)),
               const SizedBox(width: 8),
-              _roundIcon(pal, Icons.playlist_add_rounded,
-                  () => showCreateOrEditPlaylistDialog(context)),
+              yt
+                  ? _roundIcon(pal, Icons.search_rounded,
+                      () => showSearchSheet(context))
+                  : _roundIcon(pal, Icons.playlist_add_rounded,
+                      () => showCreateOrEditPlaylistDialog(context)),
               const SizedBox(width: 8),
               _accountButton(context, pal),
             ],
@@ -4977,7 +5887,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             ),
           ),
           child: KeyedSubtree(
-            key: ValueKey('lib_$_libraryFilter'),
+            key: ValueKey('lib_${yt}_$_libraryFilter'),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: body,
@@ -5309,7 +6219,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   int _songSort = 0; // 0 = A–Z, 1 = artist, 2 = recently added
 
-  Widget _librarySongs(BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+  Widget _librarySongs(BuildContext context, AppPalette pal, List<TrackItem> tracks,
+      {void Function(List<TrackItem> list, int index)? play,
+      String emptyText = 'No songs yet. Tap the folder icon to import music.'}) {
     final sorted = [...tracks];
     switch (_songSort) {
       case 0:
@@ -5325,6 +6237,14 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         break; // library order (newest device songs first)
     }
     const sortNames = ['A–Z', 'Artist', 'Recent'];
+    final playFn = play;
+    void playT(TrackItem t) {
+      if (playFn != null) {
+        playFn(sorted, sorted.indexOf(t));
+      } else {
+        playAndOpen(context, audioHandler.tracks.indexOf(t));
+      }
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -5368,12 +6288,11 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             if (sorted.isNotEmpty) ...[
               _roundIcon(pal, Icons.shuffle_rounded, () {
                 audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
-                playAndOpen(context, audioHandler.tracks.indexOf(tracks[Random().nextInt(tracks.length)]));
+                playT(sorted[Random().nextInt(sorted.length)]);
               }),
               const SizedBox(width: 8),
               SquishyGesture(
-                onTap: () => playAndOpen(
-                    context, audioHandler.tracks.indexOf(sorted.first)),
+                onTap: () => playT(sorted.first),
                 child: Container(
                   width: 46,
                   height: 46,
@@ -5386,12 +6305,12 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         ),
         const SizedBox(height: 10),
         if (sorted.isEmpty)
-          const Padding(
-            padding: EdgeInsets.only(top: 40),
+          Padding(
+            padding: const EdgeInsets.only(top: 40),
             child: Center(
               child: Text(
-                'No songs yet. Tap the folder icon to import music.',
-                style: TextStyle(color: Colors.white54, fontSize: 15),
+                emptyText,
+                style: const TextStyle(color: Colors.white54, fontSize: 15),
               ),
             ),
           ),
@@ -5400,8 +6319,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             track: t,
             palette: pal,
             active: audioHandler.currentTrack?.id == t.id,
-            onTap: () => playAndOpen(context, audioHandler.tracks.indexOf(t)),
-            onMore: () => showAddToPlaylistSheet(context, t),
+            onTap: () => playT(t),
+            onMore: () => t.isYouTube
+                ? showYtAddToPlaylist(context, t)
+                : showAddToPlaylistSheet(context, t),
           ),
       ],
     );
@@ -10747,6 +11668,10 @@ class SettingsScreen extends StatelessWidget {
 
   List<Widget> _appearance(BuildContext context, AppPalette pal, ColorScheme cs) {
     final hasWallpaper = appState.wallpaperColor != null;
+    final wallOn = hasWallpaper && appState.useWallpaper;
+    final wallPal = hasWallpaper
+        ? AppPalette.fromSeed('Wallpaper', appState.wallpaperColor!)
+        : null;
     return [
       _section(pal, 'Appearance', Icons.palette_rounded, [
         _dropdown<String>(
@@ -10778,9 +11703,18 @@ class SettingsScreen extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
+                  if (wallPal != null)
+                    ThemeChip(
+                      label: 'Wallpaper',
+                      selected: wallOn,
+                      swatch: [wallPal.accent, wallPal.playerButton, wallPal.bg],
+                      accent: wallPal.accent,
+                      onAccent: wallPal.onAccent,
+                      onTap: () => appState.setB('use_wallpaper_colors', true),
+                    ),
                   ThemeChip(
                     label: 'Adaptive',
-                    selected: appState.isAdaptive,
+                    selected: appState.isAdaptive && !wallOn,
                     swatch: const [
                       Color(0xFFFF6FAE),
                       Color(0xFFFFC94D),
@@ -10794,7 +11728,7 @@ class SettingsScreen extends StatelessWidget {
                   for (final t in AppPalette.all)
                     ThemeChip(
                       label: t.name.split(' ').first,
-                      selected: appState.themeName == t.name,
+                      selected: appState.themeName == t.name && !wallOn,
                       swatch: [t.accent, t.playerButton, t.bg],
                       accent: t.accent,
                       onAccent: t.onAccent,
@@ -10812,9 +11746,12 @@ class SettingsScreen extends StatelessWidget {
           hasWallpaper
               ? 'Material You: match your phone\'s wallpaper (overrides the theme above)'
               : 'Needs Android 12 or newer',
-          appState.b('use_wallpaper_colors'),
+          appState.useWallpaper,
           hasWallpaper ? (v) => appState.setB('use_wallpaper_colors', v) : null,
         ),
+        _flag(pal, Icons.waving_hand_rounded, 'greet_name', 'Greet me by name',
+            'Adds your YouTube Music first name to the Home greeting',
+            def: true),
         if (!appState.community)
           _flag(pal, Icons.format_color_fill_rounded, 'm3_colors',
               'Material You colors',
@@ -12609,15 +13546,248 @@ class _SearchSheetState extends State<SearchSheet> {
 
 /// Renders YouTube Music shelves (home feed): songs as swipeable columns,
 /// videos as wide cards, albums/playlists as covers, artists as circles.
+/// Soft pulsing placeholder shapes shown while content loads.
+class SkeletonPulse extends StatefulWidget {
+  final Widget child;
+  const SkeletonPulse({super.key, required this.child});
+
+  @override
+  State<SkeletonPulse> createState() => _SkeletonPulseState();
+}
+
+class _SkeletonPulseState extends State<SkeletonPulse>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.45, end: 1.0)
+          .animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
+      child: widget.child,
+    );
+  }
+}
+
+Widget _skel(double w, double h, {double r = 12}) => Container(
+      width: w,
+      height: h,
+      decoration: BoxDecoration(
+        color: appState.palette.accent.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(r),
+      ),
+    );
+
+/// Placeholder for a home screen section (header + row of cards).
+class HomeSkeleton extends StatelessWidget {
+  const HomeSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget section(double card) => Padding(
+          padding: const EdgeInsets.fromLTRB(16, 26, 0, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _skel(90, 11, r: 6),
+              const SizedBox(height: 8),
+              _skel(160, 20, r: 8),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: card + 44,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  physics: const NeverScrollableScrollPhysics(),
+                  children: [
+                    for (var i = 0; i < 4; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _skel(card, card, r: 18),
+                            const SizedBox(height: 10),
+                            _skel(card * 0.8, 12, r: 6),
+                            const SizedBox(height: 6),
+                            _skel(card * 0.5, 10, r: 6),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+    return SkeletonPulse(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [section(150), section(150)],
+      ),
+    );
+  }
+}
+
+/// Placeholder for a list of rows (library, songs).
+class ListSkeleton extends StatelessWidget {
+  final int rows;
+  const ListSkeleton({super.key, this.rows = 6});
+
+  @override
+  Widget build(BuildContext context) {
+    return SkeletonPulse(
+      child: Column(
+        children: [
+          for (var i = 0; i < rows; i++)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 7),
+              child: Row(
+                children: [
+                  _skel(54, 54, r: 12),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        FractionallySizedBox(
+                          widthFactor: i.isEven ? 0.7 : 0.55,
+                          child: _skel(double.infinity, 14, r: 6),
+                        ),
+                        const SizedBox(height: 8),
+                        FractionallySizedBox(
+                          widthFactor: 0.38,
+                          child: _skel(double.infinity, 11, r: 6),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Opens a YouTube Music home-feed item (album, playlist, artist or song).
+void openYtShelfItem(BuildContext context, YtShelfItem it) {
+  switch (it.kind) {
+    case 'album':
+      openYtAlbum(context, YtAlbum(it.id, it.title, it.subtitle, it.thumbnail, -1));
+      break;
+    case 'playlist':
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => YtAlbumScreen(
+          album: YtAlbum('', it.title, it.subtitle, it.thumbnail, -1),
+          loader: () => ytAccount.value.signedIn
+              ? YouTubeMusic.playlistPage(it.id,
+                  title: it.title, thumbnail: it.thumbnail)
+              : YouTubeMusic.publicPlaylistPage(it.id,
+                  title: it.title, thumbnail: it.thumbnail),
+          playLabel: 'Play',
+        ),
+      ));
+      break;
+    case 'artist':
+      openYtArtist(context, it.id, it.title, thumbnail: it.thumbnail);
+      break;
+    default: // video / song
+      final t = YouTubeMusic.trackFromShelf(it, it.subtitle);
+      audioHandler.playYouTubeTrack(t);
+      openPlayer(context);
+  }
+}
+
+/// YouTube Music content sorted into the Home layout's sections.
+class YtHomeData {
+  final List<YtShelf> shelves;
+  final List<TrackItem> quick;
+  final List<YtShelfItem> mixes;
+  final List<YtShelfItem> allMixes;
+  final List<YtShelfItem> again;
+  final List<YtShelf> rest;
+  final List<TrackItem> liked;
+  final List<YtPlaylistRef> playlists;
+  const YtHomeData(this.shelves, this.quick, this.mixes, this.allMixes,
+      this.again, this.rest, this.liked, this.playlists);
+
+  factory YtHomeData.from(List<YtShelf> shelves, List<TrackItem> liked,
+      List<YtPlaylistRef> playlists) {
+    final used = <YtShelf>{};
+    String low(YtShelf s) => s.title.toLowerCase();
+    bool cardKind(YtShelf s) =>
+        s.kind != 'song' && s.kind != 'artist' && s.kind != 'video';
+    YtShelf? pick(bool Function(YtShelf) test) {
+      for (final s in shelves) {
+        if (!used.contains(s) && test(s)) {
+          used.add(s);
+          return s;
+        }
+      }
+      return null;
+    }
+
+    final q = pick((s) => s.kind == 'song' && low(s).contains('quick')) ??
+        pick((s) => s.kind == 'song');
+    final m = pick((s) => cardKind(s) && low(s).contains('mix')) ??
+        pick((s) => s.kind == 'playlist');
+    final a = pick((s) => low(s).contains('again')) ??
+        pick((s) => s.kind == 'album');
+
+    final quick = q != null
+        ? [for (final it in q.items) YouTubeMusic.trackFromShelf(it, it.subtitle)]
+        : liked.take(8).toList();
+
+    // Every mix/playlist card in the feed (for the Mix tab).
+    final seen = <String>{};
+    final all = <YtShelfItem>[];
+    void addAll(Iterable<YtShelf> src) {
+      for (final s in src) {
+        for (final it in s.items) {
+          if (it.kind == 'playlist' && seen.add(it.id)) all.add(it);
+        }
+      }
+    }
+
+    addAll(shelves.where((s) => low(s).contains('mix')));
+    if (all.isEmpty) addAll(shelves);
+
+    return YtHomeData(
+      shelves,
+      quick,
+      m?.items ?? const [],
+      all,
+      a?.items ?? const [],
+      shelves.where((s) => !used.contains(s)).toList(),
+      liked,
+      playlists,
+    );
+  }
+}
+
 List<Widget> ytShelfWidgets(
-    BuildContext context, AppPalette pal, List<YtShelf> shelves) {
+    BuildContext context, AppPalette pal, List<YtShelf> shelves,
+    {Widget Function(String title)? header}) {
   final out = <Widget>[];
   final screenW = MediaQuery.of(context).size.width;
   for (final sh in shelves) {
-    out.add(Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-      child: ytSectionHeader(sh.title.isEmpty ? 'For you' : sh.title),
-    ));
+    final title = sh.title.isEmpty ? 'For you' : sh.title;
+    out.add(header != null
+        ? header(title)
+        : Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+            child: ytSectionHeader(title),
+          ));
     if (sh.kind == 'song') {
       final songs = [
         for (final it in sh.items) YouTubeMusic.trackFromShelf(it, it.subtitle)
@@ -12727,34 +13897,7 @@ List<Widget> ytShelfWidgets(
         separatorBuilder: (_, __) => const SizedBox(width: 14),
         itemBuilder: (context, i) {
           final it = sh.items[i];
-          void open() {
-            switch (it.kind) {
-              case 'album':
-                openYtAlbum(
-                    context, YtAlbum(it.id, it.title, it.subtitle, it.thumbnail, -1));
-                break;
-              case 'playlist':
-                Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => YtAlbumScreen(
-                    album: YtAlbum('', it.title, it.subtitle, it.thumbnail, -1),
-                    loader: () => ytAccount.value.signedIn
-                        ? YouTubeMusic.playlistPage(it.id,
-                            title: it.title, thumbnail: it.thumbnail)
-                        : YouTubeMusic.publicPlaylistPage(it.id,
-                            title: it.title, thumbnail: it.thumbnail),
-                    playLabel: 'Play',
-                  ),
-                ));
-                break;
-              case 'artist':
-                openYtArtist(context, it.id, it.title, thumbnail: it.thumbnail);
-                break;
-              default: // video / song
-                final t = YouTubeMusic.trackFromShelf(it, it.subtitle);
-                audioHandler.playYouTubeTrack(t);
-                openPlayer(context);
-            }
-          }
+          void open() => openYtShelfItem(context, it);
 
           if (video) {
             return SquishyGesture(
