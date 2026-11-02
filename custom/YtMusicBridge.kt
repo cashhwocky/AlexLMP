@@ -179,6 +179,13 @@ object YtMusicBridge {
                 val ref = call.argument<String>("ref") ?: ""
                 runAsync(result, "YT_ALBUM") { Account.albumPage(ref) }
             }
+            "ytLyrics" -> {
+                val id = call.argument<String>("videoId") ?: ""
+                runAsync(result, "YT_LYRICS") {
+                    require(VIDEO_ID.matches(id)) { "Bad videoId" }
+                    Account.lyrics(id)
+                }
+            }
             "ytTrackLinks" -> {
                 val id = call.argument<String>("videoId") ?: ""
                 runAsync(result, "YT_LINKS") { Account.trackLinks(id) }
@@ -1852,6 +1859,37 @@ object Account {
     }
 
     /** Artist + album for a song (used by "Go to artist" / "Go to album"). */
+    /** YouTube Music's own lyrics for a song: plain text plus the source line. */
+    fun lyrics(videoId: String): Map<String, Any?>? {
+        val r = call(
+            "next",
+            JSONObject().put("videoId", videoId).put("isAudioOnly", true),
+            auth = false,
+        )
+        // The player's "Lyrics" tab points at a browse page (MPLYt…).
+        var browse: String? = null
+        for (t in all(r, "tabRenderer")) {
+            val ep = t.optJSONObject("endpoint")?.optJSONObject("browseEndpoint") ?: continue
+            val id = ep.optString("browseId")
+            val pt = ep.optJSONObject("browseEndpointContextSupportedConfigs")
+                ?.optJSONObject("browseEndpointContextMusicConfig")
+                ?.optString("pageType")
+            if (pt == "MUSIC_PAGE_TYPE_TRACK_LYRICS" || id.startsWith("MPLYt")) {
+                browse = id
+                break
+            }
+        }
+        if (browse == null) return null
+        val b = call("browse", JSONObject().put("browseId", browse), auth = false)
+        val shelf = all(b, "musicDescriptionShelfRenderer").firstOrNull() ?: return null
+        val plain = text(shelf.optJSONObject("description"))
+        if (plain.isBlank()) return null
+        return mapOf(
+            "plain" to plain,
+            "source" to text(shelf.optJSONObject("footer")),
+        )
+    }
+
     fun trackLinks(videoId: String): Map<String, Any?> {
         val r = call(
             "next",
