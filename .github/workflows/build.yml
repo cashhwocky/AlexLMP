@@ -40,6 +40,10 @@ jobs:
           mkdir -p app_build/android/app/src/main/kotlin/com/alexlmp/app
           cp custom/MainActivity.kt app_build/android/app/src/main/kotlin/com/alexlmp/app/MainActivity.kt
           cp custom/YtMusicBridge.kt app_build/android/app/src/main/kotlin/com/alexlmp/app/YtMusicBridge.kt
+          cp custom/AlexWidget.kt app_build/android/app/src/main/kotlin/com/alexlmp/app/AlexWidget.kt
+          # Home screen widget layouts / icons
+          mkdir -p app_build/android/app/src/main/res
+          cp -r custom/res/. app_build/android/app/src/main/res/
 
       - name: Upgrade Android build tooling (needed by NewPipeExtractor)
         working-directory: app_build/android
