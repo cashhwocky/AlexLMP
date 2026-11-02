@@ -365,9 +365,30 @@ class AppState extends ChangeNotifier {
   final Map<String, Map<String, dynamic>> _ytSaved = {};
 
   // ── Generic settings store (every toggle in Settings uses these) ──────
-  bool b(String key, [bool def = false]) => _prefs?.getBool(key) ?? def;
-  double d(String key, double def) => _prefs?.getDouble(key) ?? def;
-  String str(String key, String def) => _prefs?.getString(key) ?? def;
+  // Never let a bad/mismatched saved value crash a screen.
+  bool b(String key, [bool def = false]) {
+    try {
+      return _prefs?.getBool(key) ?? def;
+    } catch (_) {
+      return def;
+    }
+  }
+
+  double d(String key, double def) {
+    try {
+      return _prefs?.getDouble(key) ?? def;
+    } catch (_) {
+      return def;
+    }
+  }
+
+  String str(String key, String def) {
+    try {
+      return _prefs?.getString(key) ?? def;
+    } catch (_) {
+      return def;
+    }
+  }
   void setB(String key, bool v) {
     _prefs?.setBool(key, v);
     notifyListeners();
@@ -3006,7 +3027,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         children: [
           if (audioHandler.currentTrack != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
               child: Reveal(
                 dy: 40,
                 child: MiniPlayer(
@@ -3037,6 +3058,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   )),
             ),
             child: NavigationBar(
+              // Compact Material 3 height so the mini player sits low, like
+              // the regular style.
+              height: 62,
+              labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
               selectedIndex: _tab,
               onDestinationSelected: (i) {
                 if (i == 3) {
@@ -3077,14 +3102,504 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   }
 
   Widget _tabBody(BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+    final m3 = appState.community;
     switch (_tab) {
       case 1:
         return _mixTab(context, pal, tracks);
       case 2:
-        return _libraryTab(context, pal, tracks);
+        return m3
+            ? _libraryTabM3(context, pal, tracks)
+            : _libraryTab(context, pal, tracks);
       default:
-        return _homeTab(context, pal, tracks);
+        return m3
+            ? _homeTabM3(context, pal, tracks)
+            : _homeTab(context, pal, tracks);
     }
+  }
+
+  // ═══════════════════ Community Suggested (Material 3) layouts ═══════════
+
+  Widget _m3Title(String text, {String? overline}) {
+    final cs = appState.scheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 22, 20, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (overline != null)
+            Text(overline,
+                style: TextStyle(
+                    color: cs.primary,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.4)),
+          Text(text,
+              style: TextStyle(
+                  color: cs.onSurface,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+
+  Widget _m3ListItem({
+    required Widget leading,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    VoidCallback? onLongPress,
+    Widget? trailing,
+  }) {
+    final cs = appState.scheme;
+    return InkWell(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        child: Row(
+          children: [
+            SizedBox(width: 56, height: 56, child: leading),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: cs.onSurface,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14)),
+                ],
+              ),
+            ),
+            if (trailing != null) trailing,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _homeTabM3(BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+    final cs = appState.scheme;
+    final header = Padding(
+      padding: const EdgeInsets.fromLTRB(20, 14, 12, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              _greeting(),
+              style: TextStyle(
+                color: cs.onSurface,
+                fontSize: 30,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.add_rounded),
+            onPressed: () => showAddMusicSheet(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => showSettingsSheet(context),
+          ),
+          const SizedBox(width: 4),
+          _accountButton(context, pal),
+        ],
+      ),
+    );
+    if (tracks.isEmpty) {
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 185),
+        children: [header, const SizedBox(height: 90), _emptyState(context, pal)],
+      );
+    }
+    final mixes = buildMixes(tracks);
+    final quick = tracks.take(5).toList();
+    final again = tracks.reversed.take(10).toList();
+    final current = audioHandler.currentTrack;
+
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 185),
+      children: [
+        header,
+        // Shortcut chips
+        SizedBox(
+          height: 56,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+            children: [
+              ActionChip(
+                avatar: const Icon(Icons.favorite_rounded, size: 18),
+                label: const Text('Liked'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const LikedSongsScreen()),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ActionChip(
+                avatar: const Icon(Icons.shuffle_rounded, size: 18),
+                label: const Text('Shuffle all'),
+                onPressed: () {
+                  audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
+                  playAndOpen(context, Random().nextInt(tracks.length));
+                },
+              ),
+              const SizedBox(width: 8),
+              ActionChip(
+                avatar: const Icon(Icons.sensors_rounded, size: 18),
+                label: const Text('Mixes'),
+                onPressed: () => setState(() {
+                  _dir = 1;
+                  _tab = 1;
+                }),
+              ),
+              const SizedBox(width: 8),
+              ActionChip(
+                avatar: const Icon(Icons.library_music_rounded, size: 18),
+                label: const Text('Library'),
+                onPressed: () => setState(() {
+                  _dir = 1;
+                  _tab = 2;
+                }),
+              ),
+            ],
+          ),
+        ),
+        if (current != null) ...[
+          _m3Title('Continue listening'),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Card(
+              color: cs.primaryContainer,
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: () => openPlayer(context),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: SizedBox(
+                          width: 92,
+                          height: 92,
+                          child: CustomAlbumArtwork(track: current),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(current.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: cs.onPrimaryContainer,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w500)),
+                            const SizedBox(height: 4),
+                            Text(current.artist,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: cs.onPrimaryContainer.withOpacity(0.75))),
+                          ],
+                        ),
+                      ),
+                      StreamBuilder<PlaybackState>(
+                        stream: audioHandler.playbackState,
+                        builder: (context, snap) {
+                          final playing =
+                              (snap.data ?? audioHandler.playbackState.value).playing;
+                          return IconButton.filled(
+                            iconSize: 30,
+                            onPressed: () =>
+                                playing ? audioHandler.pause() : audioHandler.play(),
+                            icon: Icon(playing
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (mixes.isNotEmpty) ...[
+          _m3Title('Your mixes', overline: 'Made for you'),
+          SizedBox(
+            height: 210,
+            child: CarouselView(
+              itemExtent: 220,
+              shrinkExtent: 120,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+              onTap: (i) => openMix(context, mixes[i]),
+              children: [
+                for (final m in mixes)
+                  LayoutBuilder(
+                    builder: (context, c) => MixCover(
+                      mix: m,
+                      size: max(c.maxWidth, c.maxHeight),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+        _m3Title('Quick picks', overline: 'Start listening'),
+        for (final t in quick)
+          _m3ListItem(
+            leading: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: CustomAlbumArtwork(track: t),
+            ),
+            title: t.title,
+            subtitle: t.artist,
+            onTap: () => playAndOpen(context, audioHandler.tracks.indexOf(t)),
+            trailing: IconButton(
+              icon: const Icon(Icons.more_vert_rounded),
+              onPressed: () => showAddToPlaylistSheet(context, t),
+            ),
+          ),
+        _m3Title('Listen again'),
+        SizedBox(
+          height: 200,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: again.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (context, i) => MediaCard(
+              width: 144,
+              cover: CustomAlbumArtwork(track: again[i]),
+              title: again[i].title,
+              subtitle: again[i].artist,
+              onTap: () => playAndOpen(context, audioHandler.tracks.indexOf(again[i])),
+            ),
+          ),
+        ),
+        ValueListenableBuilder<YtAccount>(
+          valueListenable: ytAccount,
+          builder: (context, acc, _) {
+            if (!acc.signedIn) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _m3Title('Your playlists', overline: 'From YouTube Music'),
+                SizedBox(height: 214, child: _ytPlaylistRow(context, pal)),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _libraryTabM3(BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+    final cs = appState.scheme;
+    const filters = ['Playlists', 'Songs', 'Albums', 'Artists', 'YouTube Music'];
+    if (_libraryFilter >= filters.length) _libraryFilter = 0;
+    final liked = tracks.where((t) => appState.isLiked(t.id)).toList();
+
+    Widget cover(Widget child, {bool circle = false}) => ClipRRect(
+          borderRadius: BorderRadius.circular(circle ? 28 : 12),
+          child: child,
+        );
+
+    final items = <Widget>[];
+    switch (_libraryFilter) {
+      case 1:
+        items.add(Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: _librarySongs(context, pal, tracks),
+        ));
+        break;
+      case 2:
+        final byAlbum = <String, List<TrackItem>>{};
+        for (final t in tracks) {
+          byAlbum.putIfAbsent(t.album, () => []).add(t);
+        }
+        final entries = byAlbum.entries.toList()
+          ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+        for (final e in entries) {
+          items.add(_m3ListItem(
+            leading: cover(CustomAlbumArtwork(track: e.value.first)),
+            title: e.key,
+            subtitle:
+                'Album • ${e.value.first.artist} • ${e.value.length} ${e.value.length == 1 ? 'song' : 'songs'}',
+            onTap: () => showArtistTracksSheet(context, e.key, e.value),
+          ));
+        }
+        break;
+      case 3:
+        final byArtist = <String, List<TrackItem>>{};
+        for (final t in tracks) {
+          byArtist.putIfAbsent(t.artist, () => []).add(t);
+        }
+        final entries = byArtist.entries.toList()
+          ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+        for (final e in entries) {
+          items.add(_m3ListItem(
+            leading: cover(CustomAlbumArtwork(track: e.value.first), circle: true),
+            title: e.key,
+            subtitle:
+                'Artist • ${e.value.length} ${e.value.length == 1 ? 'song' : 'songs'}',
+            onTap: () => showArtistTracksSheet(context, e.key, e.value),
+          ));
+        }
+        break;
+      case 4:
+        items.add(Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: _libraryYouTube(context, pal),
+        ));
+        break;
+      default:
+        items.add(_m3ListItem(
+          leading: cover(GradientCover(
+            icon: Icons.favorite_rounded,
+            colors: [cs.primary, cs.tertiary],
+            size: 56,
+            iconColor: cs.onPrimary,
+          )),
+          title: 'Liked Songs',
+          subtitle: 'Auto playlist • ${liked.length} ${liked.length == 1 ? 'song' : 'songs'}',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const LikedSongsScreen()),
+          ),
+          trailing: const Icon(Icons.push_pin_rounded, size: 18),
+        ));
+        if (ytAccount.value.signedIn) {
+          items.add(_m3ListItem(
+            leading: cover(GradientCover(
+              icon: Icons.thumb_up_alt_rounded,
+              colors: [const Color(0xFFFF4D5E), cs.secondary],
+              size: 56,
+              iconColor: Colors.white,
+            )),
+            title: 'Liked on YouTube',
+            subtitle: 'Auto playlist • YouTube Music',
+            onTap: () => openYtLikedMusic(context),
+            trailing: const Icon(Icons.push_pin_rounded, size: 18),
+          ));
+        }
+        for (final pl in appState.playlists) {
+          items.add(_m3ListItem(
+            leading: cover(PlaylistCoverThumbnail(playlist: pl, size: 56)),
+            title: pl.name,
+            subtitle:
+                'Playlist • ${pl.trackIds.length} ${pl.trackIds.length == 1 ? 'song' : 'songs'}',
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => PlaylistDetailScreen(playlistId: pl.id),
+            )),
+            onLongPress: () => showCreateOrEditPlaylistDialog(context, existing: pl),
+          ));
+        }
+        if (ytAccount.value.signedIn) {
+          items.add(FutureBuilder<List<YtPlaylistRef>>(
+            future: YouTubeMusic.libraryPlaylists(),
+            initialData: YouTubeMusic.cachedLibrary(),
+            builder: (context, snap) => Column(
+              children: [
+                for (final p in snap.data ?? const <YtPlaylistRef>[])
+                  _m3ListItem(
+                    leading: cover(YtNetworkImage(url: p.thumbnail, size: 56)),
+                    title: p.title,
+                    subtitle: p.subtitle.isEmpty ? 'YouTube Music' : p.subtitle,
+                    onTap: () => openYtAccountPlaylist(context, p),
+                  ),
+              ],
+            ),
+          ));
+        }
+    }
+
+    return ListView(
+      padding: const EdgeInsets.only(top: 14, bottom: 185),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 12, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text('Library',
+                    style: TextStyle(
+                        color: cs.onSurface,
+                        fontSize: 30,
+                        fontWeight: FontWeight.w400)),
+              ),
+              IconButton(
+                icon: const Icon(Icons.search_rounded),
+                onPressed: () => showSearchSheet(context),
+              ),
+              IconButton(
+                icon: const Icon(Icons.folder_open_outlined),
+                onPressed: () => showAddMusicSheet(context),
+              ),
+              const SizedBox(width: 4),
+              _accountButton(context, pal),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 56,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+            children: [
+              for (var i = 0; i < filters.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    selected: _libraryFilter == i,
+                    label: Text(filters[i]),
+                    onSelected: (_) => setState(() => _libraryFilter = i),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        if (_libraryFilter == 0)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                onPressed: () => showCreateOrEditPlaylistDialog(context),
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('New playlist'),
+              ),
+            ),
+          ),
+        ...items,
+        if (items.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 40),
+            child: Center(
+              child: Text('Nothing here yet.',
+                  style: TextStyle(color: cs.onSurfaceVariant)),
+            ),
+          ),
+      ],
+    );
   }
 
   Widget _navBar(AppPalette pal) {
@@ -5448,10 +5963,20 @@ class PlaylistCoverThumbnail extends StatelessWidget {
   }
 }
 
+/// Your own playlist — laid out like a YouTube Music playlist page, plus
+/// drag-and-drop reordering (hold the ≡ handle and drag).
 class PlaylistDetailScreen extends StatelessWidget {
   final String playlistId;
 
   const PlaylistDetailScreen({super.key, required this.playlistId});
+
+  static String _length(List<TrackItem> tracks) {
+    final secs = tracks.fold<int>(0, (a, t) => a + t.durationSeconds);
+    if (secs <= 0) return '';
+    final h = secs ~/ 3600;
+    final m = (secs % 3600) ~/ 60;
+    return h > 0 ? '$h hr $m min' : '$m min';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -5470,12 +5995,149 @@ class PlaylistDetailScreen extends StatelessWidget {
             body: const Center(child: Text('Playlist deleted')),
           );
         }
-
-        final resolvedTracks = <TrackItem>[];
-        for (final id in pl.trackIds) {
-          final t = audioHandler.trackById(id);
-          if (t != null) resolvedTracks.add(t);
+        // Keep each song's real index in the playlist (some songs may be
+        // missing from the library, e.g. deleted files).
+        final entries = <(int, TrackItem)>[];
+        for (var i = 0; i < pl.trackIds.length; i++) {
+          final t = audioHandler.trackById(pl.trackIds[i]);
+          if (t != null) entries.add((i, t));
         }
+        final tracks = [for (final e in entries) e.$2];
+        final info = [
+          '${tracks.length} ${tracks.length == 1 ? 'song' : 'songs'}',
+          _length(tracks),
+        ].where((x) => x.isNotEmpty).join(' • ');
+
+        void playFrom(int i) {
+          audioHandler.playYouTubeList(tracks, i);
+          openPlayer(context);
+        }
+
+        final header = Column(
+          children: [
+            const SizedBox(height: 8),
+            Center(
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(22),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.5),
+                      blurRadius: 30,
+                      offset: const Offset(0, 14),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(22),
+                  child: PlaylistCoverThumbnail(playlist: pl, size: 220),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+              decoration: BoxDecoration(
+                color: pal.accent.withOpacity(0.16),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: pal.accent.withOpacity(0.5)),
+              ),
+              child: Text(
+                'PLAYLIST',
+                style: TextStyle(
+                  color: pal.accent,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              pl.name,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'You • $info',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (tracks.isNotEmpty)
+                  _ytPlayButton(pal, 'Play', () {
+                    audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+                    playFrom(0);
+                  }),
+                if (tracks.isNotEmpty) const SizedBox(width: 10),
+                if (tracks.isNotEmpty)
+                  _circle(pal, Icons.shuffle_rounded, () {
+                    audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
+                    playFrom(Random().nextInt(tracks.length));
+                  }),
+                if (tracks.isNotEmpty) const SizedBox(width: 10),
+                if (tracks.isNotEmpty)
+                  _circle(pal, Icons.queue_play_next_rounded, () {
+                    audioHandler.addToQueue(tracks, next: true);
+                    appNotice.value = 'Playing "${pl.name}" next';
+                  }),
+                if (tracks.isNotEmpty) const SizedBox(width: 10),
+                _circle(pal, Icons.more_horiz_rounded,
+                    () => _playlistMenu(context, pl)),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    tracks.isEmpty ? '' : 'Hold ≡ and drag to reorder',
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () => showAddTracksToPlaylistPicker(context, pl),
+                  icon: const Icon(Icons.playlist_add_rounded),
+                  label: const Text('Add songs'),
+                  style: TextButton.styleFrom(foregroundColor: pal.accent),
+                ),
+              ],
+            ),
+            if (tracks.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 30),
+                child: Column(
+                  children: [
+                    Icon(Icons.queue_music_rounded,
+                        size: 54, color: pal.accent.withOpacity(0.6)),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'This playlist is empty',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Tap "Add songs", or use "Add to playlist" in any song\'s ⋮ menu.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white54, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        );
 
         return Scaffold(
           backgroundColor: pal.bg,
@@ -5490,7 +6152,7 @@ class PlaylistDetailScreen extends StatelessWidget {
                 child: Column(
                   children: [
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
                       child: Row(
                         children: [
                           SquishyGesture(
@@ -5502,52 +6164,14 @@ class PlaylistDetailScreen extends StatelessWidget {
                                 color: pal.surface,
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(
-                                Icons.arrow_back_rounded,
-                                color: Colors.white,
-                              ),
+                              child: const Icon(Icons.arrow_back_rounded,
+                                  color: Colors.white),
                             ),
                           ),
                           const Spacer(),
                           SquishyGesture(
-                            onTap: () => showAddTracksToPlaylistPicker(
-                              context,
-                              pl,
-                            ),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 9,
-                              ),
-                              decoration: BoxDecoration(
-                                color: pal.container,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.playlist_add_rounded,
-                                    color: pal.accent,
-                                    size: 20,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    'Add Songs',
-                                    style: TextStyle(
-                                      color: pal.accent,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          SquishyGesture(
-                            onTap: () => showCreateOrEditPlaylistDialog(
-                              context,
-                              existing: pl,
-                            ),
+                            onTap: () => showCreateOrEditPlaylistDialog(context,
+                                existing: pl),
                             child: Container(
                               width: 44,
                               height: 44,
@@ -5555,343 +6179,164 @@ class PlaylistDetailScreen extends StatelessWidget {
                                 color: pal.surface,
                                 shape: BoxShape.circle,
                               ),
-                              child: Icon(
-                                Icons.edit_rounded,
-                                color: pal.accent,
-                                size: 20,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          SquishyGesture(
-                            onTap: () {
-                              appState.deletePlaylist(pl.id);
-                              Navigator.pop(context);
-                            },
-                            child: Container(
-                              width: 44,
-                              height: 44,
-                              decoration: BoxDecoration(
-                                color: pal.surface,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.delete_outline_rounded,
-                                color: Colors.redAccent,
-                                size: 20,
-                              ),
+                              child: Icon(Icons.edit_rounded,
+                                  color: pal.accent, size: 20),
                             ),
                           ),
                         ],
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: [
-                          SquishyGesture(
-                            onTap: () => showCreateOrEditPlaylistDialog(
-                              context,
-                              existing: pl,
-                            ),
-                            child: Stack(
-                              alignment: Alignment.bottomRight,
-                              children: [
-                                PlaylistCoverThumbnail(playlist: pl, size: 104),
-                                Container(
-                                  margin: const EdgeInsets.all(6),
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.7),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: Icon(
-                                    Icons.photo_library_rounded,
-                                    color: pal.accent,
-                                    size: 16,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 18),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  pl.name,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: -0.4,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  '${resolvedTracks.length} songs • Drag handle to sort order',
-                                  style: const TextStyle(
-                                    color: Color(0xFFA6ADB2),
-                                    fontSize: 13,
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                if (resolvedTracks.isNotEmpty)
-                                  SquishyGesture(
-                                    onTap: () {
-                                      audioHandler.playTrackById(
-                                        resolvedTracks.first.id,
-                                      );
-                                      openPlayer(context);
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 18,
-                                        vertical: 9,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: pal.accent,
-                                        borderRadius: BorderRadius.circular(24),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.play_arrow_rounded,
-                                            color: pal.onAccent,
-                                            size: 20,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Play Playlist',
-                                            style: TextStyle(
-                                              color: pal.onAccent,
-                                              fontWeight: FontWeight.w800,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(color: Colors.white12, height: 20),
                     Expanded(
-                      child: resolvedTracks.isEmpty
-                          ? Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.queue_music_rounded,
-                                    size: 54,
-                                    color: pal.accent.withOpacity(0.6),
+                      child: ReorderableListView.builder(
+                        header: header,
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+                        buildDefaultDragHandles: false,
+                        proxyDecorator: (child, index, anim) => Material(
+                          color: Colors.transparent,
+                          elevation: 8,
+                          shadowColor: Colors.black54,
+                          borderRadius: BorderRadius.circular(16),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: pal.surface,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: child,
+                          ),
+                        ),
+                        itemCount: entries.length,
+                        onReorder: (oldIndex, newIndex) {
+                          if (newIndex > oldIndex) newIndex -= 1;
+                          if (oldIndex == newIndex) return;
+                          HapticFeedback.selectionClick();
+                          final from = entries[oldIndex].$1;
+                          final to = entries[newIndex].$1;
+                          appState.movePlaylistTrack(pl.id, from, to);
+                        },
+                        itemBuilder: (context, i) {
+                          final t = entries[i].$2;
+                          final active = audioHandler.currentTrack?.id == t.id;
+                          return Padding(
+                            key: ValueKey('pl_${pl.id}_${t.id}_$i'),
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              children: [
+                                ReorderableDragStartListener(
+                                  index: i,
+                                  child: const Padding(
+                                    padding: EdgeInsets.fromLTRB(0, 10, 10, 10),
+                                    child: Icon(Icons.drag_indicator_rounded,
+                                        color: Colors.white38),
                                   ),
-                                  const SizedBox(height: 12),
-                                  const Text(
-                                    'Playlist is empty',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 17,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  const Text(
-                                    'Tap "Add Songs" above or use the 3-dot menu in Now Playing.',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: Colors.white54,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                          : ReorderableListView.builder(
-                              padding: const EdgeInsets.fromLTRB(
-                                16,
-                                4,
-                                16,
-                                40,
-                              ),
-                              buildDefaultDragHandles: false,
-                              itemCount: resolvedTracks.length,
-                              onReorder: (oldIndex, newIndex) {
-                                if (newIndex > oldIndex) newIndex -= 1;
-                                HapticFeedback.mediumImpact();
-                                appState.movePlaylistTrack(
-                                  pl.id,
-                                  oldIndex,
-                                  newIndex,
-                                );
-                              },
-                              itemBuilder: (context, i) {
-                                final t = resolvedTracks[i];
-                                final active =
-                                    audioHandler.currentTrack?.id == t.id;
-                                return Container(
-                                  key: ValueKey('pl_${pl.id}_${t.id}'),
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 8,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: pal.surface.withOpacity(
-                                      appState.liquidGlass ? 0.55 : 1.0,
-                                    ),
-                                    borderRadius: BorderRadius.circular(18),
-                                    border: appState.liquidGlass
-                                        ? Border.all(
-                                            color: Colors.white.withOpacity(
-                                              0.12,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      ReorderableDragStartListener(
-                                        index: i,
-                                        child: const Padding(
-                                          padding: EdgeInsets.only(right: 10),
-                                          child: Icon(
-                                            Icons.drag_indicator_rounded,
-                                            color: Colors.white54,
+                                ),
+                                Expanded(
+                                  child: SquishyGesture(
+                                    pressedScale: 0.98,
+                                    onTap: () => playFrom(i),
+                                    child: Row(
+                                      children: [
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(10),
+                                          child: SizedBox(
+                                            width: 50,
+                                            height: 50,
+                                            child: CustomAlbumArtwork(track: t),
                                           ),
                                         ),
-                                      ),
-                                      Expanded(
-                                        child: GestureDetector(
-                                          behavior: HitTestBehavior.opaque,
-                                          onTap: () {
-                                            audioHandler.playTrackById(t.id);
-                                            openPlayer(context);
-                                          },
-                                          child: Row(
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
-                                              ClipRRect(
-                                                borderRadius:
-                                                    BorderRadius.circular(10),
-                                                child: SizedBox(
-                                                  width: 48,
-                                                  height: 48,
-                                                  child: CustomAlbumArtwork(
-                                                    track: t,
-                                                  ),
+                                              Text(
+                                                t.title,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  color: active
+                                                      ? pal.accent
+                                                      : Colors.white,
+                                                  fontSize: 15.5,
+                                                  fontWeight: FontWeight.w700,
                                                 ),
                                               ),
-                                              const SizedBox(width: 12),
-                                              Expanded(
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Text(
-                                                      t.title,
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: TextStyle(
-                                                        color: active
-                                                            ? pal.accent
-                                                            : Colors.white,
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                        fontSize: 15.5,
-                                                      ),
-                                                    ),
-                                                    const SizedBox(height: 2),
-                                                    Text(
-                                                      t.artist,
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: const TextStyle(
-                                                        color:
-                                                            Color(0xFFA6ADB2),
-                                                        fontSize: 13,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
+                                              Text(
+                                                t.artist,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                    color: Color(0xFFA6ADB2),
+                                                    fontSize: 13),
                                               ),
                                             ],
                                           ),
                                         ),
-                                      ),
-                                      PopupMenuButton<String>(
-                                        icon: const Icon(
-                                          Icons.more_vert_rounded,
-                                          color: Colors.white70,
+                                        if (active) EqBars(color: pal.accent),
+                                        Padding(
+                                          padding: const EdgeInsets.only(left: 8),
+                                          child: Text(
+                                            TrackRow.fmt(t.durationSeconds),
+                                            style: const TextStyle(
+                                                color: Colors.white38,
+                                                fontSize: 12.5),
+                                          ),
                                         ),
-                                        color: pal.surface,
-                                        onSelected: (action) {
-                                          if (action == 'first') {
-                                            appState.movePlaylistTrack(
-                                              pl.id,
-                                              i,
-                                              0,
-                                            );
-                                          } else if (action == 'last') {
-                                            appState.movePlaylistTrack(
-                                              pl.id,
-                                              i,
-                                              resolvedTracks.length - 1,
-                                            );
-                                          } else if (action == 'remove') {
-                                            appState.removeFromPlaylist(
-                                              pl.id,
-                                              t.id,
-                                            );
-                                          }
-                                        },
-                                        itemBuilder: (_) => const [
-                                          PopupMenuItem(
-                                            value: 'first',
-                                            child: Text(
-                                              'Move to First',
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ),
-                                          PopupMenuItem(
-                                            value: 'last',
-                                            child: Text(
-                                              'Move to Last',
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ),
-                                          PopupMenuItem(
-                                            value: 'remove',
-                                            child: Text(
-                                              'Remove from Playlist',
-                                              style: TextStyle(
-                                                color: Colors.redAccent,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
-                                );
-                              },
+                                ),
+                                PopupMenuButton<String>(
+                                  icon: const Icon(Icons.more_vert_rounded,
+                                      color: Colors.white54, size: 20),
+                                  color: pal.surface,
+                                  onSelected: (v) {
+                                    final idx = entries[i].$1;
+                                    switch (v) {
+                                      case 'next':
+                                        audioHandler.addToQueue([t], next: true);
+                                        appNotice.value = 'Playing "${t.title}" next';
+                                        break;
+                                      case 'up':
+                                        if (i > 0) {
+                                          appState.movePlaylistTrack(
+                                              pl.id, idx, entries[i - 1].$1);
+                                        }
+                                        break;
+                                      case 'down':
+                                        if (i < entries.length - 1) {
+                                          appState.movePlaylistTrack(
+                                              pl.id, idx, entries[i + 1].$1);
+                                        }
+                                        break;
+                                      case 'more':
+                                        showAddToPlaylistSheet(context, t);
+                                        break;
+                                      case 'remove':
+                                        appState.removeFromPlaylist(pl.id, t.id);
+                                        break;
+                                    }
+                                  },
+                                  itemBuilder: (_) => const [
+                                    PopupMenuItem(
+                                        value: 'next', child: Text('Play next')),
+                                    PopupMenuItem(
+                                        value: 'up', child: Text('Move up')),
+                                    PopupMenuItem(
+                                        value: 'down', child: Text('Move down')),
+                                    PopupMenuItem(
+                                        value: 'more',
+                                        child: Text('More options…')),
+                                    PopupMenuItem(
+                                        value: 'remove',
+                                        child: Text('Remove from playlist')),
+                                  ],
+                                ),
+                              ],
                             ),
+                          );
+                        },
+                      ),
                     ),
                   ],
                 ),
@@ -5902,11 +6347,62 @@ class PlaylistDetailScreen extends StatelessWidget {
       },
     );
   }
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Reusable animations & interactive widgets
-// ─────────────────────────────────────────────────────────────────────────────
+  static Widget _circle(AppPalette pal, IconData icon, VoidCallback onTap) {
+    return SquishyGesture(
+      onTap: onTap,
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(color: pal.container, shape: BoxShape.circle),
+        child: Icon(icon, color: pal.accent),
+      ),
+    );
+  }
+
+  void _playlistMenu(BuildContext context, Playlist pl) {
+    _sheet(context, (ctx) {
+      final pal = appState.palette;
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _sheetTile(pal, Icons.edit_rounded, 'Edit playlist',
+                  'Name and cover photo', () {
+                Navigator.pop(ctx);
+                showCreateOrEditPlaylistDialog(context, existing: pl);
+              }),
+              _sheetTile(pal, Icons.playlist_add_rounded, 'Add songs',
+                  'Pick songs from your library', () {
+                Navigator.pop(ctx);
+                showAddTracksToPlaylistPicker(context, pl);
+              }),
+              _sheetTile(pal, Icons.add_to_queue_rounded, 'Add to queue',
+                  'Play after Up next', () {
+                Navigator.pop(ctx);
+                final tracks = [
+                  for (final id in pl.trackIds)
+                    if (audioHandler.trackById(id) != null)
+                      audioHandler.trackById(id)!,
+                ];
+                audioHandler.addToQueue(tracks);
+                appNotice.value = 'Added "${pl.name}" to queue';
+              }),
+              _sheetTile(pal, Icons.delete_outline_rounded, 'Delete playlist',
+                  'Your songs stay in your library', () {
+                Navigator.pop(ctx);
+                appState.deletePlaylist(pl.id);
+                Navigator.pop(context);
+              }),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+}
 
 const Curve kEmphasized = Cubic(0.2, 0.0, 0.0, 1.0);
 const Curve kEmphasizedDecel = Cubic(0.05, 0.7, 0.1, 1.0);
@@ -9354,7 +9850,7 @@ class SettingsScreen extends StatelessWidget {
             def: true),
         _flag(pal, Icons.manage_search_rounded, 'search_yt_default',
             'Open search on YouTube Music', 'Instead of your library'),
-        _flag(pal, Icons.history_toggle_off_rounded, 'search_history',
+        _flag(pal, Icons.history_toggle_off_rounded, 'search_history_on',
             'Search history', 'Show your recent YouTube Music searches',
             def: true),
         _tile(pal, Icons.delete_sweep_rounded, 'Clear YouTube cache',
@@ -9415,7 +9911,7 @@ class SettingsScreen extends StatelessWidget {
               'app_style', 'use_wallpaper_colors', 'pure_black', 'text_scale',
               'art_blur', 'double_tap_like', 'keep_screen_on', 'smooth_fade',
               'skip_silence', 'resume_last', 'yt_data_saver', 'prefetch_next',
-              'search_yt_default', 'search_history', 'auto_scan',
+              'search_yt_default', 'search_history_on', 'auto_scan',
               'hide_short_tracks', 'compact_rows', 'show_durations',
               'autoplay_radio', 'animation_speed', 'player_style',
             ]) {
@@ -9977,12 +10473,600 @@ void showPlaylistEditDialog(BuildContext context) {
 }
 
 void showSearchSheet(BuildContext context) {
-  _sheet(
-    context,
-    (ctx) => SearchSheet(parentContext: context),
-    scroll: true,
-    color: appState.palette.bg,
-  );
+  Navigator.of(context).push(PageRouteBuilder(
+    transitionDuration: const Duration(milliseconds: 320),
+    reverseTransitionDuration: const Duration(milliseconds: 240),
+    pageBuilder: (_, __, ___) => const SearchScreen(),
+    transitionsBuilder: (_, anim, __, child) {
+      final c = CurvedAnimation(parent: anim, curve: kEmphasizedDecel);
+      return FadeTransition(
+        opacity: c,
+        child: SlideTransition(
+          position: Tween<Offset>(begin: const Offset(0, 0.04), end: Offset.zero)
+              .animate(c),
+          child: child,
+        ),
+      );
+    },
+  ));
+}
+
+/// Full-screen search. Type to see quick matches from your library; press
+/// Enter for full results, then switch between Local and YouTube Music
+/// (with Songs / Albums / Artists filters).
+class SearchScreen extends StatefulWidget {
+  const SearchScreen({super.key});
+
+  @override
+  State<SearchScreen> createState() => _SearchScreenState();
+}
+
+class _SearchScreenState extends State<SearchScreen> {
+  final TextEditingController _ctrl = TextEditingController();
+  final FocusNode _focus = FocusNode();
+  String _query = '';
+  String? _submitted; // results mode when set
+  int _source = appState.b('search_yt_default') ? 1 : 0; // 0 local, 1 YouTube
+  int _filter = 0; // 0 songs, 1 albums, 2 artists
+
+  // YouTube results for the submitted query (cached per filter).
+  Future<List<TrackItem>>? _ytSongs;
+  Future<List<YtAlbum>>? _ytAlbums;
+  Future<List<YtArtist>>? _ytArtists;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focus.requestFocus());
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  List<String> get _history {
+    try {
+      return YouTubeMusic.prefs?.getStringList('search_history') ?? const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  void _remember(String q) {
+    if (!appState.b('search_history_on', true)) return;
+    final list = [q, ..._history.where((x) => x.toLowerCase() != q.toLowerCase())]
+        .take(12)
+        .toList();
+    YouTubeMusic.prefs?.setStringList('search_history', list);
+  }
+
+  void _submit(String raw) {
+    final q = raw.trim();
+    if (q.isEmpty) return;
+    _remember(q);
+    _focus.unfocus();
+    setState(() {
+      _submitted = q;
+      _query = q;
+      _ytSongs = null;
+      _ytAlbums = null;
+      _ytArtists = null;
+      // No local matches? Jump straight to YouTube Music.
+      if (_localSongs(q).isEmpty && Platform.isAndroid) _source = 1;
+    });
+  }
+
+  void _edit() {
+    setState(() => _submitted = null);
+    _focus.requestFocus();
+  }
+
+  List<TrackItem> _localSongs(String q) {
+    final l = q.toLowerCase();
+    return audioHandler.tracks
+        .where((t) =>
+            t.title.toLowerCase().contains(l) ||
+            t.artist.toLowerCase().contains(l) ||
+            t.album.toLowerCase().contains(l))
+        .toList();
+  }
+
+  void _playLocal(TrackItem t) {
+    final idx = audioHandler.tracks.indexOf(t);
+    if (idx >= 0) playAndOpen(context, idx);
+  }
+
+  void _playYt(TrackItem t) {
+    audioHandler.playYouTubeTrack(t);
+    openPlayer(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([appState, audioHandler.currentIndex]),
+      builder: (context, _) {
+        final pal = appState.palette;
+        return Scaffold(
+          backgroundColor: pal.bg,
+          body: SafeArea(
+            child: Column(
+              children: [
+                _searchBar(pal),
+                Expanded(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    child: _submitted == null
+                        ? KeyedSubtree(
+                            key: const ValueKey('typing'),
+                            child: _typing(pal),
+                          )
+                        : KeyedSubtree(
+                            key: ValueKey('results_$_submitted'),
+                            child: _results(pal),
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _searchBar(AppPalette pal) {
+    final community = appState.community;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      child: Container(
+        height: 56,
+        decoration: BoxDecoration(
+          color: community ? appState.scheme.surfaceContainerHigh : pal.surface,
+          borderRadius: BorderRadius.circular(28),
+          border: community ? null : Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back_rounded),
+              onPressed: () => Navigator.pop(context),
+            ),
+            Expanded(
+              child: TextField(
+                controller: _ctrl,
+                focusNode: _focus,
+                readOnly: _submitted != null,
+                onTap: _submitted != null ? _edit : null,
+                textInputAction: TextInputAction.search,
+                style: const TextStyle(color: Colors.white, fontSize: 16.5),
+                decoration: const InputDecoration(
+                  hintText: 'Songs, artists, albums…',
+                  hintStyle: TextStyle(color: Colors.white54),
+                  border: InputBorder.none,
+                ),
+                onChanged: (v) => setState(() => _query = v),
+                onSubmitted: _submit,
+              ),
+            ),
+            if (_query.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.close_rounded),
+                onPressed: () {
+                  _ctrl.clear();
+                  setState(() {
+                    _query = '';
+                    _submitted = null;
+                  });
+                  _focus.requestFocus();
+                },
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: Icon(Icons.search_rounded, color: pal.accent),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── While typing ───────────────────────────────────────────────────────
+
+  Widget _typing(AppPalette pal) {
+    final q = _query.trim();
+    if (q.isEmpty) {
+      final history =
+          appState.b('search_history_on', true) ? _history : const <String>[];
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+        children: [
+          if (history.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 60),
+              child: Column(
+                children: [
+                  Icon(Icons.manage_search_rounded, size: 64, color: pal.accent),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Search your music and YouTube Music',
+                    style: TextStyle(color: Colors.white70, fontSize: 16),
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            Row(
+              children: [
+                const Expanded(
+                  child: Text('Recent searches',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800)),
+                ),
+                TextButton(
+                  onPressed: () {
+                    YouTubeMusic.prefs?.remove('search_history');
+                    setState(() {});
+                  },
+                  child: const Text('Clear all'),
+                ),
+              ],
+            ),
+            for (final h in history)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.history_rounded, color: Colors.white54),
+                title: Text(h, style: const TextStyle(color: Colors.white)),
+                trailing: const Icon(Icons.north_west_rounded,
+                    color: Colors.white38, size: 20),
+                onTap: () {
+                  _ctrl.text = h;
+                  _submit(h);
+                },
+              ),
+          ],
+        ],
+      );
+    }
+
+    final local = _localSongs(q).take(6).toList();
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 40),
+      children: [
+        _suggestRow(pal, Icons.search_rounded, 'Search for "$q"',
+            'Your library and YouTube Music', () => _submit(q)),
+        if (Platform.isAndroid)
+          _suggestRow(pal, Icons.play_circle_fill_rounded, 'YouTube Music',
+              'Songs, albums and artists for "$q"', () {
+            _source = 1;
+            _submit(q);
+          }),
+        if (local.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(2, 16, 2, 6),
+            child: Text('IN YOUR LIBRARY',
+                style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.9)),
+          ),
+          for (final t in local)
+            TrackRow(
+              track: t,
+              palette: pal,
+              active: audioHandler.currentTrack?.id == t.id,
+              onTap: () => _playLocal(t),
+              onMore: () => showAddToPlaylistSheet(context, t),
+            ),
+        ],
+      ],
+    );
+  }
+
+  Widget _suggestRow(AppPalette pal, IconData icon, String title, String sub,
+      VoidCallback onTap) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(color: pal.container, shape: BoxShape.circle),
+        child: Icon(icon, color: pal.accent),
+      ),
+      title: Text(title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+      subtitle: Text(sub, style: const TextStyle(color: Colors.white54)),
+      onTap: onTap,
+    );
+  }
+
+  // ── Results ────────────────────────────────────────────────────────────
+
+  Widget _results(AppPalette pal) {
+    final q = _submitted!;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
+          child: SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<int>(
+              segments: [
+                const ButtonSegment(
+                  value: 0,
+                  icon: Icon(Icons.library_music_rounded),
+                  label: Text('Local'),
+                ),
+                if (Platform.isAndroid)
+                  const ButtonSegment(
+                    value: 1,
+                    icon: Icon(Icons.play_circle_fill_rounded),
+                    label: Text('YouTube Music'),
+                  ),
+              ],
+              selected: {_source},
+              showSelectedIcon: false,
+              onSelectionChanged: (v) => setState(() => _source = v.first),
+            ),
+          ),
+        ),
+        if (_source == 1)
+          SizedBox(
+            height: 48,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              children: [
+                for (final (i, label, icon) in const [
+                  (0, 'Songs', Icons.music_note_rounded),
+                  (1, 'Albums', Icons.album_rounded),
+                  (2, 'Artists', Icons.person_rounded),
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      selected: _filter == i,
+                      showCheckmark: false,
+                      avatar: Icon(icon, size: 18),
+                      label: Text(label),
+                      onSelected: (_) => setState(() => _filter = i),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: _source == 0 ? _localResults(pal, q) : _ytResults(pal, q),
+        ),
+      ],
+    );
+  }
+
+  Widget _empty(String text) => Padding(
+        padding: const EdgeInsets.only(top: 60),
+        child: Center(
+          child: Text(text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white54, fontSize: 15)),
+        ),
+      );
+
+  Widget _localResults(AppPalette pal, String q) {
+    final songs = _localSongs(q);
+    final l = q.toLowerCase();
+    final artists = <String, List<TrackItem>>{};
+    final albums = <String, List<TrackItem>>{};
+    for (final t in audioHandler.tracks) {
+      if (t.artist.toLowerCase().contains(l)) {
+        artists.putIfAbsent(t.artist, () => []).add(t);
+      }
+      if (t.album.toLowerCase().contains(l)) {
+        albums.putIfAbsent(t.album, () => []).add(t);
+      }
+    }
+    if (songs.isEmpty && artists.isEmpty && albums.isEmpty) {
+      return ListView(children: [
+        _empty('Nothing in your library matches "$q".\nTry YouTube Music above.'),
+      ]);
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 40),
+      children: [
+        if (artists.isNotEmpty) ...[
+          ytSectionHeader('Artists'),
+          SizedBox(
+            height: 120,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final e in artists.entries)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 14),
+                    child: SquishyGesture(
+                      onTap: () => showArtistTracksSheet(context, e.key, e.value),
+                      child: SizedBox(
+                        width: 86,
+                        child: Column(
+                          children: [
+                            ClipOval(
+                              child: SizedBox(
+                                width: 80,
+                                height: 80,
+                                child: CustomAlbumArtwork(track: e.value.first),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(e.key,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+        if (albums.isNotEmpty) ...[
+          ytSectionHeader('Albums'),
+          SizedBox(
+            height: 186,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final e in albums.entries)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 14),
+                    child: MediaCard(
+                      width: 130,
+                      cover: CustomAlbumArtwork(track: e.value.first),
+                      title: e.key,
+                      subtitle: e.value.first.artist,
+                      onTap: () => showArtistTracksSheet(context, e.key, e.value),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+        if (songs.isNotEmpty) ...[
+          ytSectionHeader('Songs (${songs.length})'),
+          for (final t in songs)
+            TrackRow(
+              track: t,
+              palette: pal,
+              active: audioHandler.currentTrack?.id == t.id,
+              onTap: () => _playLocal(t),
+              onMore: () => showAddToPlaylistSheet(context, t),
+            ),
+        ],
+      ],
+    );
+  }
+
+  Widget _ytError(Object? e) {
+    final detail = e is PlatformException ? (e.message ?? e.code) : '$e';
+    return ListView(children: [
+      Padding(
+        padding: const EdgeInsets.all(24),
+        child: SelectableText(
+          'Couldn\'t reach YouTube Music.\n\nDetails: $detail',
+          style: const TextStyle(color: Colors.white54),
+        ),
+      ),
+    ]);
+  }
+
+  Widget _loading(AppPalette pal) => Padding(
+        padding: const EdgeInsets.only(top: 40),
+        child: Center(child: CircularProgressIndicator(color: pal.accent)),
+      );
+
+  Widget _ytResults(AppPalette pal, String q) {
+    switch (_filter) {
+      case 1:
+        _ytAlbums ??= YouTubeMusic.searchAlbums(q);
+        return FutureBuilder<List<YtAlbum>>(
+          future: _ytAlbums,
+          builder: (context, snap) {
+            if (snap.hasError) return _ytError(snap.error);
+            if (!snap.hasData) return _loading(pal);
+            final list = snap.data!;
+            if (list.isEmpty) return ListView(children: [_empty('No albums found.')]);
+            final w = (MediaQuery.of(context).size.width - 32 - 14) / 2;
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+              children: [
+                Wrap(
+                  spacing: 14,
+                  runSpacing: 18,
+                  children: [
+                    for (final a in list)
+                      MediaCard(
+                        width: w,
+                        cover: YtNetworkImage(url: a.thumbnail, size: w),
+                        title: a.title,
+                        subtitle: a.artist,
+                        onTap: () => openYtAlbum(context, a),
+                      ),
+                  ],
+                ),
+              ],
+            );
+          },
+        );
+      case 2:
+        _ytArtists ??= YouTubeMusic.searchArtists(q);
+        return FutureBuilder<List<YtArtist>>(
+          future: _ytArtists,
+          builder: (context, snap) {
+            if (snap.hasError) return _ytError(snap.error);
+            if (!snap.hasData) return _loading(pal);
+            final list = snap.data!;
+            if (list.isEmpty) return ListView(children: [_empty('No artists found.')]);
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+              children: [
+                for (final a in list)
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                    leading: YtNetworkImage(
+                      url: a.thumbnail,
+                      size: 56,
+                      circle: true,
+                      fallbackIcon: Icons.person_rounded,
+                    ),
+                    title: Text(a.name,
+                        style: const TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.w700)),
+                    subtitle: Text(
+                      a.subscribers >= 0
+                          ? 'Artist • ${formatCompactCount(a.subscribers)} subscribers'
+                          : 'Artist',
+                      style: const TextStyle(color: Colors.white54),
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => openYtArtist(context, a.url, a.name,
+                        thumbnail: a.thumbnail),
+                  ),
+              ],
+            );
+          },
+        );
+      default:
+        _ytSongs ??= YouTubeMusic.search(q);
+        return FutureBuilder<List<TrackItem>>(
+          future: _ytSongs,
+          builder: (context, snap) {
+            if (snap.hasError) return _ytError(snap.error);
+            if (!snap.hasData) return _loading(pal);
+            final list = snap.data!;
+            if (list.isEmpty) return ListView(children: [_empty('No songs found.')]);
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+              children: [
+                for (final t in list)
+                  YtTrackRow(track: t, onPlay: () => _playYt(t)),
+              ],
+            );
+          },
+        );
+    }
+  }
 }
 
 class SearchSheet extends StatefulWidget {
@@ -10019,11 +11103,16 @@ class _SearchSheetState extends State<SearchSheet> {
   }
 
   // Recent searches (YouTube Music tab).
-  List<String> get _history =>
-      YouTubeMusic.prefs?.getStringList('search_history') ?? const [];
+  List<String> get _history {
+    try {
+      return YouTubeMusic.prefs?.getStringList('search_history') ?? const [];
+    } catch (_) {
+      return const [];
+    }
+  }
 
   void _remember(String q) {
-    if (!appState.b('search_history', true)) return;
+    if (!appState.b('search_history_on', true)) return;
     final list = [q, ..._history.where((x) => x.toLowerCase() != q.toLowerCase())]
         .take(12)
         .toList();
@@ -10218,7 +11307,7 @@ class _SearchSheetState extends State<SearchSheet> {
 
   List<Widget> _ytResults(AppPalette pal) {
     if (_query.trim().length < 2) {
-      final history = appState.b('search_history', true) ? _history : const <String>[];
+      final history = appState.b('search_history_on', true) ? _history : const <String>[];
       return [
         if (history.isNotEmpty) ...[
           Row(
