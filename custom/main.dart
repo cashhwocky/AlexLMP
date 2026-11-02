@@ -3810,6 +3810,23 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         glassPaused,
       ]),
       builder: (context, _) {
+        // While the player is open this screen is hidden underneath it:
+        // freeze it (no rebuilds when songs change, no animations ticking)
+        // so all the phone's power goes to the player.
+        final paused = glassPaused.value;
+        if (paused && _frozen != null) return _frozen!;
+        final screen = TickerMode(enabled: !paused, child: _screen(context));
+        _frozen = paused ? screen : null;
+        return screen;
+      },
+    );
+  }
+
+  Widget? _frozen;
+
+  Widget _screen(BuildContext context) {
+    {
+      {
         final pal = appState.palette;
         final tracks = audioHandler.tracks;
         final bottomInset = MediaQuery.of(context).padding.bottom;
@@ -3921,8 +3938,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             ],
           ),
         );
-      },
-    );
+      }
+    }
   }
 
   // ═══════════════════════ AlexLMP Prestige app style ═══════════════════════
@@ -12200,6 +12217,18 @@ class NowPlayingScreen extends StatelessWidget {
                 ),
               );
             }
+            if (appState.playerStyle == 'simp') {
+              return SwipeDownDismiss(
+                child: SimpPlayerView(
+                  track: track,
+                  playing: playing,
+                  loading: loading,
+                  shuffle: shuffle,
+                  repeat: repeat,
+                  liked: liked,
+                ),
+              );
+            }
             if (appState.playerStyle == 'prestige') {
               return SwipeDownDismiss(
                 child: PrestigePlayerView(
@@ -14238,11 +14267,11 @@ class SettingsScreen extends StatelessWidget {
           appState.playerStyle,
           const {
             'alex': 'AlexLMP (Default)',
+            'simp': 'SimpMusic',
             'prestige': 'Prestige',
             'modern': 'Modern',
             'expressive': 'Expressive',
             'apple': 'Apple Music',
-            'simp': 'SimpMusic',
             'jog': 'Community Suggested (Jog Wheel)',
           },
           appState.setPlayerStyle,
@@ -20129,11 +20158,11 @@ class _SetupScreenState extends State<SetupScreen> {
     };
     const players = {
       'alex': 'AlexLMP',
+      'simp': 'SimpMusic',
       'prestige': 'Prestige',
       'modern': 'Modern',
       'expressive': 'Expressive',
       'apple': 'Apple Music',
-      'simp': 'SimpMusic',
       'jog': 'Jog Wheel',
     };
     Widget title(String t, String b) => Column(
@@ -20511,6 +20540,568 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 }
 
+// ═══════════════════════ SimpMusic-style player ═══════════════════════
+// Connected button groups: pressing a button stretches it wider and squeezes
+// its neighbours, then everything springs back with a little bounce. The
+// play button is a pill when paused and a rounded rectangle while playing.
+// Colours follow the song and blend smoothly when it changes.
+
+/// A row of buttons that share one width. Pressing one grows it and takes
+/// the space from the buttons right next to it.
+class SquishGroup extends StatefulWidget {
+  final int count;
+  final double height;
+  final double gap;
+
+  /// Relative widths; 0 means "a circle" (width = height).
+  final List<double> flex;
+
+  /// How much each button grows when pressed, as a share of the row width.
+  final List<double> grow;
+  final Widget Function(BuildContext context, int i, double width, double press)
+      builder;
+  final void Function(int i) onTap;
+
+  const SquishGroup({
+    super.key,
+    required this.count,
+    required this.height,
+    required this.flex,
+    required this.grow,
+    required this.builder,
+    required this.onTap,
+    this.gap = 8,
+  });
+
+  @override
+  State<SquishGroup> createState() => _SquishGroupState();
+}
+
+class _SquishGroupState extends State<SquishGroup>
+    with TickerProviderStateMixin {
+  late final List<AnimationController> _p = [
+    for (var i = 0; i < widget.count; i++)
+      AnimationController.unbounded(vsync: this, value: 0)
+  ];
+  late final List<DateTime?> _downAt = List.filled(widget.count, null);
+
+  @override
+  void dispose() {
+    for (final c in _p) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void _press(int i) {
+    _downAt[i] = DateTime.now();
+    HapticFeedback.lightImpact();
+    _p[i].animateWith(SpringSimulation(
+      const SpringDescription(mass: 1, stiffness: 900, damping: 40),
+      _p[i].value,
+      1,
+      _p[i].velocity,
+    ));
+  }
+
+  Future<void> _release(int i) async {
+    // Keep the squish visible for a moment even on a very quick tap.
+    final held = DateTime.now().difference(_downAt[i] ?? DateTime.now());
+    const minHold = Duration(milliseconds: 150);
+    if (held < minHold) await Future<void>.delayed(minHold - held);
+    if (!mounted) return;
+    _p[i].animateWith(SpringSimulation(
+      const SpringDescription(mass: 1, stiffness: 520, damping: 17),
+      _p[i].value,
+      0,
+      _p[i].velocity,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final n = widget.count;
+    return LayoutBuilder(builder: (context, c) {
+      final total = c.maxWidth - widget.gap * (n - 1);
+      var fixed = 0.0, flexSum = 0.0;
+      for (final f in widget.flex) {
+        if (f == 0) {
+          fixed += widget.height;
+        } else {
+          flexSum += f;
+        }
+      }
+      final per = flexSum == 0 ? 0.0 : (total - fixed) / flexSum;
+      final base = [
+        for (final f in widget.flex) f == 0 ? widget.height : f * per
+      ];
+      return AnimatedBuilder(
+        animation: Listenable.merge(_p),
+        builder: (context, _) {
+          final g = [
+            for (var i = 0; i < n; i++) widget.grow[i] * total * _p[i].value
+          ];
+          final w = List<double>.of(base);
+          for (var i = 0; i < n; i++) {
+            if (g[i] == 0) continue;
+            final hasL = i > 0, hasR = i < n - 1;
+            final share = g[i] / ((hasL ? 1 : 0) + (hasR ? 1 : 0));
+            w[i] += g[i];
+            if (hasL) w[i - 1] -= share;
+            if (hasR) w[i + 1] -= share;
+          }
+          return SizedBox(
+            height: widget.height,
+            child: Row(
+              children: [
+                for (var i = 0; i < n; i++) ...[
+                  if (i > 0) SizedBox(width: widget.gap),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (_) => _press(i),
+                    onTapUp: (_) {
+                      _release(i);
+                      widget.onTap(i);
+                    },
+                    onTapCancel: () => _release(i),
+                    child: SizedBox(
+                      width: max(12.0, w[i]),
+                      height: widget.height,
+                      child: widget.builder(
+                          context, i, max(12.0, w[i]), _p[i].value),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        },
+      );
+    });
+  }
+}
+
+/// Thick track with a tall bar thumb and a gap around it.
+class _SimpSeekPainter extends CustomPainter {
+  final double value;
+  final bool dragging;
+  final Color active;
+  final Color inactive;
+  _SimpSeekPainter(this.value, this.dragging, this.active, this.inactive);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const trackH = 6.0;
+    final cy = size.height / 2;
+    final thumbW = dragging ? 3.0 : 4.0;
+    const gap = 5.0;
+    final x = (size.width * value).clamp(thumbW / 2, size.width - thumbW / 2);
+    final r = const Radius.circular(3);
+    if (x - gap - thumbW / 2 > 0) {
+      canvas.drawRRect(
+        RRect.fromLTRBAndCorners(0, cy - trackH / 2, x - gap - thumbW / 2,
+            cy + trackH / 2,
+            topLeft: r, bottomLeft: r, topRight: const Radius.circular(1.5),
+            bottomRight: const Radius.circular(1.5)),
+        Paint()..color = active,
+      );
+    }
+    if (x + gap + thumbW / 2 < size.width) {
+      canvas.drawRRect(
+        RRect.fromLTRBAndCorners(x + gap + thumbW / 2, cy - trackH / 2,
+            size.width, cy + trackH / 2,
+            topRight: r, bottomRight: r, topLeft: const Radius.circular(1.5),
+            bottomLeft: const Radius.circular(1.5)),
+        Paint()..color = inactive,
+      );
+      // Stop dot at the end.
+      canvas.drawCircle(
+          Offset(size.width - 4, cy), 2, Paint()..color = active);
+    }
+    final th = dragging ? 26.0 : 22.0;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          Rect.fromCenter(center: Offset(x, cy), width: thumbW, height: th),
+          Radius.circular(thumbW)),
+      Paint()..color = active,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_SimpSeekPainter o) =>
+      o.value != value ||
+      o.dragging != dragging ||
+      o.active != active ||
+      o.inactive != inactive;
+}
+
+class SimpPlayerView extends StatelessWidget {
+  final TrackItem track;
+  final bool playing;
+  final bool loading;
+  final bool shuffle;
+  final AudioServiceRepeatMode repeat;
+  final bool liked;
+  const SimpPlayerView({
+    super.key,
+    required this.track,
+    required this.playing,
+    required this.loading,
+    required this.shuffle,
+    required this.repeat,
+    required this.liked,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Color>(
+      future: artSeedFor(track),
+      builder: (context, snap) {
+        final seed = snap.data ?? track.artColors.first;
+        return AnimatedTheme(
+          data: ThemeData(
+            useMaterial3: true,
+            brightness: Brightness.dark,
+            colorScheme: AppPalette.scheme(seed),
+          ),
+          duration: const Duration(milliseconds: 450),
+          child: Builder(builder: (context) => _body(context)),
+        );
+      },
+    );
+  }
+
+  void _more(BuildContext context, ColorScheme cs) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: cs.surfaceContainerHigh,
+      showDragHandle: true,
+      builder: (ctx) {
+        Widget item(IconData i, String t, VoidCallback f) => ListTile(
+              leading: Icon(i, color: cs.onSurfaceVariant),
+              title: Text(t, style: TextStyle(color: cs.onSurface)),
+              onTap: () {
+                Navigator.pop(ctx);
+                f();
+              },
+            );
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              item(Icons.playlist_add_rounded, 'Add to playlist',
+                  () => showAddToPlaylistSheet(context, track)),
+              item(Icons.graphic_eq_rounded, 'Sound & speed',
+                  () => showPlaybackSheet(context)),
+              item(Icons.bedtime_outlined, 'Sleep timer',
+                  () => showSleepTimerSheet(context)),
+              item(Icons.person_rounded, 'Go to artist',
+                  () => goToArtist(context, track)),
+              item(Icons.ios_share_rounded, 'Share', () => shareTrack(track)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _body(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final source = liked
+        ? 'Your likes'
+        : track.isYouTube
+            ? 'Streaming'
+            : 'On this phone';
+
+    Widget tonal(IconData icon, VoidCallback onTap, {bool on = false}) =>
+        SquishyGesture(
+          pressedScale: 0.88,
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            width: 42,
+            height: 34,
+            decoration: BoxDecoration(
+              color: on ? cs.primary : cs.primaryContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon,
+                size: 19, color: on ? cs.onPrimary : cs.onPrimaryContainer),
+          ),
+        );
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 450),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color.lerp(Colors.black, cs.primary, 0.24)!,
+                  Color.lerp(Colors.black, cs.primary, 0.08)!,
+                  Colors.black,
+                ],
+                stops: const [0, 0.45, 0.8],
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                children: [
+                  const SizedBox(height: 14),
+                  Text('NOW PLAYING',
+                      style: TextStyle(
+                          color: cs.onSurface,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.2)),
+                  const SizedBox(height: 2),
+                  Text(source,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: cs.onSurfaceVariant, fontSize: 12.5)),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 22),
+                      child: Center(
+                        child: AspectRatio(
+                          aspectRatio: 1,
+                          child: Hero(
+                            tag: 'now_playing_art',
+                            createRectTween: _arcTween,
+                            flightShuttleBuilder: _artShuttle,
+                            child: SwipeArtCarousel(
+                                track: track,
+                                playing: playing,
+                                radius: appState.vinylSpinMode ? 999 : 14),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  // ── Title + small tonal buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(track.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: cs.onSurface,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700)),
+                            GestureDetector(
+                              onTap: () => goToArtist(context, track),
+                              child: Text(track.artist,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: cs.onSurfaceVariant,
+                                      fontSize: 14.5)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (track.isYouTube) ...[
+                        ValueListenableBuilder<int>(
+                          valueListenable: OfflineStore.revision,
+                          builder: (_, __, ___) {
+                            final saved = OfflineStore.isDownloaded(track);
+                            return tonal(
+                              saved
+                                  ? Icons.download_done_rounded
+                                  : Icons.download_rounded,
+                              () {
+                                if (!OfflineStore.isBusy(track)) {
+                                  toggleOffline(track);
+                                }
+                              },
+                              on: saved,
+                            );
+                          },
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      tonal(
+                        liked
+                            ? Icons.favorite_rounded
+                            : Icons.favorite_border_rounded,
+                        () {
+                          HapticFeedback.lightImpact();
+                          appState.toggleLike(track.id);
+                        },
+                        on: liked,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // ── Seek bar
+                  PlayerSeek(
+                    fallbackSeconds: track.durationSeconds,
+                    height: 30,
+                    timeStyle: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontSize: 11.5,
+                      fontFeatures: const [ui.FontFeature.tabularFigures()],
+                    ),
+                    track: (v, dragging) => CustomPaint(
+                      painter: _SimpSeekPainter(
+                          v, dragging, cs.primary, cs.secondaryContainer),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  // ── Prev · Play · Next (connected, squishy)
+                  SquishGroup(
+                    count: 3,
+                    height: 68,
+                    gap: 8,
+                    flex: const [0, 1, 0],
+                    grow: const [0.09, 0.13, 0.09],
+                    onTap: (i) {
+                      if (i == 0) {
+                        audioHandler.skipToPrevious();
+                      } else if (i == 2) {
+                        audioHandler.skipToNext();
+                      } else {
+                        playing ? audioHandler.pause() : audioHandler.play();
+                      }
+                    },
+                    builder: (context, i, w, p) {
+                      if (i == 1) {
+                        return TweenAnimationBuilder<double>(
+                          tween: Tween(end: playing ? 20.0 : 34.0),
+                          duration: const Duration(milliseconds: 420),
+                          curve: Curves.easeOutBack,
+                          builder: (_, r, child) => AnimatedContainer(
+                            duration: const Duration(milliseconds: 450),
+                            decoration: BoxDecoration(
+                              color: cs.primary,
+                              borderRadius:
+                                  BorderRadius.circular(r.clamp(4.0, 34.0)),
+                            ),
+                            alignment: Alignment.center,
+                            child: child,
+                          ),
+                          child: loading
+                              ? SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 3,
+                                      strokeCap: StrokeCap.round,
+                                      color: cs.onPrimary),
+                                )
+                              : AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 220),
+                                  transitionBuilder: (c, a) =>
+                                      ScaleTransition(scale: a, child: c),
+                                  child: Icon(
+                                    playing
+                                        ? Icons.pause_rounded
+                                        : Icons.play_arrow_rounded,
+                                    key: ValueKey(playing),
+                                    color: cs.onPrimary,
+                                    size: 32,
+                                  ),
+                                ),
+                        );
+                      }
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 450),
+                        decoration: BoxDecoration(
+                          color: cs.secondaryContainer,
+                          borderRadius: BorderRadius.circular(34),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          i == 0
+                              ? Icons.skip_previous_rounded
+                              : Icons.skip_next_rounded,
+                          color: cs.onSecondaryContainer,
+                          size: 26,
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  // ── Lyrics · Shuffle · Repeat · Queue · More
+                  SquishGroup(
+                    count: 5,
+                    height: 40,
+                    gap: 8,
+                    flex: const [1, 1, 1, 1, 0],
+                    grow: const [0.07, 0.07, 0.07, 0.07, 0.05],
+                    onTap: (i) {
+                      switch (i) {
+                        case 0:
+                          showLyricsSheet(context, track);
+                        case 1:
+                          audioHandler.setShuffleMode(shuffle
+                              ? AudioServiceShuffleMode.none
+                              : AudioServiceShuffleMode.all);
+                        case 2:
+                          audioHandler.setRepeatMode(_nextRepeat(repeat));
+                        case 3:
+                          showQueueSheet(context);
+                        default:
+                          _more(context, cs);
+                      }
+                    },
+                    builder: (context, i, w, p) {
+                      final on = (i == 1 && shuffle) ||
+                          (i == 2 && repeat != AudioServiceRepeatMode.none);
+                      final icon = switch (i) {
+                        0 => Icons.lyrics_outlined,
+                        1 => Icons.shuffle_rounded,
+                        2 => repeat == AudioServiceRepeatMode.one
+                            ? Icons.repeat_one_rounded
+                            : Icons.repeat_rounded,
+                        3 => Icons.queue_music_rounded,
+                        _ => Icons.more_vert_rounded,
+                      };
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        decoration: BoxDecoration(
+                          color: i == 4
+                              ? cs.secondaryContainer
+                              : on
+                                  ? cs.primary
+                                  : cs.surfaceContainerHigh,
+                          borderRadius: BorderRadius.circular(i == 4 ? 20 : 12),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(icon,
+                            size: 20,
+                            color: i == 4
+                                ? cs.onSecondaryContainer
+                                : on
+                                    ? cs.onPrimary
+                                    : cs.onSurfaceVariant),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ═══════════════════════ AlexLMP Prestige ═══════════════════════
 // The whole app sits on the current song's artwork: blurred, slowly
 // drifting, and changing colour with every song. Glass panels, big type,
@@ -20541,9 +21132,12 @@ class _PrestigeBackdropState extends State<PrestigeBackdrop>
   }
 
   Widget _layers(Uint8List bytes) {
-    Widget img(int w) => Image.memory(
+    // Image's own opacity is drawn directly (an Opacity widget would need a
+    // full-screen offscreen pass every frame).
+    Widget img(int w, {double opacity = 1}) => Image.memory(
           bytes,
           cacheWidth: w,
+          opacity: opacity < 1 ? AlwaysStoppedAnimation(opacity) : null,
           fit: BoxFit.cover,
           filterQuality: FilterQuality.medium,
           gaplessPlayback: true,
@@ -20569,7 +21163,7 @@ class _PrestigeBackdropState extends State<PrestigeBackdrop>
         ),
         AnimatedBuilder(
           animation: _c,
-          child: Opacity(opacity: 0.55, child: img(6)),
+          child: img(6, opacity: 0.55),
           builder: (_, child) {
             final a = 2 * pi * _c.value;
             return Transform(
@@ -20596,7 +21190,7 @@ class _PrestigeBackdropState extends State<PrestigeBackdrop>
       builder: (context, snap) {
         final b = snap.data;
         return AnimatedSwitcher(
-          duration: const Duration(milliseconds: 1400),
+          duration: const Duration(milliseconds: 700),
           child: KeyedSubtree(
             key: ValueKey('${t.id}${b != null}'),
             child: b == null
@@ -21336,15 +21930,19 @@ class _LightRingState extends State<_LightRing>
       clipBehavior: Clip.none,
       children: [
         Positioned.fill(
-          child: AnimatedBuilder(
+          child: RepaintBoundary(
+           child: AnimatedBuilder(
             animation: _c,
             builder: (_, __) => CustomPaint(
               painter: _RingLightPainter(
                   _c.value, widget.color, widget.radius, widget.spinning),
             ),
+           ),
           ),
         ),
-        widget.child,
+        // The artwork gets its own layer so the moving light never makes
+        // it redraw.
+        RepaintBoundary(child: widget.child),
       ],
     );
   }
