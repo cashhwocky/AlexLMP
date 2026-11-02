@@ -55,6 +55,16 @@ class MainActivity : AudioServiceActivity() {
                             result.success(0)
                         }
                     }
+                    "setReverb" -> {
+                        val session = call.argument<Int>("session") ?: 0
+                        val level = (call.argument<Double>("level") ?: 0.0).coerceIn(0.0, 1.0)
+                        try {
+                            applyReverb(session, level)
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("REVERB", e.toString(), null)
+                        }
+                    }
                     "openUrl" -> {
                         val url = call.argument<String>("url") ?: ""
                         try {
@@ -96,6 +106,60 @@ class MainActivity : AudioServiceActivity() {
         YtMusicBridge.attachActivity(this)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, YtMusicBridge.CHANNEL)
             .setMethodCallHandler { call, result -> YtMusicBridge.handle(call, result) }
+    }
+
+    // ── Reverb on the player's audio session ───────────────────────────
+    private var envReverb: android.media.audiofx.EnvironmentalReverb? = null
+    private var presetReverb: android.media.audiofx.PresetReverb? = null
+    private var reverbSession = -1
+
+    private fun releaseReverb() {
+        try { envReverb?.release() } catch (_: Exception) {}
+        try { presetReverb?.release() } catch (_: Exception) {}
+        envReverb = null
+        presetReverb = null
+        reverbSession = -1
+    }
+
+    /** level 0 = off, 1 = huge hall. */
+    private fun applyReverb(session: Int, level: Double) {
+        if (level <= 0.001 || session <= 0) {
+            releaseReverb()
+            return
+        }
+        if (reverbSession != session) {
+            releaseReverb()
+            try {
+                envReverb = android.media.audiofx.EnvironmentalReverb(0, session)
+            } catch (_: Exception) {
+                // Some phones only offer the simpler preset reverb.
+                presetReverb = android.media.audiofx.PresetReverb(0, session)
+            }
+            reverbSession = session
+        }
+        fun lerp(a: Int, b: Int): Int = (a + (b - a) * level).toInt()
+        envReverb?.let { r ->
+            runCatching { r.roomLevel = lerp(-4500, -200).toShort() }
+            runCatching { r.roomHFLevel = lerp(-2000, -600).toShort() }
+            runCatching { r.decayTime = lerp(700, 6000) }
+            runCatching { r.decayHFRatio = lerp(600, 1100).toShort() }
+            runCatching { r.reflectionsLevel = lerp(-4000, -600).toShort() }
+            runCatching { r.reflectionsDelay = lerp(5, 40) }
+            runCatching { r.reverbLevel = lerp(-4000, 800).toShort() }
+            runCatching { r.reverbDelay = lerp(10, 60) }
+            runCatching { r.diffusion = 1000.toShort() }
+            runCatching { r.density = 1000.toShort() }
+            r.enabled = true
+        }
+        presetReverb?.let { r ->
+            r.preset = when {
+                level < 0.25 -> android.media.audiofx.PresetReverb.PRESET_SMALLROOM
+                level < 0.5 -> android.media.audiofx.PresetReverb.PRESET_MEDIUMHALL
+                level < 0.75 -> android.media.audiofx.PresetReverb.PRESET_LARGEROOM
+                else -> android.media.audiofx.PresetReverb.PRESET_LARGEHALL
+            }
+            r.enabled = true
+        }
     }
 
     /** Posts an "update available" notification that opens [url] when tapped. */
