@@ -12966,6 +12966,8 @@ class SettingsScreen extends StatelessWidget {
                         ),
                       ),
                     ),
+                    const SupportCard(),
+                    const SizedBox(height: 18),
                     ..._appearance(context, pal, cs),
                     ..._nowPlaying(context, pal),
                     ..._playback(context, pal),
@@ -18071,6 +18073,256 @@ class _SetupScreenState extends State<SetupScreen> {
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
 const String kAppVersion = '2.2.0';
+/// "Support my project" card at the very top of Settings.
+class SupportCard extends StatefulWidget {
+  const SupportCard({super.key});
+
+  @override
+  State<SupportCard> createState() => _SupportCardState();
+}
+
+class _SupportCardState extends State<SupportCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _beat = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _beat.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    final c1 = pal.accent;
+    final c2 = Color.lerp(pal.accent, const Color(0xFFFF4D8D), 0.55)!;
+    return SquishyGesture(
+      pressedScale: 0.97,
+      onTap: () => showSupportSheet(context),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(28),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [c1, c2],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: c2.withOpacity(0.35),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            // Soft decorative circles.
+            Positioned(
+              right: -30,
+              top: -40,
+              child: Container(
+                width: 150,
+                height: 150,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(0.12),
+                ),
+              ),
+            ),
+            Positioned(
+              right: 60,
+              bottom: -50,
+              child: Container(
+                width: 110,
+                height: 110,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(0.08),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  AnimatedBuilder(
+                    animation: _beat,
+                    builder: (_, child) {
+                      // Two quick "heartbeat" pulses, then rest.
+                      final t = _beat.value;
+                      final pulse = t < 0.15
+                          ? sin(t / 0.15 * pi) * 0.14
+                          : t < 0.3
+                              ? sin((t - 0.15) / 0.15 * pi) * 0.09
+                              : 0.0;
+                      return Transform.scale(scale: 1 + pulse, child: child);
+                    },
+                    child: Container(
+                      width: 58,
+                      height: 58,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.95),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.favorite_rounded, color: c2, size: 30),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Support my project',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
+                        SizedBox(height: 3),
+                        Text(
+                          'AlexLMP is free and made by one person. A tip helps keep it going 💖',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13.5,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.arrow_forward_rounded,
+                        color: Colors.white, size: 20),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+void showSupportSheet(BuildContext context) {
+  final pal = appState.palette;
+  Widget option({
+    required Color color,
+    required IconData icon,
+    required String title,
+    required String handle,
+    required String url,
+  }) {
+    return SquishyGesture(
+      pressedScale: 0.96,
+      onTap: () {
+        Navigator.pop(context);
+        HapticFeedback.lightImpact();
+        openExternalUrl(url);
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.14),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: color.withOpacity(0.5), width: 1.4),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(icon, color: Colors.white, size: 28),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(handle,
+                      style: TextStyle(
+                          color: Colors.white.withOpacity(0.7), fontSize: 14.5)),
+                ],
+              ),
+            ),
+            Icon(Icons.open_in_new_rounded, color: color, size: 22),
+          ],
+        ),
+      ),
+    );
+  }
+
+  showModalBottomSheet(
+    context: context,
+    showDragHandle: true,
+    backgroundColor: pal.surface,
+    builder: (ctx) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Support AlexLMP',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Text('Any amount helps. Thank you! 🙏',
+                style: TextStyle(color: Colors.white.withOpacity(0.7))),
+            const SizedBox(height: 18),
+            option(
+              color: const Color(0xFF00D64F),
+              icon: Icons.attach_money_rounded,
+              title: 'Cash App',
+              handle: '\$sxlocctrapp',
+              url: kDonateCashApp,
+            ),
+            const SizedBox(height: 12),
+            option(
+              color: const Color(0xFF0070E0),
+              icon: Icons.account_balance_wallet_rounded,
+              title: 'PayPal',
+              handle: '@alexdesrosier67',
+              url: kDonatePayPal,
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// Donation links (Settings → Support AlexLMP).
+const String kDonateCashApp = 'https://cash.app/\$sxlocctrapp';
+const String kDonatePayPal = 'https://paypal.me/alexdesrosier67';
+
 const String kGithubRepo = 'YOUR-GITHUB-NAME/YOUR-REPO-NAME';
 
 class AppRelease {
