@@ -18,6 +18,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true"
+        android:enableOnBackInvokedCallback="true"
         android:requestLegacyExternalStorage="true">
 
         <service
@@ -52,12 +53,127 @@
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
+        </activity>
 
+        <!-- App icons: one launcher entry per icon, only one enabled at a time
+             (switched from Settings > App icon). -->
+        <activity-alias
+            android:name=".IconClassic"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_classic"
+            android:roundIcon="@mipmap/ic_alt_classic"
+            android:enabled="true"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconMidnight"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_midnight"
+            android:roundIcon="@mipmap/ic_alt_midnight"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconSunset"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_sunset"
+            android:roundIcon="@mipmap/ic_alt_sunset"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconAurora"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_aurora"
+            android:roundIcon="@mipmap/ic_alt_aurora"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconNeon"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_neon"
+            android:roundIcon="@mipmap/ic_alt_neon"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconMint"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_mint"
+            android:roundIcon="@mipmap/ic_alt_mint"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconEmber"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_ember"
+            android:roundIcon="@mipmap/ic_alt_ember"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconGold"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_gold"
+            android:roundIcon="@mipmap/ic_alt_gold"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconOcean"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_ocean"
+            android:roundIcon="@mipmap/ic_alt_ocean"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity
             android:name=".YtLoginActivity"
