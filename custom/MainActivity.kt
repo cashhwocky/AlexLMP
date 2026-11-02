@@ -55,6 +55,14 @@ class MainActivity : AudioServiceActivity() {
                             result.success(0)
                         }
                     }
+                    "setHighRefreshRate" -> {
+                        val on = call.argument<Boolean>("on") ?: true
+                        try {
+                            applyRefreshRate(on)
+                        } catch (_: Exception) {
+                        }
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -62,6 +70,30 @@ class MainActivity : AudioServiceActivity() {
         YtMusicBridge.attachActivity(this)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, YtMusicBridge.CHANNEL)
             .setMethodCallHandler { call, result -> YtMusicBridge.handle(call, result) }
+    }
+
+    /** Ask for the screen's fastest refresh rate (90/120 Hz) at the current
+     *  resolution, or let the system choose again when [on] is false. */
+    private fun applyRefreshRate(on: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        @Suppress("DEPRECATION")
+        val d = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display
+                 else windowManager.defaultDisplay) ?: return
+        val cur = d.mode
+        val modeId = if (on) {
+            d.supportedModes
+                .filter {
+                    it.physicalWidth == cur.physicalWidth &&
+                        it.physicalHeight == cur.physicalHeight
+                }
+                .maxByOrNull { it.refreshRate }?.modeId ?: return
+        } else {
+            0
+        }
+        val lp = window.attributes
+        if (lp.preferredDisplayModeId == modeId) return
+        lp.preferredDisplayModeId = modeId
+        window.attributes = lp
     }
 
     private fun loadArt(uriStr: String?, path: String?): ByteArray? {
