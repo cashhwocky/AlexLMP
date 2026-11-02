@@ -84,6 +84,7 @@ Future<void> main() async {
   });
 
   // YouTube Music sign-in state (read-only library).
+  YouTubeMusic.prefs = await SharedPreferences.getInstance();
   unawaited(YouTubeMusic.refreshAccount());
 
   // Bring back liked / playlisted YouTube Music songs from last time.
@@ -316,7 +317,7 @@ class AppState extends ChangeNotifier {
   bool stopOnTaskClear = true;
   bool linkSpeedAndPitch = false;
   bool swipeRightForNext = true;
-  String playerStyle = 'alex'; // 'alex' = default design, 'simp' = SimpMusic design
+  String playerStyle = 'alex'; // 'alex' (default), 'simp' or 'apple'
   bool animatedBackground = true;
   bool artBackdrop = true;
   AppPalette? _adaptivePalette;
@@ -1124,11 +1125,10 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// Warm up the next YouTube Music track so skipping to it starts quickly.
   void _prefetchNextYouTube() {
-    if (_shuffle) return;
-    final n = _index + 1;
-    if (n < tracks.length && tracks[n].isYouTube) {
+    final next = peekNext;
+    if (next != null && next.isYouTube) {
       unawaited(
-        YouTubeMusic.prepare(tracks[n].ytVideoId!).then((_) {}, onError: (_) {}),
+        YouTubeMusic.prepare(next.ytVideoId!).then((_) {}, onError: (_) {}),
       );
     }
   }
@@ -1201,7 +1201,68 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     if (idx >= 0) await playIndex(idx);
   }
 
+  // ── Up next (songs added with "Play next" / "Add to queue") ───────────
+  // Played before the rest of the library continues. "Clear queue" empties it.
+  final List<TrackItem> upNext = [];
+  final ValueNotifier<int> upNextRevision = ValueNotifier<int>(0);
+
+  void _upNextChanged() {
+    upNextRevision.value++;
+    _prefetchNextYouTube();
+  }
+
+  /// Adds songs to Up next — at the front ([next]) or at the end.
+  void addToQueue(List<TrackItem> items, {bool next = false}) {
+    final list = <TrackItem>[];
+    for (final t in items) {
+      appState.unmarkDeleted(t.id, t.source);
+      list.add(trackById(t.id) ?? t);
+    }
+    if (next) {
+      upNext.insertAll(0, list);
+    } else {
+      upNext.addAll(list);
+    }
+    _upNextChanged();
+  }
+
+  void removeFromQueue(int i) {
+    if (i < 0 || i >= upNext.length) return;
+    upNext.removeAt(i);
+    _upNextChanged();
+  }
+
+  void moveInQueue(int from, int to) {
+    if (from < 0 || from >= upNext.length) return;
+    final t = upNext.removeAt(from);
+    upNext.insert(to.clamp(0, upNext.length), t);
+    _upNextChanged();
+  }
+
+  void clearQueue() {
+    upNext.clear();
+    _upNextChanged();
+  }
+
+  /// Takes the first Up next song and returns its index in [tracks]
+  /// (adding it right after the current song if it isn't in the library).
+  int? _takeUpNext() {
+    if (upNext.isEmpty) return null;
+    final t = upNext.removeAt(0);
+    upNextRevision.value++;
+    var idx = tracks.indexWhere((x) => x.id == t.id);
+    if (idx < 0) {
+      idx = min(_index + 1, tracks.length);
+      tracks = [...tracks]..insert(idx, t);
+      _publishQueue();
+    }
+    return idx;
+  }
+
   int? _nextIndex({required bool auto}) {
+    if (tracks.isEmpty && upNext.isEmpty) return null;
+    final queued = _takeUpNext();
+    if (queued != null) return queued;
     if (tracks.isEmpty) return null;
     if (_shuffle && tracks.length > 1) {
       int n;
@@ -1277,6 +1338,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// The song a "next" swipe would play, or null if unknown (shuffle) / none.
   TrackItem? get peekNext {
+    if (upNext.isNotEmpty) return upNext.first;
     if (tracks.length < 2 || _shuffle) return null;
     final n = _index + 1;
     if (n < tracks.length) return tracks[n];
@@ -1517,12 +1579,36 @@ class YtAlbum {
   const YtAlbum(this.url, this.title, this.artist, this.thumbnail, this.trackCount);
 }
 
+class YtAlbumShelf {
+  final String title;
+  final List<YtAlbum> items;
+  const YtAlbumShelf(this.title, this.items);
+}
+
 class YtAlbumPage {
   final String title;
   final String artist;
   final String? thumbnail;
   final List<TrackItem> tracks;
-  const YtAlbumPage(this.title, this.artist, this.thumbnail, this.tracks);
+  // Extra album details (only on real album pages).
+  final String? year;
+  final String? kind; // Album / EP / Single
+  final String? info; // "12 songs • 41 minutes"
+  final String? description;
+  final String? artistUrl;
+  final List<YtAlbumShelf> shelves;
+  const YtAlbumPage(
+    this.title,
+    this.artist,
+    this.thumbnail,
+    this.tracks, {
+    this.year,
+    this.kind,
+    this.info,
+    this.description,
+    this.artistUrl,
+    this.shelves = const [],
+  });
 }
 
 class YtArtistPage {
@@ -1555,13 +1641,14 @@ class YtPlaylistRef {
 }
 
 class YtLinks {
+  final String? albumBrowseId;
   final String? artistUrl;
   final String? artistName;
   final String? albumUrl;
   final String? albumTitle;
   final String? albumThumbnail;
   const YtLinks(this.artistUrl, this.artistName, this.albumUrl, this.albumTitle,
-      this.albumThumbnail);
+      this.albumThumbnail, {this.albumBrowseId});
 }
 
 String formatCompactCount(int n) {
@@ -1653,7 +1740,43 @@ class YouTubeMusic {
     return raw.map((e) => _album(_map(e))).where((a) => a.url.isNotEmpty).toList();
   }
 
+  /// Album page with release year, type, length, description and "more by"
+  /// shelves (YouTube Music's own album page). Falls back to the simpler
+  /// playlist-based page if that fails.
   static Future<YtAlbumPage> album(String url) async {
+    try {
+      final m = _map(await _ytChannel.invokeMethod('ytAlbumPage', {'ref': url}));
+      final title = cleanText(m['title'], 'Unknown Album');
+      final tracks = _tracks(m['tracks'], album: title);
+      if (tracks.isNotEmpty) {
+        return YtAlbumPage(
+          title,
+          (m['artist'] ?? '').toString(),
+          m['thumbnail'] as String?,
+          tracks,
+          year: m['year'] as String?,
+          kind: m['kind'] as String?,
+          info: m['info'] as String?,
+          description: m['description'] as String?,
+          artistUrl: m['artistUrl'] as String?,
+          shelves: ((m['shelves'] as List?) ?? const [])
+              .map((e) {
+                final sm = _map(e);
+                return YtAlbumShelf(
+                  (sm['title'] ?? '').toString(),
+                  ((sm['items'] as List?) ?? const [])
+                      .map((i) => _album(_map(i)))
+                      .where((a) => a.url.isNotEmpty)
+                      .toList(),
+                );
+              })
+              .where((sh) => sh.items.isNotEmpty)
+              .toList(),
+        );
+      }
+    } catch (_) {
+      if (url.startsWith('MPREb_')) rethrow; // nothing to fall back to
+    }
     final m = _map(await _ytChannel.invokeMethod('ytAlbum', {'url': url}));
     final title = cleanText(m['title'], 'Unknown Album');
     return YtAlbumPage(
@@ -1704,6 +1827,13 @@ class YouTubeMusic {
     await _ytChannel.invokeMethod('ytSignOut');
     ytAccount.value = const YtAccount(false);
     _libraryCache = null;
+    // Forget cached song lists from the account.
+    final p = prefs;
+    if (p != null) {
+      for (final k in p.getKeys().toList()) {
+        if (k.startsWith('ytpl_') || k == 'yt_library') p.remove(k);
+      }
+    }
   }
 
   static Future<List<YtPlaylistRef>>? _libraryCache;
@@ -1717,9 +1847,36 @@ class YouTubeMusic {
     return f;
   }
 
+  static List<YtPlaylistRef> _refsFrom(List raw) => raw
+      .map((e) {
+        final m = _map(e);
+        return YtPlaylistRef(
+          (m['playlistId'] ?? '').toString(),
+          cleanText(m['title'], 'Playlist'),
+          (m['subtitle'] ?? '').toString(),
+          m['thumbnail'] as String?,
+        );
+      })
+      .where((p) => p.playlistId.isNotEmpty && p.playlistId != 'LM')
+      .toList();
+
+  /// Last loaded list of your YouTube Music playlists (instant on reopen).
+  static List<YtPlaylistRef>? cachedLibrary() {
+    try {
+      final raw = prefs?.getString('yt_library');
+      if (raw == null) return null;
+      return _refsFrom(jsonDecode(raw) as List);
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<List<YtPlaylistRef>> _fetchLibraryPlaylists() async {
     final raw = await _ytChannel.invokeMethod('ytLibraryPlaylists') as List? ??
         const [];
+    try {
+      prefs?.setString('yt_library', jsonEncode(raw));
+    } catch (_) {}
     final out = raw
         .map((e) {
           final m = _map(e);
@@ -1736,10 +1893,42 @@ class YouTubeMusic {
     return out;
   }
 
+  /// Shared prefs for small caches (set at startup).
+  static SharedPreferences? prefs;
+
+  static YtAlbumPage _pageFromMap(Map<String, dynamic> m,
+      {String? title, String? thumbnail}) {
+    final name = title ?? cleanText(m['title'], 'Playlist');
+    return YtAlbumPage(
+      name,
+      'YouTube Music',
+      thumbnail ?? m['thumbnail'] as String?,
+      _tracks(m['tracks']),
+    );
+  }
+
+  /// Last loaded copy of one of your playlists (shown instantly while the
+  /// fresh copy loads). Only the song list is stored — not the audio.
+  static YtAlbumPage? cachedPlaylistPage(String playlistId,
+      {String? title, String? thumbnail}) {
+    try {
+      final raw = prefs?.getString('ytpl_$playlistId');
+      if (raw == null) return null;
+      final m = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      return _pageFromMap(m, title: title, thumbnail: thumbnail);
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<YtAlbumPage> playlistPage(String playlistId,
       {String? title, String? thumbnail}) async {
-    final m = _map(await _ytChannel.invokeMethod(
-        'ytPlaylistTracks', {'playlistId': playlistId, 'auth': true}));
+    final raw = await _ytChannel.invokeMethod(
+        'ytPlaylistTracks', {'playlistId': playlistId, 'auth': true});
+    final m = _map(raw);
+    try {
+      prefs?.setString('ytpl_$playlistId', jsonEncode(raw));
+    } catch (_) {}
     final name = title ?? cleanText(m['title'], 'Playlist');
     return YtAlbumPage(
       name,
@@ -1762,6 +1951,7 @@ class YouTubeMusic {
       m['albumUrl'] as String?,
       m['albumTitle'] as String?,
       m['albumThumbnail'] as String?,
+      albumBrowseId: m['albumBrowseId'] as String?,
     );
     _linksCache[videoId] = links;
     return links;
@@ -2944,6 +3134,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   Widget _ytPlaylistRow(BuildContext context, AppPalette pal) {
     return FutureBuilder<List<YtPlaylistRef>>(
       future: YouTubeMusic.libraryPlaylists(),
+      initialData: YouTubeMusic.cachedLibrary(),
       builder: (context, snap) {
         final items = <Widget>[
           MediaCard(
@@ -3434,6 +3625,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       {bool refresh = false}) {
     return FutureBuilder<List<YtPlaylistRef>>(
       future: YouTubeMusic.libraryPlaylists(refresh: refresh),
+      initialData: YouTubeMusic.cachedLibrary(),
       builder: (context, snap) {
         final head = Padding(
           padding: const EdgeInsets.only(bottom: 12),
@@ -5522,11 +5714,10 @@ class _SwipeArtCarouselState extends State<SwipeArtCarousel>
       if (!_busy) {
         // Changed from a button / notification / auto-advance: slide it in.
         // "Next" content enters from the side a next-swipe pulls from.
+        // Buttons / notification / auto-advance: "next" slides in from the
+        // right (moving left), "previous" from the left — the usual direction.
         final forward = !_wasPrevious(prevTrack, widget.track);
-        final nextFromLeft = appState.swipeRightForNext;
-        final enterSide = forward
-            ? (nextFromLeft ? -1.0 : 1.0)
-            : (nextFromLeft ? 1.0 : -1.0);
+        final enterSide = forward ? 1.0 : -1.0;
         _outgoing = prevTrack;
         _outgoingSide = -enterSide;
         _dx.value = enterSide * _width;
@@ -6166,6 +6357,128 @@ class TrackRow extends StatelessWidget {
   }
 }
 
+/// Thin Apple-Music-style seek bar: grows while you drag, times underneath.
+class AppleSeekBar extends StatefulWidget {
+  final int fallbackSeconds;
+  const AppleSeekBar({super.key, required this.fallbackSeconds});
+
+  @override
+  State<AppleSeekBar> createState() => _AppleSeekBarState();
+}
+
+class _AppleSeekBarState extends State<AppleSeekBar> {
+  double? _drag; // 0..1 while dragging
+
+  String _fmt(Duration d) {
+    final s = d.inSeconds;
+    final h = s ~/ 3600;
+    final m = (s % 3600) ~/ 60;
+    final sec = (s % 60).toString().padLeft(2, '0');
+    return h > 0 ? '$h:${m.toString().padLeft(2, '0')}:$sec' : '$m:$sec';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TrackProgress(
+      fallbackSeconds: widget.fallbackSeconds,
+      builder: (context, pos, dur) {
+        final total = dur.inMilliseconds;
+        final live = total > 0
+            ? (pos.inMilliseconds / total).clamp(0.0, 1.0).toDouble()
+            : 0.0;
+        final v = _drag ?? live;
+        final shown = Duration(milliseconds: (v * total).round());
+        final remaining = dur - shown;
+        final dragging = _drag != null;
+        return Column(
+          children: [
+            SliderTheme(
+              data: SliderThemeData(
+                trackHeight: dragging ? 10 : 5,
+                activeTrackColor: Colors.white.withOpacity(dragging ? 1 : 0.85),
+                inactiveTrackColor: Colors.white.withOpacity(0.22),
+                thumbShape: SliderComponentShape.noThumb,
+                overlayShape: SliderComponentShape.noOverlay,
+                trackShape: const RoundedRectSliderTrackShape(),
+              ),
+              child: SizedBox(
+                height: 24,
+                child: Slider(
+                  value: v,
+                  onChangeStart: (x) => setState(() => _drag = x),
+                  onChanged: (x) => setState(() => _drag = x),
+                  onChangeEnd: (x) {
+                    audioHandler.seek(Duration(milliseconds: (x * total).round()));
+                    setState(() => _drag = null);
+                  },
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(_fmt(shown),
+                      style: TextStyle(
+                          color: Colors.white.withOpacity(0.6),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600)),
+                  Text('-${_fmt(remaining.isNegative ? Duration.zero : remaining)}',
+                      style: TextStyle(
+                          color: Colors.white.withOpacity(0.6),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Apple-Music-style volume slider (controls the app's player volume).
+class AppleVolumeBar extends StatelessWidget {
+  const AppleVolumeBar({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final player = audioHandler.player;
+    return StreamBuilder<double>(
+      stream: player.volumeStream,
+      initialData: player.volume,
+      builder: (context, snap) {
+        final v = (snap.data ?? 1.0).clamp(0.0, 1.0).toDouble();
+        return Row(
+          children: [
+            Icon(Icons.volume_mute_rounded,
+                color: Colors.white.withOpacity(0.6), size: 20),
+            Expanded(
+              child: SliderTheme(
+                data: SliderThemeData(
+                  trackHeight: 5,
+                  activeTrackColor: Colors.white.withOpacity(0.85),
+                  inactiveTrackColor: Colors.white.withOpacity(0.22),
+                  thumbShape: SliderComponentShape.noThumb,
+                  overlayShape: SliderComponentShape.noOverlay,
+                ),
+                child: SizedBox(
+                  height: 24,
+                  child: Slider(value: v, onChanged: (x) => player.setVolume(x)),
+                ),
+              ),
+            ),
+            Icon(Icons.volume_up_rounded,
+                color: Colors.white.withOpacity(0.6), size: 20),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class TrackProgress extends StatelessWidget {
   final int fallbackSeconds;
   final Widget Function(
@@ -6761,11 +7074,15 @@ class NowPlayingScreen extends StatelessWidget {
                             const SizedBox(height: 14),
                             Reveal(
                               delayMs: 160,
-                              child: WavySeekBar(
-                                fallbackSeconds: track.durationSeconds,
-                                active: pal.accent,
-                                playing: playing,
-                              ),
+                              child: appState.playerStyle == 'apple'
+                                  ? AppleSeekBar(
+                                      fallbackSeconds: track.durationSeconds,
+                                    )
+                                  : WavySeekBar(
+                                      fallbackSeconds: track.durationSeconds,
+                                      active: pal.accent,
+                                      playing: playing,
+                                    ),
                             ),
                             const SizedBox(height: 14),
                             if (appState.playerStyle == 'simp') ...[
@@ -6953,7 +7270,20 @@ class NowPlayingScreen extends StatelessWidget {
                                   ),
                                 ),
                               ),
-                            ] else
+                            ] else if (appState.playerStyle == 'apple') ...[
+                                Reveal(
+                                  delayMs: 220,
+                                  child: _appleTransport(pal, playing, loading),
+                                ),
+                                const SizedBox(height: 16),
+                                const Reveal(delayMs: 260, child: AppleVolumeBar()),
+                                const SizedBox(height: 14),
+                                Reveal(
+                                  delayMs: 300,
+                                  child: _appleToolbar(
+                                      context, pal, track, shuffle, repeat),
+                                ),
+                              ] else
                               ...[
                                 Reveal(
                                   delayMs: 220,
@@ -7104,6 +7434,115 @@ class NowPlayingScreen extends StatelessWidget {
             audioHandler.setRepeatMode(next);
           },
         ),
+      ],
+    );
+  }
+
+  // ── Apple Music style (beta) ───────────────────────────────────────────
+  // Big plain white transport icons, thin seek + volume bars, and a quiet
+  // icon row at the bottom.
+
+  Widget _appleTransport(AppPalette pal, bool playing, bool loading) {
+    Widget plain(IconData icon, double size, VoidCallback onTap) {
+      return SquishyGesture(
+        pressedScale: 0.82,
+        onTap: onTap,
+        child: SizedBox(
+          width: size + 28,
+          height: size + 28,
+          child: Icon(icon, color: Colors.white, size: size),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        plain(Icons.fast_rewind_rounded, 44, audioHandler.skipToPrevious),
+        loading
+            ? const SizedBox(
+                width: 92,
+                height: 92,
+                child: Center(
+                  child: SizedBox(
+                    width: 34,
+                    height: 34,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 3, color: Colors.white),
+                  ),
+                ),
+              )
+            : SquishyGesture(
+                pressedScale: 0.82,
+                onTap: () => playing ? audioHandler.pause() : audioHandler.play(),
+                child: SizedBox(
+                  width: 92,
+                  height: 92,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    transitionBuilder: (c, a) =>
+                        ScaleTransition(scale: a, child: c),
+                    child: Icon(
+                      playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      key: ValueKey(playing),
+                      color: Colors.white,
+                      size: 72,
+                    ),
+                  ),
+                ),
+              ),
+        plain(Icons.fast_forward_rounded, 44, audioHandler.skipToNext),
+      ],
+    );
+  }
+
+  Widget _appleToolbar(BuildContext context, AppPalette pal, TrackItem track,
+      bool shuffle, AudioServiceRepeatMode repeat) {
+    Widget icon(IconData i, bool on, VoidCallback onTap) {
+      return SquishyGesture(
+        pressedScale: 0.85,
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: 44,
+          height: 36,
+          decoration: BoxDecoration(
+            color: on ? Colors.white.withOpacity(0.18) : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(i,
+              size: 22, color: on ? Colors.white : Colors.white.withOpacity(0.6)),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceAround,
+      children: [
+        icon(Icons.shuffle_rounded, shuffle, () {
+          audioHandler.setShuffleMode(
+            shuffle ? AudioServiceShuffleMode.none : AudioServiceShuffleMode.all,
+          );
+        }),
+        icon(Icons.tune_rounded, appState.speed != 1.0 || appState.pitch != 1.0,
+            () => showPlaybackSheet(context)),
+        icon(Icons.playlist_add_rounded, false,
+            () => showAddToPlaylistSheet(context, track)),
+        icon(
+          repeat == AudioServiceRepeatMode.one
+              ? Icons.repeat_one_rounded
+              : Icons.repeat_rounded,
+          repeat != AudioServiceRepeatMode.none,
+          () {
+            final next = switch (repeat) {
+              AudioServiceRepeatMode.none => AudioServiceRepeatMode.all,
+              AudioServiceRepeatMode.all => AudioServiceRepeatMode.one,
+              _ => AudioServiceRepeatMode.none,
+            };
+            audioHandler.setRepeatMode(next);
+          },
+        ),
+        icon(Icons.queue_music_rounded, false, () => showQueueSheet(context)),
       ],
     );
   }
@@ -7568,6 +8007,28 @@ void showAddToPlaylistSheet(BuildContext context, TrackItem track) {
                           pal, Icons.person_rounded, 'Go to artist', () {
                         Navigator.pop(ctx);
                         goToArtist(context, track);
+                      }),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _menuAction(
+                          pal, Icons.queue_play_next_rounded, 'Play next', () {
+                        Navigator.pop(ctx);
+                        audioHandler.addToQueue([track], next: true);
+                        appNotice.value = 'Playing "${track.title}" next';
+                      }),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _menuAction(
+                          pal, Icons.add_to_queue_rounded, 'Add to queue', () {
+                        Navigator.pop(ctx);
+                        audioHandler.addToQueue([track]);
+                        appNotice.value = 'Added "${track.title}" to queue';
                       }),
                     ),
                   ],
@@ -8123,18 +8584,32 @@ void showSettingsSheet(BuildContext context) {
                     activeColor: pal.accent,
                     onChanged: appState.setSwipeRightForNext,
                   ),
-                  SwitchListTile(
+                  ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text(
-                      'SimpMusic design',
+                      'Player style',
                       style: TextStyle(fontWeight: FontWeight.w700),
                     ),
-                    subtitle: const Text(
-                      'Use the classic pill player buttons and segmented bar',
+                    subtitle: const Text('How the Now Playing controls look'),
+                    trailing: DropdownButton<String>(
+                      value: appState.playerStyle,
+                      dropdownColor: pal.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      underline: const SizedBox.shrink(),
+                      style: TextStyle(
+                        color: pal.accent,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'alex', child: Text('AlexLMP')),
+                        DropdownMenuItem(value: 'simp', child: Text('SimpMusic')),
+                        DropdownMenuItem(
+                            value: 'apple', child: Text('Apple Music (Beta)')),
+                      ],
+                      onChanged: (v) {
+                        if (v != null) appState.setPlayerStyle(v);
+                      },
                     ),
-                    value: appState.playerStyle == 'simp',
-                    activeColor: pal.accent,
-                    onChanged: (v) => appState.setPlayerStyle(v ? 'simp' : 'alex'),
                   ),
                   const SizedBox(height: 16),
                   SwitchListTile(
@@ -8404,26 +8879,100 @@ void showQueueSheet(BuildContext context) {
         listenable: Listenable.merge([
           audioHandler.libraryRevision,
           audioHandler.currentIndex,
+          audioHandler.upNextRevision,
           appState,
         ]),
         builder: (ctx, _) {
           final pal = appState.palette;
           final tracks = audioHandler.tracks;
+          final upNext = audioHandler.upNext;
+          Widget label(String text) => Padding(
+                padding: const EdgeInsets.fromLTRB(2, 10, 2, 6),
+                child: Text(
+                  text,
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.9,
+                  ),
+                ),
+              );
+          final upNextSection = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(child: label('UP NEXT (${upNext.length})')),
+                  if (upNext.isNotEmpty)
+                    TextButton.icon(
+                      onPressed: () {
+                        HapticFeedback.mediumImpact();
+                        audioHandler.clearQueue();
+                      },
+                      icon: const Icon(Icons.clear_all_rounded, size: 20),
+                      label: const Text('Clear queue'),
+                      style: TextButton.styleFrom(foregroundColor: pal.accent),
+                    ),
+                ],
+              ),
+              if (upNext.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    'Nothing queued. Use "Play next" or "Add to queue" in a song\'s ⋮ menu.',
+                    style: TextStyle(color: Colors.white38, fontSize: 13),
+                  ),
+                ),
+              for (var q = 0; q < upNext.length; q++)
+                ListTile(
+                  key: ValueKey('up_${q}_${upNext[q].id}'),
+                  contentPadding: EdgeInsets.zero,
+                  leading: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: CustomAlbumArtwork(track: upNext[q]),
+                    ),
+                  ),
+                  title: Text(
+                    upNext[q].title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w700),
+                  ),
+                  subtitle: Text(
+                    upNext[q].artist,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.close_rounded, color: Colors.white54),
+                    onPressed: () => audioHandler.removeFromQueue(q),
+                  ),
+                ),
+              label('THEN FROM YOUR LIBRARY'),
+            ],
+          );
           return Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Column(
               children: [
                 const Text(
-                  'Reorder Queue',
+                  'Queue',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 4),
                 Expanded(
                   child: ReorderableListView.builder(
+                    header: upNextSection,
                     buildDefaultDragHandles: false,
                     itemCount: tracks.length,
                     onReorder: (oldIndex, newIndex) {
@@ -9115,6 +9664,8 @@ void openYtAccountPlaylist(BuildContext context, YtPlaylistRef p) {
       album: YtAlbum('', p.title, p.subtitle, p.thumbnail, -1),
       loader: () => YouTubeMusic.playlistPage(p.playlistId,
           title: p.title, thumbnail: p.thumbnail),
+      cached: () => YouTubeMusic.cachedPlaylistPage(p.playlistId,
+          title: p.title, thumbnail: p.thumbnail),
       playLabel: 'Play',
     ),
   ));
@@ -9127,6 +9678,14 @@ void openYtLikedMusic(BuildContext context) {
       loader: () async {
         final page =
             await YouTubeMusic.playlistPage('LM', title: 'Liked on YouTube');
+        return YtAlbumPage(page.title, 'Your YouTube Music likes',
+            page.tracks.isNotEmpty ? page.tracks.first.artworkUrl : null,
+            page.tracks);
+      },
+      cached: () {
+        final page =
+            YouTubeMusic.cachedPlaylistPage('LM', title: 'Liked on YouTube');
+        if (page == null) return null;
         return YtAlbumPage(page.title, 'Your YouTube Music likes',
             page.tracks.isNotEmpty ? page.tracks.first.artworkUrl : null,
             page.tracks);
@@ -9231,13 +9790,14 @@ Future<void> goToAlbum(BuildContext context, TrackItem t) async {
   try {
     final links = await YouTubeMusic.trackLinks(t.ytVideoId!);
     if (!context.mounted) return;
-    if (links.albumUrl == null) {
+    final ref = links.albumBrowseId ?? links.albumUrl;
+    if (ref == null) {
       appNotice.value = 'This song isn\'t part of an album on YouTube Music.';
       return;
     }
     openYtAlbum(
       context,
-      YtAlbum(links.albumUrl!, links.albumTitle ?? t.album,
+      YtAlbum(ref, links.albumTitle ?? t.album,
           links.artistName ?? t.artist, links.albumThumbnail ?? t.artworkUrl, -1),
     );
   } catch (e) {
@@ -9491,11 +10051,14 @@ class YtAlbumScreen extends StatefulWidget {
   /// Custom loader (e.g. your own YouTube Music playlists); defaults to the
   /// public album page.
   final Future<YtAlbumPage> Function()? loader;
+  /// Saved copy to show instantly while the fresh one loads.
+  final YtAlbumPage? Function()? cached;
   final String playLabel;
   const YtAlbumScreen({
     super.key,
     required this.album,
     this.loader,
+    this.cached,
     this.playLabel = 'Play album',
   });
 
@@ -9505,6 +10068,8 @@ class YtAlbumScreen extends StatefulWidget {
 
 class _YtAlbumScreenState extends State<YtAlbumScreen> {
   late Future<YtAlbumPage> _future;
+  YtAlbumPage? _cached;
+  bool _descOpen = false;
 
   Future<YtAlbumPage> _load() =>
       widget.loader != null ? widget.loader!() : YouTubeMusic.album(widget.album.url);
@@ -9512,7 +10077,21 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
   @override
   void initState() {
     super.initState();
+    _cached = widget.cached?.call();
     _future = _load();
+  }
+
+  String _totalLength(List<TrackItem> tracks) {
+    final secs = tracks.fold<int>(0, (a, t) => a + t.durationSeconds);
+    if (secs <= 0) return '';
+    final h = secs ~/ 3600;
+    final m = (secs % 3600) ~/ 60;
+    return h > 0 ? '$h hr $m min' : '$m min';
+  }
+
+  String _dur(int s) {
+    if (s <= 0) return '';
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
   }
 
   @override
@@ -9522,29 +10101,118 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
       builder: (context, snap) {
         return _YtPageShell(buildBody: (context) {
           final pal = appState.palette;
-          final page = snap.data;
+          final page = snap.data ?? _cached;
+          final refreshing =
+              snap.connectionState == ConnectionState.waiting && _cached != null;
           final cover = page?.thumbnail ?? widget.album.thumbnail;
           final title = page?.title ?? widget.album.title;
           final artist = (page?.artist.isNotEmpty ?? false)
               ? page!.artist
               : widget.album.artist;
+          final isAlbum = page?.kind != null || page?.year != null;
+
+          final chips = <String>[
+            if (page?.kind != null) page!.kind!,
+            if (page?.year != null) 'Released ${page!.year}',
+          ];
+
           final header = <Widget>[
             const SizedBox(height: 8),
-            Center(child: YtNetworkImage(url: cover, size: 220)),
-            const SizedBox(height: 16),
+            Center(
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(22),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.5),
+                      blurRadius: 30,
+                      offset: const Offset(0, 14),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(22),
+                  child: YtNetworkImage(url: cover, size: 240),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            if (chips.isNotEmpty)
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                children: [
+                  for (final c in chips)
+                    Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: pal.accent.withOpacity(0.16),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: pal.accent.withOpacity(0.5)),
+                      ),
+                      child: Text(
+                        c.toUpperCase(),
+                        style: TextStyle(
+                          color: pal.accent,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            if (chips.isNotEmpty) const SizedBox(height: 10),
             Text(title,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800)),
-            const SizedBox(height: 4),
-            Text(artist,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.4)),
+            const SizedBox(height: 6),
+            Center(
+              child: SquishyGesture(
+                onTap: page?.artistUrl == null
+                    ? null
+                    : () => openYtArtist(context, page!.artistUrl!, artist),
+                child: Text(
+                  artist,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: page?.artistUrl != null
+                        ? pal.accent
+                        : const Color(0xFFA6ADB2),
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+            if (page != null && page.tracks.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                page.info ??
+                    [
+                      '${page.tracks.length} ${page.tracks.length == 1 ? 'song' : 'songs'}',
+                      _totalLength(page.tracks),
+                    ].where((x) => x.isNotEmpty).join(' • '),
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFFA6ADB2), fontSize: 15)),
+                style: const TextStyle(color: Colors.white54, fontSize: 13),
+              ),
+            ],
+            if (refreshing)
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text('Updating…',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white38, fontSize: 12)),
+              ),
             const SizedBox(height: 16),
           ];
-          if (snap.hasError) {
+
+          if (page == null && snap.hasError) {
             return [
               ...header,
               _ytLoadError(snap.error, () {
@@ -9562,38 +10230,165 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
           return [
             ...header,
             if (tracks.isNotEmpty)
-              Center(
-                child: _ytPlayButton(pal, widget.playLabel, () {
-                  audioHandler.playYouTubeList(tracks, 0);
-                  openPlayer(context);
-                }),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _ytPlayButton(pal, widget.playLabel, () {
+                    audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+                    audioHandler.playYouTubeList(tracks, 0);
+                    openPlayer(context);
+                  }),
+                  const SizedBox(width: 10),
+                  _circleAction(pal, Icons.shuffle_rounded, () {
+                    audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
+                    audioHandler.playYouTubeList(
+                        tracks, Random().nextInt(tracks.length));
+                    openPlayer(context);
+                  }),
+                  const SizedBox(width: 10),
+                  _circleAction(pal, Icons.queue_play_next_rounded, () {
+                    audioHandler.addToQueue(tracks, next: true);
+                    appNotice.value = 'Playing "$title" next';
+                  }),
+                ],
               ),
-            const SizedBox(height: 12),
-            if (tracks.isNotEmpty)
+            if (page.description != null && page.description!.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  '${tracks.length} ${tracks.length == 1 ? 'song' : 'songs'}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white54, fontSize: 13),
+                padding: const EdgeInsets.only(top: 16),
+                child: SquishyGesture(
+                  pressedScale: 0.99,
+                  onTap: () => setState(() => _descOpen = !_descOpen),
+                  child: LiquidGlassBox(
+                    borderRadius: BorderRadius.circular(18),
+                    fallbackColor: pal.surface,
+                    padding: const EdgeInsets.all(14),
+                    child: AnimatedSize(
+                      duration: const Duration(milliseconds: 250),
+                      alignment: Alignment.topCenter,
+                      child: Text(
+                        page.description!,
+                        maxLines: _descOpen ? 40 : 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Color(0xFFC8CDD1), fontSize: 13.5, height: 1.35),
+                      ),
+                    ),
+                  ),
                 ),
               ),
+            const SizedBox(height: 12),
             if (tracks.isEmpty)
               const Center(
                 child: Text('No playable songs here.',
                     style: TextStyle(color: Colors.white54)),
               ),
             for (var i = 0; i < tracks.length; i++)
-              YtTrackRow(
-                track: tracks[i],
-                onPlay: () {
-                  audioHandler.playYouTubeList(tracks, i);
-                  openPlayer(context);
-                },
+              isAlbum
+                  ? _albumTrackRow(context, pal, page, tracks, i)
+                  : YtTrackRow(
+                      track: tracks[i],
+                      onPlay: () {
+                        audioHandler.playYouTubeList(tracks, i);
+                        openPlayer(context);
+                      },
+                    ),
+            for (final sh in page.shelves) ...[
+              ytSectionHeader(sh.title.isEmpty ? 'More' : sh.title),
+              SizedBox(
+                height: 196,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: sh.items.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 14),
+                  itemBuilder: (_, i) => YtAlbumTile(album: sh.items[i]),
+                ),
               ),
+            ],
           ];
         });
       },
+    );
+  }
+
+  Widget _circleAction(AppPalette pal, IconData icon, VoidCallback onTap) {
+    return SquishyGesture(
+      onTap: onTap,
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(color: pal.container, shape: BoxShape.circle),
+        child: Icon(icon, color: pal.accent),
+      ),
+    );
+  }
+
+  /// Numbered album track row: # · title (+ featured artist) · length · ⋮
+  Widget _albumTrackRow(BuildContext context, AppPalette pal, YtAlbumPage page,
+      List<TrackItem> tracks, int i) {
+    final t = tracks[i];
+    final active = audioHandler.currentTrack?.id == t.id;
+    final showArtist = t.artist.isNotEmpty && t.artist != page.artist;
+    return SquishyGesture(
+      pressedScale: 0.98,
+      onTap: () {
+        audioHandler.playYouTubeList(tracks, i);
+        openPlayer(context);
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 34,
+              child: active
+                  ? EqBars(color: pal.accent)
+                  : Text(
+                      '${i + 1}',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    t.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: active ? pal.accent : Colors.white,
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (showArtist)
+                    Text(
+                      t.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Color(0xFFA6ADB2), fontSize: 13),
+                    ),
+                ],
+              ),
+            ),
+            Text(
+              _dur(t.durationSeconds),
+              style: const TextStyle(color: Colors.white38, fontSize: 13),
+            ),
+            SquishyGesture(
+              onTap: () => showYtAddToPlaylist(context, t),
+              child: const Padding(
+                padding: EdgeInsets.all(8),
+                child: Icon(Icons.more_vert_rounded, color: Colors.white54, size: 20),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
