@@ -168,6 +168,9 @@ object YtMusicBridge {
                 val auth = call.argument<Boolean>("auth") ?: true
                 runAsync(result, "YT_PLAYLIST") { Account.playlistTracks(id, auth) }
             }
+            "ytHomeFeed" -> runAsync(result, "YT_HOME") { Account.homeFeed() }
+            "ytLibraryAlbums" -> runAsync(result, "YT_LIBRARY") { Account.libraryAlbums() }
+            "ytLibraryArtists" -> runAsync(result, "YT_LIBRARY") { Account.libraryArtists() }
             "ytArtistPage" -> {
                 val url = call.argument<String>("url") ?: ""
                 runAsync(result, "YT_ARTIST") { Account.artistPage(url) }
@@ -1541,6 +1544,136 @@ object Account {
             "tracks" to tracks,
             "shelves" to shelves,
         )
+    }
+
+    // ── YouTube Music home feed + library albums/artists ───────────────────
+
+    /** Turns carousel shelves into simple maps (songs, videos, albums, playlists, artists). */
+    private fun parseShelves(node: Any?): List<Map<String, Any?>> {
+        val shelves = ArrayList<Map<String, Any?>>()
+        for (c in all(node, "musicCarouselShelfRenderer")) {
+            val header = all(c, "musicCarouselShelfBasicHeaderRenderer").firstOrNull()
+            val title = header?.let { text(it.optJSONObject("title")) } ?: ""
+            val strap = header?.let { text(it.optJSONObject("strapline")) } ?: ""
+            val items = ArrayList<Map<String, Any?>>()
+            var kind = ""
+            for (t in all(c, "musicTwoRowItemRenderer")) {
+                val nav = t.optJSONObject("navigationEndpoint")
+                val browse = nav?.optJSONObject("browseEndpoint")?.optString("browseId") ?: ""
+                val videoId = nav?.optJSONObject("watchEndpoint")?.optString("videoId") ?: ""
+                val playlistId = nav?.optJSONObject("watchPlaylistEndpoint")?.optString("playlistId") ?: ""
+                val itemKind = when {
+                    browse.startsWith("MPREb_") -> "album"
+                    browse.startsWith("UC") -> "artist"
+                    browse.startsWith("VL") -> "playlist"
+                    videoId.isNotEmpty() -> "video"
+                    playlistId.isNotEmpty() -> "playlist"
+                    else -> continue
+                }
+                if (kind.isEmpty()) kind = itemKind
+                items.add(mapOf(
+                    "kind" to itemKind,
+                    "id" to when (itemKind) {
+                        "artist" -> "https://www.youtube.com/channel/$browse"
+                        "playlist" -> if (browse.isNotEmpty()) browse.removePrefix("VL") else playlistId
+                        "video" -> videoId
+                        else -> browse
+                    },
+                    "title" to text(t.optJSONObject("title")),
+                    "subtitle" to text(t.optJSONObject("subtitle")),
+                    "thumbnail" to lastThumb(t.optJSONObject("thumbnailRenderer")),
+                ))
+            }
+            for (r in all(c, "musicResponsiveListItemRenderer")) {
+                val song = parseSong(r) ?: continue
+                if (kind.isEmpty()) kind = "song"
+                items.add(mapOf(
+                    "kind" to "song",
+                    "id" to song["videoId"],
+                    "title" to song["title"],
+                    "subtitle" to song["artist"],
+                    "thumbnail" to song["thumbnail"],
+                    "durationSeconds" to song["durationSeconds"],
+                ))
+            }
+            if (items.isNotEmpty()) {
+                shelves.add(mapOf("title" to title, "strapline" to strap, "kind" to kind, "items" to items))
+            }
+        }
+        return shelves
+    }
+
+    fun homeFeed(): Map<String, Any?> {
+        val auth = cookies() != null
+        val first = call("browse", JSONObject().put("browseId", "FEmusic_home"), auth = auth)
+        val shelves = ArrayList<Map<String, Any?>>(parseShelves(first))
+        var token = all(first, "sectionListRenderer").firstOrNull()?.let { continuationToken(it) }
+        var pages = 0
+        while (token != null && pages < 3) {
+            pages++
+            val next = call("browse", JSONObject().put("continuation", token), auth = auth)
+            shelves.addAll(parseShelves(next))
+            token = continuationToken(next)
+        }
+        return mapOf("signedIn" to auth, "shelves" to shelves)
+    }
+
+    fun libraryAlbums(): List<Map<String, Any?>> {
+        val r = call("browse", JSONObject().put("browseId", "FEmusic_liked_albums"), auth = true)
+        val out = ArrayList<Map<String, Any?>>()
+        val seen = HashSet<String>()
+        for (t in all(r, "musicTwoRowItemRenderer")) {
+            val id = t.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
+                ?.optString("browseId") ?: continue
+            if (!id.startsWith("MPREb_") || !seen.add(id)) continue
+            out.add(mapOf(
+                "url" to id,
+                "title" to text(t.optJSONObject("title")),
+                "artist" to text(t.optJSONObject("subtitle")),
+                "thumbnail" to lastThumb(t.optJSONObject("thumbnailRenderer")),
+                "trackCount" to -1,
+            ))
+        }
+        for (t in all(r, "musicResponsiveListItemRenderer")) {
+            val id = t.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
+                ?.optString("browseId") ?: continue
+            if (!id.startsWith("MPREb_") || !seen.add(id)) continue
+            val cols = t.optJSONArray("flexColumns")
+            fun col(i: Int): JSONObject? = cols?.optJSONObject(i)
+                ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")?.optJSONObject("text")
+            out.add(mapOf(
+                "url" to id,
+                "title" to text(col(0)),
+                "artist" to text(col(1)),
+                "thumbnail" to lastThumb(t.optJSONObject("thumbnail")),
+                "trackCount" to -1,
+            ))
+        }
+        return out
+    }
+
+    fun libraryArtists(): List<Map<String, Any?>> {
+        val r = call("browse", JSONObject().put("browseId", "FEmusic_library_corpus_track_artists"), auth = true)
+        val out = ArrayList<Map<String, Any?>>()
+        val seen = HashSet<String>()
+        val items = all(r, "musicResponsiveListItemRenderer") + all(r, "musicTwoRowItemRenderer")
+        for (t in items) {
+            val id = t.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
+                ?.optString("browseId") ?: continue
+            if (!id.startsWith("UC") || !seen.add(id)) continue
+            val cols = t.optJSONArray("flexColumns")
+            fun col(i: Int): JSONObject? = cols?.optJSONObject(i)
+                ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")?.optJSONObject("text")
+            val name = if (cols != null) text(col(0)) else text(t.optJSONObject("title"))
+            val sub = if (cols != null) text(col(1)) else text(t.optJSONObject("subtitle"))
+            out.add(mapOf(
+                "url" to "https://www.youtube.com/channel/$id",
+                "name" to name,
+                "subtitle" to sub,
+                "thumbnail" to lastThumb(t.optJSONObject("thumbnail") ?: t.optJSONObject("thumbnailRenderer")),
+            ))
+        }
+        return out
     }
 
     // ── Artist pages (public) ───────────────────────────────────────────────
