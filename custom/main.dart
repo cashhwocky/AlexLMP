@@ -347,7 +347,7 @@ class AppState extends ChangeNotifier {
   bool stopOnTaskClear = true;
   bool linkSpeedAndPitch = false;
   bool swipeRightForNext = true;
-  String playerStyle = 'modern'; // modern (default), expressive, apple, alex, simp, jog
+  String playerStyle = 'alex'; // alex (default), modern, expressive, apple, simp, jog
   bool animatedBackground = false;
   bool artBackdrop = false;
   AppPalette? _adaptivePalette;
@@ -508,10 +508,11 @@ class AppState extends ChangeNotifier {
     // moving background glow off.
     // One-time switch to the defaults: AMOLED (true black) theme, no
     // moving background glow.
-    // The Modern player becomes everyone's player once.
-    if (prefs.getBool('modern_player_v3') != true) {
-      await prefs.setString('player_style', 'modern');
+    // The new AlexLMP player becomes everyone's player once.
+    if (prefs.getBool('alex_player_v4') != true) {
+      await prefs.setString('player_style', 'alex');
       await prefs.setBool('modern_player_v3', true);
+      await prefs.setBool('alex_player_v4', true);
     }
     if (prefs.getBool('amoled_defaults_v2') != true) {
       await prefs.setString('theme_name', 'AMOLED');
@@ -529,7 +530,7 @@ class AppState extends ChangeNotifier {
     stopOnTaskClear = prefs.getBool('stop_on_task_clear') ?? true;
     linkSpeedAndPitch = prefs.getBool('link_speed_pitch') ?? false;
     swipeRightForNext = prefs.getBool('swipe_right_next') ?? true;
-    playerStyle = prefs.getString('player_style') ?? 'modern';
+    playerStyle = prefs.getString('player_style') ?? 'alex';
     animatedBackground = prefs.getBool('animated_bg') ?? false;
     artBackdrop = prefs.getBool('art_backdrop') ?? false;
     speed = prefs.getDouble('playback_speed') ?? 1.0;
@@ -11109,6 +11110,19 @@ class NowPlayingScreen extends StatelessWidget {
                 ),
               );
             }
+            if (appState.playerStyle == 'alex') {
+              return SwipeDownDismiss(
+                child: ExpressivePlayerView(
+                  alexLayout: true,
+                  track: track,
+                  playing: playing,
+                  loading: loading,
+                  shuffle: shuffle,
+                  repeat: repeat,
+                  liked: liked,
+                ),
+              );
+            }
             if (appState.playerStyle == 'expressive') {
               return SwipeDownDismiss(
                 child: ExpressivePlayerView(
@@ -13205,10 +13219,10 @@ class SettingsScreen extends StatelessWidget {
           'How the player controls look',
           appState.playerStyle,
           const {
-            'modern': 'Modern (Default)',
+            'alex': 'AlexLMP (Default)',
+            'modern': 'Modern',
             'expressive': 'Expressive',
             'apple': 'Apple Music',
-            'alex': 'AlexLMP',
             'simp': 'SimpMusic',
             'jog': 'Community Suggested (Jog Wheel)',
           },
@@ -16010,47 +16024,68 @@ class AmPlayerView extends StatelessWidget {
   }
 }
 
-/// Blurred, darkened album art filling the player background (static).
-class AmArtBackground extends StatelessWidget {
+/// Blurred-looking album art behind the player. Instead of a live blur
+/// (which re-blurs every frame while the player slides in/out and caused the
+/// lag), the art is decoded at 24 px and stretched: it looks blurred and
+/// costs almost nothing to draw.
+class TinyArtBackdrop extends StatelessWidget {
   final TrackItem track;
-  const AmArtBackground({super.key, required this.track});
+  final double dim;
+  const TinyArtBackdrop({super.key, required this.track, this.dim = 0.4});
 
   @override
   Widget build(BuildContext context) {
+    final fallback = DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: track.artColors.length >= 2
+              ? track.artColors.take(2).toList()
+              : [track.artColors.first, Colors.black],
+        ),
+      ),
+    );
     return IgnorePointer(
       child: RepaintBoundary(
         child: Stack(
           fit: StackFit.expand,
           children: [
             AnimatedSwitcher(
-              duration: const Duration(milliseconds: 700),
-              child: Transform.scale(
+              duration: const Duration(milliseconds: 500),
+              child: FutureBuilder<Uint8List?>(
                 key: ValueKey(track.id),
-                scale: 1.6,
-                child: ImageFiltered(
-                  imageFilter: ui.ImageFilter.blur(sigmaX: 70, sigmaY: 70),
-                  child: CustomAlbumArtwork(track: track),
-                ),
+                future: loadArt(track),
+                builder: (context, snap) {
+                  final bytes = snap.data;
+                  if (bytes == null || bytes.isEmpty) return fallback;
+                  return Image.memory(
+                    bytes,
+                    cacheWidth: 24,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: double.infinity,
+                    filterQuality: FilterQuality.medium,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, __, ___) => fallback,
+                  );
+                },
               ),
             ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.28),
-                    Colors.black.withOpacity(0.38),
-                    Colors.black.withOpacity(0.5),
-                  ],
-                ),
-              ),
-            ),
+            ColoredBox(color: Colors.black.withOpacity(dim)),
           ],
         ),
       ),
     );
   }
+}
+
+class AmArtBackground extends StatelessWidget {
+  final TrackItem track;
+  const AmArtBackground({super.key, required this.track});
+
+  @override
+  Widget build(BuildContext context) => TinyArtBackdrop(track: track, dim: 0.38);
 }
 
 /// Thick rounded seek bar with times underneath and a source label.
@@ -16921,7 +16956,12 @@ class ExpressivePlayerView extends StatelessWidget {
     required this.shuffle,
     required this.repeat,
     required this.liked,
+    this.alexLayout = false,
   });
+
+  /// AlexLMP player: same look, but shuffle / previous / round play / next /
+  /// repeat in one row, and Liquid Glass when that's switched on.
+  final bool alexLayout;
 
   @override
   Widget build(BuildContext context) {
@@ -16941,13 +16981,20 @@ class ExpressivePlayerView extends StatelessWidget {
   Widget _body(BuildContext context, ColorScheme cs) {
     final bg = Color.lerp(cs.surface, Colors.black, 0.25)!;
     final light = Color.lerp(cs.primary, Colors.white, 0.72)!;
+    final glass = alexLayout && appState.liquidGlass;
 
-    Widget tonal(Widget child, Color color, VoidCallback onTap,
-            {double w = 60, double h = 60, double r = 20}) =>
-        SquishyGesture(
-          pressedScale: 0.9,
-          onTap: onTap,
-          child: AnimatedContainer(
+    // A tinted pane, or a glass pane when Liquid Glass is on.
+    Widget pane(Widget child, Color color, double w, double h, double r) => glass
+        ? SizedBox(
+            width: w,
+            height: h,
+            child: LiquidGlassBox(
+              borderRadius: BorderRadius.circular(r),
+              fallbackColor: color,
+              child: Center(child: child),
+            ),
+          )
+        : AnimatedContainer(
             duration: const Duration(milliseconds: 260),
             width: w,
             height: h,
@@ -16957,7 +17004,14 @@ class ExpressivePlayerView extends StatelessWidget {
             ),
             alignment: Alignment.center,
             child: child,
-          ),
+          );
+
+    Widget tonal(Widget child, Color color, VoidCallback onTap,
+            {double w = 60, double h = 60, double r = 20}) =>
+        SquishyGesture(
+          pressedScale: 0.9,
+          onTap: onTap,
+          child: pane(child, color, w, h, r),
         );
 
     Widget bottomPill(IconData icon, String label, VoidCallback onTap) =>
@@ -16965,13 +17019,7 @@ class ExpressivePlayerView extends StatelessWidget {
           child: SquishyGesture(
             pressedScale: 0.95,
             onTap: onTap,
-            child: Container(
-              height: 50,
-              decoration: BoxDecoration(
-                color: cs.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Row(
+            child: pane(Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(icon, color: cs.onSurface, size: 21),
@@ -16982,8 +17030,7 @@ class ExpressivePlayerView extends StatelessWidget {
                           fontSize: 15,
                           fontWeight: FontWeight.w500)),
                 ],
-              ),
-            ),
+              ), cs.surfaceContainerHigh, double.infinity, 50, 18),
           ),
         );
 
@@ -16994,8 +17041,12 @@ class ExpressivePlayerView extends StatelessWidget {
             : track.album;
 
     return Scaffold(
-      backgroundColor: bg,
-      body: SafeArea(
+      backgroundColor: glass ? Colors.black : bg,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (glass) TinyArtBackdrop(track: track, dim: 0.5),
+          SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 22),
           child: Column(
@@ -17081,7 +17132,7 @@ class ExpressivePlayerView extends StatelessWidget {
                     },
                     w: 44,
                     h: 44,
-                    r: liked ? 22 : 14,
+                    r: liked && !alexLayout ? 22 : 14,
                   ),
                   const SizedBox(width: 8),
                   tonal(Icon(Icons.more_horiz_rounded, color: cs.onSurface, size: 22),
@@ -17157,6 +17208,74 @@ class ExpressivePlayerView extends StatelessWidget {
                   );
                 }),
               ),
+              if (alexLayout) ...[
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  tonal(
+                      Icon(Icons.shuffle_rounded,
+                          size: 22,
+                          color: shuffle ? cs.onPrimary : cs.onSurfaceVariant),
+                      shuffle ? cs.primary : cs.surfaceContainerHigh, () {
+                    audioHandler.setShuffleMode(shuffle
+                        ? AudioServiceShuffleMode.none
+                        : AudioServiceShuffleMode.all);
+                  }, w: 50, h: 50, r: 16),
+                  tonal(
+                      Icon(Icons.fast_rewind_rounded,
+                          color: cs.onSurface, size: 28),
+                      cs.surfaceContainerHigh,
+                      audioHandler.skipToPrevious,
+                      w: 60,
+                      h: 60,
+                      r: 18),
+                  tonal(
+                      loading
+                          ? const SizedBox(
+                              width: 32,
+                              height: 32,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 3, color: Colors.black))
+                          : Icon(
+                              playing
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              color: Colors.black,
+                              size: 40),
+                      light,
+                      () => playing ? audioHandler.pause() : audioHandler.play(),
+                      w: 88,
+                      h: 88,
+                      r: playing ? 28 : 44),
+                  tonal(
+                      Icon(Icons.fast_forward_rounded,
+                          color: cs.onSurface, size: 28),
+                      cs.surfaceContainerHigh,
+                      audioHandler.skipToNext,
+                      w: 60,
+                      h: 60,
+                      r: 18),
+                  tonal(
+                      Icon(
+                          repeat == AudioServiceRepeatMode.one
+                              ? Icons.repeat_one_rounded
+                              : Icons.repeat_rounded,
+                          size: 22,
+                          color: repeat != AudioServiceRepeatMode.none
+                              ? cs.onPrimary
+                              : cs.onSurfaceVariant),
+                      repeat != AudioServiceRepeatMode.none
+                          ? cs.primary
+                          : cs.surfaceContainerHigh,
+                      () => audioHandler.setRepeatMode(_nextRepeat(repeat)),
+                      w: 50,
+                      h: 50,
+                      r: 16),
+                ],
+              ),
+              const SizedBox(height: 22),
+              ] else ...[
               const SizedBox(height: 10),
               Container(
                 padding: const EdgeInsets.all(6),
@@ -17239,6 +17358,7 @@ class ExpressivePlayerView extends StatelessWidget {
                       r: 21),
                 ],
               ),
+              ],
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -17266,6 +17386,8 @@ class ExpressivePlayerView extends StatelessWidget {
             ],
           ),
         ),
+      ),
+        ],
       ),
     );
   }
@@ -17679,10 +17801,10 @@ class _SetupScreenState extends State<SetupScreen> {
       'apple': 'Apple Music',
     };
     const players = {
+      'alex': 'AlexLMP',
       'modern': 'Modern',
       'expressive': 'Expressive',
       'apple': 'Apple Music',
-      'alex': 'AlexLMP',
       'simp': 'SimpMusic',
       'jog': 'Jog Wheel',
     };
