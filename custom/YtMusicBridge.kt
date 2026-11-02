@@ -93,6 +93,9 @@ object YtMusicBridge {
     )
 
     private val cache = ConcurrentHashMap<String, Resolved>()
+
+    /** Data saver: pick the lowest-bitrate audio instead of the best. */
+    @Volatile private var dataSaver = false
     private val resolveLocks = ConcurrentHashMap<String, Any>()
 
     // ── Keep CPU + Wi-Fi awake while music plays ────────────────────────────
@@ -172,6 +175,19 @@ object YtMusicBridge {
             "ytTrackLinks" -> {
                 val id = call.argument<String>("videoId") ?: ""
                 runAsync(result, "YT_LINKS") { Account.trackLinks(id) }
+            }
+            "setYtDataSaver" -> {
+                val on = call.argument<Boolean>("on") ?: false
+                if (on != dataSaver) {
+                    dataSaver = on
+                    cache.clear() // pick a new quality next time a song loads
+                }
+                result.success(null)
+            }
+            "ytClearCache" -> {
+                cache.clear()
+                Proxy.clearCache()
+                result.success(null)
             }
             "setKeepAwake" -> {
                 setKeepAwake(call.argument<Boolean>("on") ?: false)
@@ -460,13 +476,16 @@ object YtMusicBridge {
                 agents = downloader.stopRecordingPlayerAgents()
             }
 
-            val best = info.audioStreams
+            val playable = info.audioStreams
                 .filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.isUrl && it.content.isNotBlank() }
-                .sortedWith(
+            val best = (if (dataSaver) {
+                playable.sortedBy { maxOf(it.averageBitrate, it.bitrate).let { b -> if (b <= 0) Int.MAX_VALUE else b } }
+            } else {
+                playable.sortedWith(
                     compareByDescending<AudioStream> { maxOf(it.averageBitrate, it.bitrate) }
                         .thenByDescending { it.format == MediaFormat.M4A }
                 )
-                .firstOrNull()
+            }).firstOrNull()
                 ?: throw IOException("No playable audio stream for $videoId")
 
             val url = best.content
@@ -776,6 +795,17 @@ object YtMusicBridge {
             val d = File(ctx.cacheDir, "yt_audio")
             if (!d.exists()) d.mkdirs()
             return d
+        }
+
+        /** Deletes downloaded songs that aren't playing right now. */
+        fun clearCache() {
+            synchronized(downloads) {
+                val idle = downloads.values.filter { it.users.get() == 0 }
+                for (d in idle) {
+                    downloads.remove(d.videoId)
+                    d.file.delete()
+                }
+            }
         }
 
         fun prefetch(videoId: String, restartIfFailed: Boolean) {
