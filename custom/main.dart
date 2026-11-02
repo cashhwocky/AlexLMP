@@ -937,6 +937,11 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     try {
       final session = await AudioSession.instance;
       await session.configure(const AudioSessionConfiguration.music());
+      // Headphones / Bluetooth disconnected: pause instead of blasting the
+      // speaker.
+      session.becomingNoisyEventStream.listen((_) {
+        if (appState.b('pause_on_unplug', true)) pause();
+      });
     } catch (_) {}
 
     try {
@@ -1793,6 +1798,10 @@ Future<void> applyNativeSettings() async {
         'setYtDataSaver', {'on': appState.b('yt_data_saver')});
   } catch (_) {}
   try {
+    await _mediaChannel.invokeMethod(
+        'setHighRefreshRate', {'on': appState.b('high_refresh', true)});
+  } catch (_) {}
+  try {
     final c = await _mediaChannel.invokeMethod<int>('getWallpaperColor');
     if (c != null && c != 0) {
       appState.wallpaperColor = Color(c);
@@ -2446,6 +2455,85 @@ class YouTubeMusic {
 // iOS 27 Liquid Glass (Beta) & Ambient Mesh Backdrop Components
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Glass edge: a bright specular rim (strong at the top-left and
+/// bottom-right), a soft inner "thickness" glow and a faint colour fringe,
+/// so the glass reads as clear glass instead of frosted plastic.
+class GlassRimPainter extends CustomPainter {
+  final BorderRadius radius;
+  final Color tint;
+  final double strength;
+  const GlassRimPainter({
+    required this.radius,
+    required this.tint,
+    this.strength = 1,
+  });
+
+  double _o(double v) => (v * strength).clamp(0.0, 1.0).toDouble();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    if (rect.isEmpty) return;
+    // Inner glow along the edge (light bending through the glass thickness).
+    canvas.drawRRect(
+      radius.toRRect(rect.deflate(3.5)),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 5
+        ..color = Colors.white.withOpacity(_o(0.08))
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+    );
+    // Colour fringe, strongest at the bottom-right edge.
+    canvas.drawRRect(
+      radius.toRRect(rect.deflate(1.6)),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.4
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2)
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            tint.withOpacity(_o(0.18)),
+            tint.withOpacity(0),
+            tint.withOpacity(_o(0.38)),
+          ],
+          stops: const [0.0, 0.5, 1.0],
+        ).createShader(rect),
+    );
+    // Specular rim.
+    canvas.drawRRect(
+      radius.toRRect(rect.deflate(0.6)),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white.withOpacity(_o(0.72)),
+            Colors.white.withOpacity(_o(0.14)),
+            Colors.white.withOpacity(_o(0.06)),
+            Colors.white.withOpacity(_o(0.42)),
+          ],
+          stops: const [0.0, 0.3, 0.68, 1.0],
+        ).createShader(rect),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant GlassRimPainter old) =>
+      old.strength != strength || old.tint != tint || old.radius != radius;
+}
+
+/// True while the full-screen player is open: the glass bars underneath are
+/// hidden anyway, so their live blur is switched off (this is what made
+/// opening the player stutter with Liquid Glass on).
+final ValueNotifier<bool> glassPaused = ValueNotifier<bool>(false);
+
+Widget glassBlur({required ui.ImageFilter filter, required Widget child}) =>
+    glassPaused.value ? child : BackdropFilter(filter: filter, child: child);
+
 class LiquidGlassBox extends StatelessWidget {
   final Widget child;
   final BorderRadius borderRadius;
@@ -2487,24 +2575,27 @@ class LiquidGlassBox extends StatelessWidget {
     }
     final pal = appState.palette;
     if (!realBlur) {
-      // Cheap frosted glass: translucent tint + light edge, no backdrop pass.
-      return Container(
-        padding: padding,
-        decoration: BoxDecoration(
-          borderRadius: borderRadius,
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color.lerp(fallbackColor, Colors.white, 0.16)!.withOpacity(0.72),
-              fallbackColor.withOpacity(0.62),
-              Color.lerp(fallbackColor, Colors.white, 0.06)!.withOpacity(0.66),
-            ],
-            stops: const [0.0, 0.5, 1.0],
+      // Cheap glass: clear-ish tint + glass rim, no backdrop pass.
+      return CustomPaint(
+        foregroundPainter: GlassRimPainter(
+            radius: borderRadius, tint: pal.accent, strength: 0.8),
+        child: Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            borderRadius: borderRadius,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color.lerp(fallbackColor, Colors.white, 0.14)!.withOpacity(0.5),
+                fallbackColor.withOpacity(0.38),
+                Color.lerp(fallbackColor, Colors.black, 0.2)!.withOpacity(0.5),
+              ],
+              stops: const [0.0, 0.5, 1.0],
+            ),
           ),
-          border: Border.all(color: Colors.white.withOpacity(0.18), width: 1),
+          child: child,
         ),
-        child: child,
       );
     }
     return RepaintBoundary(
@@ -2527,28 +2618,30 @@ class LiquidGlassBox extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: borderRadius,
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-          child: Container(
-            padding: padding,
-            decoration: BoxDecoration(
-              borderRadius: borderRadius,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Colors.white.withOpacity(tintOpacity + 0.08),
-                  pal.accent.withOpacity(0.06),
-                  Colors.white.withOpacity(tintOpacity * 0.35),
-                ],
-                stops: const [0.0, 0.45, 1.0],
+        child: glassBlur(
+          // Light blur: you should still see what's behind, like real glass.
+          filter: ui.ImageFilter.blur(
+              sigmaX: min(blur, 3.0), sigmaY: min(blur, 3.0)),
+          child: CustomPaint(
+            foregroundPainter:
+                GlassRimPainter(radius: borderRadius, tint: pal.accent),
+            child: Container(
+              padding: padding,
+              decoration: BoxDecoration(
+                borderRadius: borderRadius,
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withOpacity(tintOpacity * 0.6),
+                    Colors.white.withOpacity(0.02),
+                    Colors.black.withOpacity(0.18),
+                  ],
+                  stops: const [0.0, 0.5, 1.0],
+                ),
               ),
-              border: Border.all(
-                color: Colors.white.withOpacity(0.22),
-                width: 1.1,
-              ),
+              child: child,
             ),
-            child: child,
           ),
         ),
       ),
@@ -2742,30 +2835,35 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                         borderRadius: BorderRadius.circular(36),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.40),
-                            blurRadius: 22,
+                            color: Colors.black.withOpacity(0.28),
+                            blurRadius: 20,
                             offset: const Offset(0, 8),
                           ),
                         ],
                       ),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(36),
-                        child: BackdropFilter(
-                          filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(36),
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.white.withOpacity(0.10),
-                                  pal.bg.withOpacity(0.35),
-                                ],
-                              ),
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.16),
-                                width: 1,
+                        child: glassBlur(
+                          // Barely blurred: the page shows through clearly.
+                          filter: ui.ImageFilter.blur(sigmaX: 2.2, sigmaY: 2.2),
+                          child: CustomPaint(
+                            foregroundPainter: GlassRimPainter(
+                              radius: BorderRadius.circular(36),
+                              tint: pal.accent,
+                            ),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(36),
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Colors.white.withOpacity(0.08),
+                                    Colors.white.withOpacity(0.02),
+                                    Colors.black.withOpacity(0.16),
+                                  ],
+                                  stops: const [0.0, 0.5, 1.0],
+                                ),
                               ),
                             ),
                           ),
@@ -2819,21 +2917,23 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
       ),
       child: ClipRRect(
         borderRadius: r,
-        child: BackdropFilter(
-          // Resting: light frost. Pressed: heavier, lens-like frost.
-          filter: ui.ImageFilter.blur(sigmaX: 3 + 5 * p, sigmaY: 3 + 5 * p),
-          child: Container(
+        child: glassBlur(
+          // Clear glass pill; only a touch more blur while pressed.
+          filter: ui.ImageFilter.blur(sigmaX: 1 + 3 * p, sigmaY: 1 + 3 * p),
+          child: CustomPaint(
+            foregroundPainter: GlassRimPainter(
+              radius: r,
+              tint: pal.accent,
+              strength: 0.75 + 0.6 * p,
+            ),
+            child: Container(
             decoration: BoxDecoration(
               borderRadius: r,
-              // Dark tinted pill at rest -> bright clear glass when pressed.
+              // Light grey glass at rest -> brighter clear glass when pressed.
               color: Color.lerp(
-                Colors.black.withOpacity(0.30),
-                Colors.white.withOpacity(0.16),
+                Colors.white.withOpacity(0.11),
+                Colors.white.withOpacity(0.17),
                 p,
-              ),
-              border: Border.all(
-                color: Colors.white.withOpacity(0.10 + 0.45 * p),
-                width: 1 + 0.6 * p,
               ),
             ),
             foregroundDecoration: BoxDecoration(
@@ -2851,6 +2951,7 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                 stops: const [0.0, 0.35, 0.7, 1.0],
               ),
             ),
+          ),
           ),
         ),
       ),
@@ -3105,7 +3206,10 @@ void openPlayer(BuildContext context) {
     showAddMusicSheet(context);
     return;
   }
-  Navigator.of(context).push(
+  if (glassPaused.value) return; // already open
+  glassPaused.value = true;
+  Navigator.of(context)
+      .push(
     PageRouteBuilder(
       opaque: false,
       transitionDuration: const Duration(milliseconds: 520),
@@ -3126,7 +3230,7 @@ void openPlayer(BuildContext context) {
         );
       },
     ),
-  );
+  ).whenComplete(() => glassPaused.value = false);
 }
 
 void playAndOpen(BuildContext context, int index) {
@@ -3216,6 +3320,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         audioHandler.libraryRevision,
         audioHandler.currentIndex,
         scanning,
+        glassPaused,
       ]),
       builder: (context, _) {
         final pal = appState.palette;
@@ -4443,7 +4548,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
-  Widget _ytHomeAlex(BuildContext context, AppPalette pal, YtHomeData d,
+  // ignore: unused_element
+  Widget _ytHomeAlexClassic(BuildContext context, AppPalette pal, YtHomeData d,
       Object? err, bool loading) {
     final header = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -5936,7 +6042,486 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
-  Widget _homeTab(BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+  // ─────────────────── AlexLMP home (chips + big sections) ───────────────────
+
+  Widget _homeTab(BuildContext context, AppPalette pal, List<TrackItem> tracks) =>
+      _homeV2(context, pal, yt: false, tracks: tracks);
+
+  Widget _ytHomeAlex(BuildContext context, AppPalette pal, YtHomeData d,
+          Object? err, bool loading) =>
+      _homeV2(context, pal, yt: true, d: d, err: err, loading: loading);
+
+  Widget _homeChip(AppPalette pal, String label, bool selected, VoidCallback onTap) {
+    return SquishyGesture(
+      pressedScale: 0.94,
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? pal.accent : Colors.transparent,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: selected ? pal.accent : Colors.white24,
+            width: 1.4,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? pal.onAccent : Colors.white.withOpacity(0.86),
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _homeTopBar(BuildContext context, AppPalette pal) {
+    final yt = appState.homeMode == 'youtube';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+      child: Row(
+        children: [
+          _accountButton(context, pal),
+          const SizedBox(width: 10),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _homeChip(pal, 'Local', !yt, () => _setMode('local')),
+                  const SizedBox(width: 8),
+                  _homeChip(pal, 'YouTube', yt, () => _setMode('youtube')),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(30),
+              border: Border.all(color: Colors.white24, width: 1.4),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: Icon(yt ? Icons.search_rounded : Icons.add_rounded,
+                      color: Colors.white),
+                  onPressed: () {
+                    if (yt) {
+                      showSearchSheet(context);
+                    } else {
+                      showAddMusicSheet(context);
+                    }
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.settings_rounded, color: Colors.white),
+                  onPressed: () => showSettingsSheet(context),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _v2Header(String title, {String? overline, VoidCallback? playAll}) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 26, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (overline != null)
+            Text(
+              overline,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.72),
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                letterSpacing: 0.6,
+              ),
+            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 29,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+              ),
+              if (playAll != null)
+                TextButton(
+                  onPressed: playAll,
+                  child: Text(
+                    'Play all',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.8),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _qpRow(BuildContext context, AppPalette pal, List<TrackItem> list, int i) {
+    final t = list[i];
+    final active = audioHandler.currentTrack?.id == t.id;
+    return GestureDetector(
+      onLongPress: () => t.isYouTube
+          ? showYtAddToPlaylist(context, t)
+          : showAddToPlaylistSheet(context, t),
+      child: SquishyGesture(
+        pressedScale: 0.97,
+        onTap: () => _ytPlay(list, i),
+        child: SizedBox(
+          height: 74,
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 58,
+                  height: 58,
+                  child: CustomAlbumArtwork(track: t),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      t.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: active ? pal.accent : Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      t.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.7),
+                        fontSize: 15,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (active)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: EqBars(color: pal.accent),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Songs in side-scrolling columns of four (next column peeks in).
+  Widget _qpColumns(BuildContext context, AppPalette pal, List<TrackItem> list) {
+    final colW = MediaQuery.of(context).size.width - 64;
+    final rows = min(4, list.length);
+    return SizedBox(
+      height: rows * 74.0,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(left: 20, right: 4),
+        children: [
+          for (var c = 0; c < list.length; c += 4)
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: SizedBox(
+                width: colW,
+                child: Column(
+                  children: [
+                    for (var i = c; i < min(c + 4, list.length); i++)
+                      _qpRow(context, pal, list, i),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bigCard({
+    required double w,
+    required Widget cover,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    VoidCallback? onLongPress,
+    bool circle = false,
+  }) {
+    return GestureDetector(
+      onLongPress: onLongPress,
+      child: SquishyGesture(
+        pressedScale: 0.96,
+        onTap: onTap,
+        child: SizedBox(
+          width: w,
+          child: Column(
+            crossAxisAlignment:
+                circle ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(circle ? w / 2 : 14),
+                child: SizedBox(width: w, height: w, child: cover),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.6),
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _bigRow(List<Widget> cards, double w) {
+    return SizedBox(
+      height: w + 68,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        itemCount: cards.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 18),
+        itemBuilder: (_, i) => cards[i],
+      ),
+    );
+  }
+
+  Widget _shelfCard(BuildContext context, YtShelfItem it, double w) {
+    final artist = it.kind == 'artist';
+    return _bigCard(
+      w: w,
+      cover: YtNetworkImage(
+        url: it.thumbnail,
+        size: w,
+        circle: artist,
+        fallbackIcon: artist ? Icons.person_rounded : Icons.album_rounded,
+      ),
+      title: it.title,
+      subtitle: it.subtitle,
+      circle: artist,
+      onTap: () => openYtShelfItem(context, it),
+    );
+  }
+
+  List<Widget> _trackCards(BuildContext context, List<TrackItem> list, double w) => [
+        for (var i = 0; i < list.length; i++)
+          _bigCard(
+            w: w,
+            cover: CustomAlbumArtwork(track: list[i]),
+            title: list[i].title,
+            subtitle: list[i].album.isNotEmpty && list[i].album != 'YouTube Music'
+                ? '${list[i].artist} • ${list[i].album}'
+                : list[i].artist,
+            onTap: () => _ytPlay(list, i),
+            onLongPress: () => list[i].isYouTube
+                ? showYtAddToPlaylist(context, list[i])
+                : showAddToPlaylistSheet(context, list[i]),
+          ),
+      ];
+
+  Widget _homeV2(
+    BuildContext context,
+    AppPalette pal, {
+    required bool yt,
+    List<TrackItem> tracks = const [],
+    YtHomeData? d,
+    Object? err,
+    bool loading = false,
+  }) {
+    final screenW = MediaQuery.of(context).size.width;
+    final cardW = (screenW - 40 - 18) / 2;
+    final out = <Widget>[Reveal(child: _homeTopBar(context, pal))];
+
+    if (!yt && tracks.isEmpty) {
+      out
+        ..add(const SizedBox(height: 90))
+        ..add(_emptyState(context, pal));
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 185),
+        children: out,
+      );
+    }
+
+    if (yt) {
+      final data = d!;
+      if (data.shelves.isEmpty) out.add(_ytHomeStatus(pal, err, loading));
+      final quick = data.quick.take(16).toList();
+      if (quick.isNotEmpty) {
+        out
+          ..add(_v2Header('Quick picks',
+              overline: 'LET\'S START WITH A RADIO',
+              playAll: () => _ytPlay(quick, 0)))
+          ..add(_qpColumns(context, pal, quick));
+      }
+      if (data.again.isNotEmpty) {
+        out
+          ..add(_v2Header('Listen again'))
+          ..add(_bigRow(
+              [for (final it in data.again) _shelfCard(context, it, cardW)], cardW));
+      }
+      if (data.mixes.isNotEmpty) {
+        out
+          ..add(_v2Header('Your mixes', overline: 'MADE FOR YOU'))
+          ..add(_bigRow(
+              [for (final it in data.mixes) _shelfCard(context, it, cardW)], cardW));
+      }
+      if (data.liked.isNotEmpty) {
+        final liked = data.liked.take(16).toList();
+        out
+          ..add(_v2Header('Liked songs',
+              overline: 'YOUR FAVORITES', playAll: () => _ytPlay(data.liked, 0)))
+          ..add(_qpColumns(context, pal, liked));
+      }
+      for (final sh in data.rest) {
+        final title = sh.title.isEmpty ? 'For you' : sh.title;
+        if (sh.kind == 'song') {
+          final songs = [
+            for (final it in sh.items) YouTubeMusic.trackFromShelf(it, it.subtitle)
+          ];
+          out
+            ..add(_v2Header(title, playAll: () => _ytPlay(songs, 0)))
+            ..add(_qpColumns(context, pal, songs));
+        } else {
+          out
+            ..add(_v2Header(title))
+            ..add(_bigRow(
+                [for (final it in sh.items) _shelfCard(context, it, cardW)], cardW));
+        }
+      }
+      out
+        ..add(_v2Header('Your playlists', overline: 'FROM YOUTUBE MUSIC'))
+        ..add(SizedBox(height: 214, child: _ytPlaylistRow(context, pal)));
+    } else {
+      final quick = _quickPicks(tracks, 16);
+      final recent = _recentFrom(tracks);
+      final mixes = buildMixes(tracks);
+      final liked = tracks.where((t) => appState.isLiked(t.id)).toList();
+      final pls = appState.playlists;
+      out
+        ..add(_v2Header('Quick picks',
+            overline: 'LET\'S START WITH A RADIO',
+            playAll: () => _ytPlay(quick, 0)))
+        ..add(_qpColumns(context, pal, quick));
+      if (recent.isNotEmpty) {
+        out
+          ..add(_v2Header('Listen again', playAll: () => _ytPlay(recent, 0)))
+          ..add(_bigRow(_trackCards(context, recent, cardW), cardW));
+      }
+      if (mixes.isNotEmpty) {
+        out
+          ..add(_v2Header('Your mixes', overline: 'MADE FOR YOU'))
+          ..add(_bigRow([
+            for (final m in mixes)
+              _bigCard(
+                w: cardW,
+                cover: MixCover(mix: m, size: cardW, showTitle: false),
+                title: m.title,
+                subtitle: m.description,
+                onTap: () => openMix(context, m),
+              ),
+          ], cardW));
+      }
+      if (liked.isNotEmpty) {
+        out
+          ..add(_v2Header('Liked songs',
+              overline: 'YOUR FAVORITES', playAll: () => _ytPlay(liked, 0)))
+          ..add(_qpColumns(context, pal, liked.take(16).toList()));
+      }
+      if (pls.isNotEmpty) {
+        out
+          ..add(_v2Header('Your playlists'))
+          ..add(_bigRow([
+            for (final pl in pls)
+              _bigCard(
+                w: cardW,
+                cover: PlaylistCoverThumbnail(playlist: pl, size: cardW),
+                title: pl.name,
+                subtitle:
+                    '${pl.trackIds.length} ${pl.trackIds.length == 1 ? 'song' : 'songs'}',
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => PlaylistDetailScreen(playlistId: pl.id),
+                )),
+              ),
+          ], cardW));
+      }
+      final artists = _amTopArtists(tracks);
+      if (artists.isNotEmpty) {
+        out
+          ..add(_v2Header('Artists you love'))
+          ..add(_bigRow([
+            for (final a in artists)
+              _bigCard(
+                w: cardW * 0.8,
+                cover: a.cover(cardW * 0.8),
+                title: a.title,
+                subtitle: a.subtitle,
+                circle: true,
+                onTap: a.onTap,
+              ),
+          ], cardW * 0.8));
+      }
+    }
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 185),
+      children: out,
+    );
+  }
+
+  // ignore: unused_element
+  Widget _homeTabClassic(BuildContext context, AppPalette pal, List<TrackItem> tracks) {
     final header = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
@@ -12551,6 +13136,13 @@ class SettingsScreen extends StatelessWidget {
             'Frosted glass cards and the draggable glass navigation bar',
             appState.liquidGlass, appState.setLiquidGlass,
             badge: 'BETA'),
+        _flag(pal, Icons.speed_rounded, 'high_refresh', 'High refresh rate',
+            'Use your screen\'s fastest refresh rate (90/120 Hz) instead of 60 Hz',
+            def: true, after: (_) => applyNativeSettings()),
+        _flag(pal, Icons.headset_off_rounded, 'pause_on_unplug',
+            'Pause when headphones disconnect',
+            'Stops the music instead of switching to the speaker',
+            def: true),
         _segments(pal, Icons.format_size_rounded, 'Text size',
             appState.d('text_scale', 1.0),
             <double, String>{0.9: 'Small', 1.0: 'Default', 1.15: 'Large'},
@@ -15286,13 +15878,9 @@ class AmPlayerView extends StatelessWidget {
                         pressedScale: 0.9,
                         onTap: () =>
                             playing ? audioHandler.pause() : audioHandler.play(),
-                        child: Container(
+                        child: SizedBox(
                           width: 118,
                           height: 118,
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.32),
-                            shape: BoxShape.circle,
-                          ),
                           child: loading
                               ? const Center(
                                   child: SizedBox(
