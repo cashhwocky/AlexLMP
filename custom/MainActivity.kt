@@ -34,6 +34,27 @@ class MainActivity : AudioServiceActivity() {
                             runOnUiThread { result.success(bytes) }
                         }.start()
                     }
+                    "keepScreenOn" -> {
+                        val on = call.argument<Boolean>("on") ?: false
+                        if (on) {
+                            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        } else {
+                            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                        result.success(null)
+                    }
+                    "getWallpaperColor" -> {
+                        // Material You accent from the wallpaper (Android 12+).
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            try {
+                                result.success(getColor(android.R.color.system_accent1_200))
+                            } catch (_: Exception) {
+                                result.success(0)
+                            }
+                        } else {
+                            result.success(0)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
