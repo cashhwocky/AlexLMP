@@ -69,7 +69,7 @@ jobs:
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
               android:width="108dp" android:height="108dp"
               android:viewportWidth="108" android:viewportHeight="108">
-              <path android:pathData="M0,0h108v108h-108z" android:fillColor="#050814"/>
+              <path android:pathData="M0,0h108v108h-108z" android:fillColor="#101830"/>
           </vector>
           EOF
 
@@ -79,14 +79,9 @@ jobs:
               xmlns:aapt="http://schemas.android.com/aapt"
               android:width="108dp" android:height="108dp"
               android:viewportWidth="108" android:viewportHeight="108">
-              <path
-                  android:pathData="M54,20 C35.22,20 20,35.22 20,54 C20,72.78 35.22,88 54,88 C72.78,88 88,72.78 88,54 C88,35.22 72.78,20 54,20 Z"
-                  android:fillColor="#101830"/>
-              <path
-                  android:pathData="M40,54 L40,62 M48,42 L48,66 M56,34 L56,74 M64,48 L64,60 M72,52 L72,56"
-                  android:strokeWidth="5.5"
-                  android:strokeLineCap="round"
-                  android:strokeColor="#567CFF"/>
+              <group android:pivotX="54" android:pivotY="54" android:scaleX="1.35" android:scaleY="1.35">
+                  <path android:pathData="M40,50 L40,58 M48,42 L48,66 M56,34 L56,74 M64,48 L64,60 M72,52 L72,56" android:strokeWidth="5.5" android:strokeLineCap="round" android:strokeColor="#567CFF"/>
+              </group>
           </vector>
           EOF
 
@@ -162,21 +157,25 @@ jobs:
           python3 - << 'PYEOF'
           import os
           R = "app_build/android/app/src/main/res"
+          # Full-bleed: the colour fills the whole icon (no circle inside a square),
+          # so it looks right in any launcher shape.
           icons = [
-              ("classic", ["#050814"], "#101830", None, ["#567CFF"]),
-              ("midnight", ["#000000"], "#141414", None, ["#FFFFFF"]),
-              ("sunset", ["#FF8A3D", "#E8407A"], "#2A0F1E", None, ["#FFD27A", "#FFFFFF"]),
-              ("aurora", ["#04121A"], "#0B2430", None, ["#3CF2C0", "#8A6CFF"]),
-              ("neon", ["#07000F"], None, ["#FF2BD6", "#2BE8FF"], ["#FF2BD6", "#2BE8FF"]),
-              ("mint", ["#DFF7EA"], "#FFFFFF", None, ["#0E7A4F"]),
-              ("ember", ["#160604"], "#2A0D08", None, ["#FFB03A", "#FF3D2E"]),
-              ("gold", ["#0A0906"], "#1A160C", None, ["#F8E3A3", "#C9962E"]),
-              ("ocean", ["#0B3D91", "#1CB5E0"], "#0A2A5E", None, ["#FFFFFF"]),
+              ("classic", ["#101830"], None, None, ["#567CFF"]),
+              ("midnight", ["#000000"], None, None, ["#FFFFFF"]),
+              ("sunset", ["#FF8A3D", "#E8407A"], None, None, ["#FFD27A", "#FFFFFF"]),
+              ("aurora", ["#0B2430"], None, None, ["#3CF2C0", "#8A6CFF"]),
+              ("neon", ["#07000F"], None, None, ["#FF2BD6", "#2BE8FF"]),
+              ("mint", ["#DFF7EA"], None, None, ["#0E7A4F"]),
+              ("ember", ["#2A0D08"], None, None, ["#FFB03A", "#FF3D2E"]),
+              ("gold", ["#1A160C"], None, None, ["#F8E3A3", "#C9962E"]),
+              ("ocean", ["#0B3D91", "#1CB5E0"], None, None, ["#FFFFFF"]),
           ]
           BARS = "M40,50 L40,58 M48,42 L48,66 M56,34 L56,74 M64,48 L64,60 M72,52 L72,56"
           CIRCLE = "M54,20 C35.22,20 20,35.22 20,54 C20,72.78 35.22,88 54,88 C72.78,88 88,72.78 88,54 C88,35.22 72.78,20 54,20 Z"
           RING = "M54,22 C36.33,22 22,36.33 22,54 C22,71.67 36.33,86 54,86 C71.67,86 86,71.67 86,54 C86,36.33 71.67,22 54,22 Z"
           HEAD = '<?xml version="1.0" encoding="utf-8"?>\n'
+          # Bars drawn 1.35x bigger (still inside the launcher's safe zone).
+          GROUP_OPEN = '<group android:pivotX="54" android:pivotY="54" android:scaleX="1.35" android:scaleY="1.35">'
 
           def write(path, text):
               os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -205,11 +204,13 @@ jobs:
               if ring:
                   f += '<path android:pathData="%s" android:strokeWidth="3" android:fillColor="#00000000">%s</path>' % (
                       RING, grad("android:strokeColor", ring, 22, 22, 86, 86))
+              f += GROUP_OPEN
               if len(bars) == 1:
                   f += '<path android:pathData="%s" android:strokeWidth="5.5" android:strokeLineCap="round" android:strokeColor="%s"/>' % (BARS, bars[0])
               else:
                   f += '<path android:pathData="%s" android:strokeWidth="5.5" android:strokeLineCap="round">%s</path>' % (
                       BARS, grad("android:strokeColor", bars, 0, 34, 0, 74))
+              f += '</group>'
               write("%s/drawable/ic_alt_%s_fg.xml" % (R, k), vec(f))
               write("%s/mipmap-anydpi-v26/ic_alt_%s.xml" % (R, k), HEAD +
                     '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">'
@@ -224,7 +225,7 @@ jobs:
 
           # Themed (Material You) icon on Android 13+.
           write("%s/drawable/ic_alt_mono.xml" % R, vec(
-              '<path android:pathData="%s" android:strokeWidth="5.5" android:strokeLineCap="round" android:strokeColor="#FF000000"/>' % BARS))
+              GROUP_OPEN + '<path android:pathData="%s" android:strokeWidth="5.5" android:strokeLineCap="round" android:strokeColor="#FF000000"/></group>' % BARS))
 
           # Black native launch screen so it flows into the animated one.
           for d in ["drawable", "drawable-v21"]:
