@@ -928,7 +928,12 @@ object YtMusicBridge {
                 }
                 val existing = downloads[videoId]
                 if (existing != null) {
-                    if (!(restartIfFailed && existing.failed != null)) {
+                    // A download that failed earlier (network switch, phone
+                    // dozing...) is started again instead of being reused, so
+                    // a broken preload never makes the song wait later.
+                    val retry = existing.failed != null &&
+                        (restartIfFailed || existing.users.get() == 0)
+                    if (!retry) {
                         existing.lastUsed = System.currentTimeMillis()
                         return existing
                     }
