@@ -1047,6 +1047,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
     player.positionStream.listen(_maybeCrossfade);
     player.positionStream.listen(_maybeEndFade);
+    player.positionStream.listen(_maybePrefetchAgain);
     player.positionStream.listen((p) {
       if (p > Duration.zero) _saveSession(p);
       if (p > Duration.zero) _lastGoodPosition = p;
@@ -1398,6 +1399,18 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     }
   }
 
+  /// Halfway through a song, preload the next one again, in case the first
+  /// try was lost (network change, phone dozing, cache trimmed).
+  int _prefetchAgainSeq = -1;
+  void _maybePrefetchAgain(Duration pos) {
+    if (_prefetchAgainSeq == _loadSeq) return;
+    final dur = player.duration;
+    if (dur == null || dur.inSeconds < 20) return;
+    if (pos.inMilliseconds < dur.inMilliseconds * 0.5) return;
+    _prefetchAgainSeq = _loadSeq;
+    _prefetchNextYouTube();
+  }
+
   /// Warm up the next YouTube Music track so skipping to it starts quickly.
   void _prefetchNextYouTube() {
     if (!appState.b('prefetch_next', true)) return;
@@ -1541,10 +1554,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     if (queued != null) return queued;
     if (tracks.isEmpty) return null;
     if (_shuffle && tracks.length > 1) {
-      int n;
-      do {
-        n = _rng.nextInt(tracks.length);
-      } while (n == _index);
+      // Use the song already picked (and preloaded) as "next".
+      final n = _shuffleNext();
+      _shufflePick = null;
       return n;
     }
     final n = _index + 1;
@@ -1620,7 +1632,8 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       return;
     }
     if (playbackState.value.repeatMode == AudioServiceRepeatMode.one) return;
-    if (_nextIndex(auto: false) == null) return;
+    // Look without taking: _nextIndex() would use up the queued song.
+    if (peekNext == null) return;
     _startCrossfade(secs);
   }
 
@@ -1654,47 +1667,64 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     if (src is! UriAudioSource) return;
     _crossfading = true;
     final base = player.volume > 0.01 ? player.volume : _userVolume;
-    final ghost = AudioPlayer();
+    // The helper player doesn't touch audio focus, so it can never pause
+    // or duck the main player when it starts.
+    final ghost = AudioPlayer(
+      handleInterruptions: false,
+      handleAudioSessionActivation: false,
+    );
+    final speed = player.speed;
     try {
       await _killGhost();
       _ghost = ghost;
-      // 1. Load the current song in a second, silent player.
+      // 1. Load the current song in the silent helper player.
       await ghost.setAudioSource(AudioSource.uri(src.uri));
       try {
-        await ghost.setSpeed(player.speed);
         await ghost.setPitch(appState.pitch.clamp(0.5, 2.0));
       } catch (_) {}
       await ghost.setVolume(0);
-      // 2. Line it up with where the song is *now* (not where it was before
-      //    loading, which is what caused the skip back) and start it.
-      await ghost.seek(player.position + const Duration(milliseconds: 200));
+      await ghost.setSpeed(speed);
+      // 2. Start it a little ahead of the main player and wait until it's
+      //    really playing.
+      await ghost.seek(player.position + const Duration(milliseconds: 250));
       ghost.play();
       final sw = Stopwatch()..start();
       final p0 = ghost.position;
       while (sw.elapsedMilliseconds < 2500 &&
           (ghost.position <= p0 ||
               ghost.processingState != ProcessingState.ready)) {
-        await Future<void>.delayed(const Duration(milliseconds: 25));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
       }
-      // Fine-tune: keep the two players within ~80 ms of each other.
-      final drift = player.position - ghost.position;
-      if (drift.inMilliseconds.abs() > 80) {
-        await ghost.seek(player.position + const Duration(milliseconds: 60));
-        await Future<void>.delayed(const Duration(milliseconds: 60));
+      // 3. Line the two up to within ~15 ms. The helper is silent, so it can
+      //    be nudged freely: big gaps with a seek, small ones by playing it
+      //    slightly faster/slower until it catches up (no audible jump).
+      final align = Stopwatch()..start();
+      while (align.elapsedMilliseconds < 1400) {
+        if (!identical(_ghost, ghost) || !player.playing) break;
+        final d = (player.position - ghost.position).inMilliseconds;
+        if (d.abs() <= 15) break;
+        if (d.abs() > 400) {
+          await ghost.seek(player.position + const Duration(milliseconds: 150));
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          continue;
+        }
+        // d > 0: helper is behind → slightly faster. Converges in ~0.3 s.
+        final adj = (d / 300).clamp(-0.15, 0.15);
+        await ghost.setSpeed(speed * (1 + adj));
+        await Future<void>.delayed(const Duration(milliseconds: 40));
       }
+      await ghost.setSpeed(speed);
       if (!player.playing || !identical(_ghost, ghost)) return;
-      // 3. Swap at the same spot: no jump, no gap.
+      // 4. Hand over gradually (not in one instant) so any tiny leftover
+      //    difference can't be heard as a jump.
       crossfadingNow.value = true;
-      await ghost.setVolume(base);
-      await player.setVolume(0);
-      // 4. Next song starts; one fades out while the other fades in.
-      final left = (player.duration ?? Duration.zero) - player.position;
+      await _equalPower(out: player, into: ghost, base: base, secs: 0.25);
+      // 5. Next song starts on the main player; one fades out while the
+      //    other fades in, with an equal-power curve (no dip in the middle).
+      final left = (ghost.duration ?? Duration.zero) - ghost.position;
       final fade = max(0.8, min(secs, left.inMilliseconds / 1000 - 0.2));
       await skipToNext();
-      await Future.wait([
-        _rampVolume(ghost, base, 0, fade),
-        _rampVolume(player, 0, base, fade),
-      ]);
+      await _equalPower(out: ghost, into: player, base: base, secs: fade);
     } catch (_) {
     } finally {
       try {
@@ -1703,6 +1733,30 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       if (identical(_ghost, ghost)) await _killGhost();
       _crossfading = false;
       crossfadingNow.value = false;
+    }
+  }
+
+  /// Fades [out] down and [into] up together. Equal-power (cos/sin) keeps
+  /// the overall loudness steady through the blend.
+  Future<void> _equalPower({
+    required AudioPlayer out,
+    required AudioPlayer into,
+    required double base,
+    required double secs,
+  }) async {
+    const stepMs = 30;
+    final steps = max(1, (secs * 1000 / stepMs).round());
+    for (var i = 1; i <= steps; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: stepMs));
+      final x = i / steps * pi / 2;
+      try {
+        await Future.wait([
+          out.setVolume(base * cos(x)),
+          into.setVolume(base * sin(x)),
+        ]);
+      } catch (_) {
+        return;
+      }
     }
   }
 
@@ -1913,10 +1967,26 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     await _load(prev, play: true);
   }
 
-  /// The song a "next" swipe would play, or null if unknown (shuffle) / none.
+  /// In shuffle, the next song is picked ahead of time so it can be
+  /// preloaded (and shown when you swipe).
+  int? _shufflePick;
+
+  int _shuffleNext() {
+    final p = _shufflePick;
+    if (p != null && p < tracks.length && p != _index) return p;
+    int n;
+    do {
+      n = _rng.nextInt(tracks.length);
+    } while (n == _index);
+    _shufflePick = n;
+    return n;
+  }
+
+  /// The song a "next" swipe would play, or null if none.
   TrackItem? get peekNext {
     if (upNext.isNotEmpty) return upNext.first;
-    if (tracks.length < 2 || _shuffle) return null;
+    if (tracks.length < 2) return null;
+    if (_shuffle) return tracks[_shuffleNext()];
     final n = _index + 1;
     if (n < tracks.length) return tracks[n];
     return tracks[0];
@@ -1963,6 +2033,8 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> setShuffleMode(AudioServiceShuffleMode shuffleMode) async {
     _shuffle = shuffleMode == AudioServiceShuffleMode.all;
+    _shufflePick = null;
+    if (_shuffle) _prefetchNextYouTube();
     playbackState.add(playbackState.value.copyWith(shuffleMode: shuffleMode));
   }
 
@@ -11350,8 +11422,18 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
   static const double _upMax = 170;
   bool _openingQueue = false;
 
+  /// True when a drag started on Android's own gesture area at the bottom
+  /// edge (swipe home / switch apps). Those drags are left to the system.
+  bool _ignoreDrag = false;
+
+  void _start(DragStartDetails d) {
+    final mq = MediaQuery.of(context);
+    final edge = max(mq.systemGestureInsets.bottom, mq.padding.bottom) + 28;
+    _ignoreDrag = d.globalPosition.dy > mq.size.height - edge;
+  }
+
   void _update(DragUpdateDetails d) {
-    if (_dismissing || _openingQueue) return;
+    if (_dismissing || _openingQueue || _ignoreDrag) return;
     var dy = d.delta.dy;
     // Pulling up gets heavier the further you go (rubber band).
     if (_c.value < 0 && dy < 0) dy *= 1 - (-_c.value / _upMax) * 0.7;
@@ -11385,6 +11467,11 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
   }
 
   void _end(DragEndDetails d) {
+    if (_ignoreDrag) {
+      _ignoreDrag = false;
+      if (_c.value != 0) _springBack(0);
+      return;
+    }
     if (_dismissing || _openingQueue) return;
     final v = d.velocity.pixelsPerSecond.dy;
     final h = MediaQuery.of(context).size.height;
@@ -11416,32 +11503,48 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      onVerticalDragStart: _start,
       onVerticalDragUpdate: _update,
       onVerticalDragEnd: _end,
-      onVerticalDragCancel: () => _springBack(0),
+      onVerticalDragCancel: () {
+        _ignoreDrag = false;
+        _springBack(0);
+      },
       child: AnimatedBuilder(
         animation: _c,
         builder: (context, child) {
+          // ONE layout for both directions. Switching between two different
+          // layouts when the player crossed its resting point (small swipes,
+          // or the spring-back bouncing) rebuilt the whole player = flicker.
           final h = MediaQuery.of(context).size.height;
-          if (_c.value < 0) {
-            // Pulling up: the player lifts, shrinks and rounds off, and an
-            // "Up next" hint rises from the bottom.
-            final up = (-_c.value / _upMax).clamp(0.0, 1.0).toDouble();
-            final pal = appState.palette;
-            return Stack(
-              children: [
-                Transform.translate(
-                  offset: Offset(0, _c.value * 0.45),
-                  child: child,
+          final v = _c.value;
+          final up = v < 0 ? (-v / _upMax).clamp(0.0, 1.0).toDouble() : 0.0;
+          final down = v > 0 ? (v / h).clamp(0.0, 1.0).toDouble() : 0.0;
+          final radius = min(1.0, down * 8) * 36;
+          final pal = appState.palette;
+          return Stack(
+            children: [
+              Transform.translate(
+                offset: Offset(0, v < 0 ? v * 0.45 : v),
+                child: Transform.scale(
+                  scale: 1 - 0.05 * down,
+                  alignment: Alignment.topCenter,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(radius),
+                    clipBehavior: radius > 0 ? Clip.antiAlias : Clip.none,
+                    child: child,
+                  ),
                 ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 18 + 40 * up,
-                  child: IgnorePointer(
-                    child: Material(
-                      type: MaterialType.transparency,
-                      child: Opacity(
+              ),
+              // "Up next" hint when pulling up (invisible otherwise).
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 18 + 40 * up,
+                child: IgnorePointer(
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: Opacity(
                       opacity: up,
                       child: Center(
                         child: Container(
@@ -11476,23 +11579,10 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
                         ),
                       ),
                     ),
-                    ),
                   ),
                 ),
-              ],
-            );
-          }
-          final p = (_c.value / h).clamp(0.0, 1.0).toDouble();
-          return Transform.translate(
-            offset: Offset(0, _c.value),
-            child: Transform.scale(
-              scale: 1 - 0.05 * p,
-              alignment: Alignment.topCenter,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(min(1.0, p * 8) * 36),
-                child: child,
               ),
-            ),
+            ],
           );
         },
         child: HeroMode(
@@ -24490,27 +24580,29 @@ class AppIconStyle {
 }
 
 const List<AppIconStyle> kAppIcons = [
-  AppIconStyle('classic', 'Classic', [Color(0xFF050814)], Color(0xFF101830),
-      null, [Color(0xFF567CFF)], 'bounce', 'Bounce'),
-  AppIconStyle('midnight', 'Midnight', [Color(0xFF000000)], Color(0xFF141414),
-      null, [Color(0xFFFFFFFF)], 'wave', 'Wave'),
+  // Full-bleed: the colour fills the whole icon (no circle inside a
+  // square), so it looks right in any launcher shape.
+  AppIconStyle('classic', 'Classic', [Color(0xFF101830)], null, null,
+      [Color(0xFF567CFF)], 'bounce', 'Bounce'),
+  AppIconStyle('midnight', 'Midnight', [Color(0xFF000000)], null, null,
+      [Color(0xFFFFFFFF)], 'wave', 'Wave'),
   AppIconStyle('sunset', 'Sunset', [Color(0xFFFF8A3D), Color(0xFFE8407A)],
-      Color(0xFF2A0F1E), null, [Color(0xFFFFD27A), Color(0xFFFFFFFF)], 'rise',
-      'Rise'),
-  AppIconStyle('aurora', 'Aurora', [Color(0xFF04121A)], Color(0xFF0B2430),
-      null, [Color(0xFF3CF2C0), Color(0xFF8A6CFF)], 'wave', 'Wave'),
-  AppIconStyle('neon', 'Neon', [Color(0xFF07000F)], null,
-      [Color(0xFFFF2BD6), Color(0xFF2BE8FF)],
+      null, null, [Color(0xFFFFD27A), Color(0xFFFFFFFF)], 'rise', 'Rise'),
+  AppIconStyle('aurora', 'Aurora', [Color(0xFF0B2430)], null, null,
+      [Color(0xFF3CF2C0), Color(0xFF8A6CFF)], 'wave', 'Wave'),
+  AppIconStyle('neon', 'Neon', [Color(0xFF07000F)], null, null,
       [Color(0xFFFF2BD6), Color(0xFF2BE8FF)], 'pulse', 'Pulse'),
-  AppIconStyle('mint', 'Mint', [Color(0xFFDFF7EA)], Color(0xFFFFFFFF), null,
+  AppIconStyle('mint', 'Mint', [Color(0xFFDFF7EA)], null, null,
       [Color(0xFF0E7A4F)], 'bounce', 'Bounce'),
-  AppIconStyle('ember', 'Ember', [Color(0xFF160604)], Color(0xFF2A0D08), null,
+  AppIconStyle('ember', 'Ember', [Color(0xFF2A0D08)], null, null,
       [Color(0xFFFFB03A), Color(0xFFFF3D2E)], 'rise', 'Rise'),
-  AppIconStyle('gold', 'Gold', [Color(0xFF0A0906)], Color(0xFF1A160C), null,
+  AppIconStyle('gold', 'Gold', [Color(0xFF1A160C)], null, null,
       [Color(0xFFF8E3A3), Color(0xFFC9962E)], 'glow', 'Shine'),
   AppIconStyle('ocean', 'Ocean', [Color(0xFF0B3D91), Color(0xFF1CB5E0)],
-      Color(0xFF0A2A5E), null, [Color(0xFFFFFFFF)], 'spin', 'Orbit'),
+      null, null, [Color(0xFFFFFFFF)], 'spin', 'Orbit'),
 ];
+
+const double kIconBarScale = 1.35;
 
 AppIconStyle appIconStyle([String? key]) {
   final k = key ?? appState.str('app_icon', 'classic');
@@ -24627,6 +24719,10 @@ class AppIconPainter extends CustomPainter {
           ).createShader(Rect.fromCircle(center: c, radius: 38)),
       );
     }
+    // Bars drawn 1.35× bigger, same as the launcher icon.
+    canvas.translate(54, 54);
+    canvas.scale(kIconBarScale);
+    canvas.translate(-54, -54);
     const barsRect = Rect.fromLTWH(30, 30, 48, 48);
     final bar = _fill(s.bars, barsRect, vertical: true)
       ..style = PaintingStyle.stroke
@@ -26981,7 +27077,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.0';
+const String kAppVersion = '2.8.1';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
