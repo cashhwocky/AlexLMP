@@ -70,8 +70,11 @@ Future<void> main() async {
       config: const AudioServiceConfig(
         androidNotificationChannelId: 'com.alexlmp.app.channel.audio',
         androidNotificationChannelName: 'AlexLMP Music Playback',
-        androidNotificationOngoing: true,
-        androidStopForegroundOnPause: true,
+        // Stay in the foreground while paused so the media session keeps
+        // running: third-party controllers (crDroid's dynamic bar, custom
+        // players) lose the session when Android puts the app to sleep.
+        androidNotificationOngoing: false,
+        androidStopForegroundOnPause: false,
       ),
     );
   } catch (_) {
@@ -1106,28 +1109,59 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     } catch (_) {}
   }
 
+  /// True while one song is being swapped for the next. The old song is
+  /// paused for a moment during the swap; outside apps must not see that as
+  /// "stopped", or they let go of AlexLMP's media session.
+  bool _switching = false;
+
+  void _publishState() {
+    try {
+      playbackState.add(_transformEvent(player.playbackEvent));
+    } catch (_) {}
+  }
+
   PlaybackState _transformEvent(PlaybackEvent event) {
+    final playing = player.playing || _switching;
+    var state = const {
+      ProcessingState.idle: AudioProcessingState.idle,
+      ProcessingState.loading: AudioProcessingState.loading,
+      ProcessingState.buffering: AudioProcessingState.buffering,
+      ProcessingState.ready: AudioProcessingState.ready,
+      ProcessingState.completed: AudioProcessingState.completed,
+    }[player.processingState]!;
+    // "Idle" tells Android the session has nothing loaded. While a song is
+    // set (just switching), say "buffering" instead.
+    if (state == AudioProcessingState.idle && currentTrack != null) {
+      state = AudioProcessingState.buffering;
+    }
+    if (_switching && state == AudioProcessingState.completed) {
+      state = AudioProcessingState.buffering;
+    }
     return PlaybackState(
       controls: [
         MediaControl.skipToPrevious,
-        if (player.playing) MediaControl.pause else MediaControl.play,
+        if (playing) MediaControl.pause else MediaControl.play,
         MediaControl.skipToNext,
         MediaControl.stop,
       ],
+      // Every action is always available, whatever the current state, so
+      // third-party controllers never grey out or ignore a button.
       systemActions: const {
+        MediaAction.play,
+        MediaAction.pause,
+        MediaAction.playPause,
+        MediaAction.skipToNext,
+        MediaAction.skipToPrevious,
+        MediaAction.stop,
         MediaAction.seek,
         MediaAction.seekForward,
         MediaAction.seekBackward,
+        MediaAction.setShuffleMode,
+        MediaAction.setRepeatMode,
       },
       androidCompactActionIndices: const [0, 1, 2],
-      processingState: const {
-        ProcessingState.idle: AudioProcessingState.idle,
-        ProcessingState.loading: AudioProcessingState.loading,
-        ProcessingState.buffering: AudioProcessingState.buffering,
-        ProcessingState.ready: AudioProcessingState.ready,
-        ProcessingState.completed: AudioProcessingState.completed,
-      }[player.processingState]!,
-      playing: player.playing,
+      processingState: state,
+      playing: playing,
       updatePosition: player.position,
       bufferedPosition: player.bufferedPosition,
       speed: player.speed,
@@ -1241,6 +1275,19 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       _userVolume = player.volume;
     }
     final seq = ++_loadSeq;
+    if (play && !_switching) {
+      _switching = true;
+      _publishState();
+    }
+    if (play) {
+      // Safety net: never stay "switching" if a load ends some other way.
+      Future<void>.delayed(const Duration(seconds: 12), () {
+        if (_switching && _loadSeq == seq) {
+          _switching = false;
+          _publishState();
+        }
+      });
+    }
     // Smooth switch: the old song fades out (and stops) straight away instead
     // of playing on while the new one loads, then the new one fades in.
     // Crossfade handles its own volumes, so it's left alone.
@@ -1291,11 +1338,19 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
           player.play();
         }
       }
+      if (seq == _loadSeq && _switching) {
+        _switching = false;
+        _publishState();
+      }
       _prefetchNextYouTube();
     } catch (e) {
       if (seq != _loadSeq) return;
       _loadedId = null;
       _restoreVolume();
+      if (_switching) {
+        _switching = false;
+        _publishState();
+      }
       if (t.isYouTube && play) {
         final detail = e is PlatformException ? (e.message ?? e.code) : '$e';
         appNotice.value =
@@ -27077,7 +27132,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.1';
+const String kAppVersion = '2.8.2';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -27950,12 +28005,18 @@ void startWidgetSync() {
   audioHandler.playbackState.listen((st) {
     if (st.playing != _widgetPlaying) push();
   });
+  // The notification's song info is always right; follow it as well.
+  audioHandler.mediaItem.listen((_) => push());
   push();
 }
 
 Future<void> _pushWidget() async {
   if (!Platform.isAndroid) return;
   final t = audioHandler.currentTrack;
+  final item = audioHandler.mediaItem.value;
+  // A song is still loaded (e.g. the list was just swapped): don't flash
+  // "Nothing playing" on the widget; the next update fills it in.
+  if (t == null && item != null) return;
   final playing = audioHandler.playbackState.value.playing;
   if (t?.id == _widgetTrackId && playing == _widgetPlaying) return;
   final trackChanged = t?.id != _widgetTrackId;

@@ -3,6 +3,8 @@ name: Build AlexLMP Release APK
 on:
   push:
     branches: [ main, master ]
+    # Pushing a version tag (v2.8.2, ...) also publishes a GitHub Release.
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
@@ -10,6 +12,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to create the release
 
     steps:
       - name: Checkout repository
@@ -326,6 +330,11 @@ jobs:
           echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
           echo "VERSION_CODE=$((100 + ${{ github.run_number }}))" >> "$GITHUB_ENV"
           echo "Building version $VERSION_NAME"
+          # On a version tag, the tag must match kAppVersion in main.dart.
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "v$VERSION_NAME" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match kAppVersion $VERSION_NAME in custom/main.dart. Update kAppVersion (and pubspec) first."
+            exit 1
+          fi
 
       - name: Build APK
         working-directory: app_build
@@ -342,3 +351,15 @@ jobs:
         with:
           name: AlexLMP-Release-APK
           path: app_build/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Name the APK for the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: cp app_build/build/app/outputs/flutter-apk/app-release.apk "AlexLMP-${GITHUB_REF_NAME}.apk"
+
+      - name: Publish GitHub Release with the APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: AlexLMP ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: AlexLMP-${{ github.ref_name }}.apk
