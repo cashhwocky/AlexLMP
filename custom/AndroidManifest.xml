@@ -21,6 +21,14 @@
         android:enableOnBackInvokedCallback="true"
         android:requestLegacyExternalStorage="true">
 
+        <!-- Android Auto: AlexLMP shows up in the car's app list. -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+        <meta-data
+            android:name="com.google.android.gms.car.notification.SmallIcon"
+            android:resource="@drawable/ic_stat_alexlmp" />
+
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"

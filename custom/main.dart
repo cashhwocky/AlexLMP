@@ -75,6 +75,9 @@ Future<void> main() async {
         // players) lose the session when Android puts the app to sleep.
         androidNotificationOngoing: false,
         androidStopForegroundOnPause: false,
+        // White AlexLMP bars (the full-colour app icon shows up as a plain
+        // white dot in the notification and on Android Auto).
+        androidNotificationIcon: 'drawable/ic_stat_alexlmp',
       ),
     );
   } catch (_) {
@@ -2166,6 +2169,164 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> skipToQueueItem(int i) => playIndex(i);
+
+  // ── Android Auto ─────────────────────────────────────────────────────
+  // The car screen browses this tree. Song ids are "<list>|<track id>" so
+  // tapping a song plays it within the list it was picked from.
+  static const _aaMax = 300;
+  final Map<String, TrackItem> _aaSearchHits = {};
+
+  MediaItem _aaFolder(String id, String title, {String? subtitle}) =>
+      MediaItem(id: id, title: title, artist: subtitle, playable: false);
+
+  MediaItem _aaSong(String list, TrackItem t) => MediaItem(
+        id: '$list|${t.id}',
+        title: t.title,
+        artist: t.artist,
+        album: t.album,
+        duration:
+            t.durationSeconds > 0 ? Duration(seconds: t.durationSeconds) : null,
+        artUri: t.artworkUrl != null ? Uri.tryParse(t.artworkUrl!) : null,
+        playable: true,
+      );
+
+  /// The songs in one browsable list.
+  List<TrackItem> _aaList(String list) {
+    List<TrackItem> byIds(Iterable<String> ids) => [
+          for (final id in ids)
+            if (trackById(id) case final t?) t,
+        ];
+    if (list == 'liked') return likedTracks.reversed.toList();
+    if (list == 'history') return byIds(appState.recent);
+    if (list == 'songs') {
+      final all = [...tracks]
+        ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+      return all;
+    }
+    if (list == 'search') return _aaSearchHits.values.toList();
+    if (list.startsWith('pl:')) {
+      final id = list.substring(3);
+      for (final pl in appState.playlists) {
+        if (pl.id == id) return byIds(pl.trackIds);
+      }
+    }
+    return const [];
+  }
+
+  @override
+  Future<List<MediaItem>> getChildren(String parentMediaId,
+      [Map<String, dynamic>? options]) async {
+    switch (parentMediaId) {
+      case AudioService.browsableRootId:
+        // Android Auto shows these as tabs (up to four).
+        return [
+          _aaFolder('liked', 'Liked'),
+          _aaFolder('playlists', 'Playlists'),
+          _aaFolder('history', 'Recent'),
+          _aaFolder('songs', 'Songs'),
+        ];
+      case AudioService.recentRootId:
+        // "Resume" suggestion on the car's home screen.
+        final t = currentTrack;
+        return t == null ? const [] : [_aaSong('songs', t)];
+      case 'playlists':
+        return [
+          for (final pl in appState.playlists)
+            _aaFolder('pl:${pl.id}', pl.name,
+                subtitle:
+                    '${pl.trackIds.length} ${pl.trackIds.length == 1 ? 'song' : 'songs'}'),
+        ];
+      default:
+        return [
+          for (final t in _aaList(parentMediaId).take(_aaMax))
+            _aaSong(parentMediaId, t),
+        ];
+    }
+  }
+
+  @override
+  Future<MediaItem?> getMediaItem(String mediaId) async {
+    final bar = mediaId.indexOf('|');
+    final id = bar >= 0 ? mediaId.substring(bar + 1) : mediaId;
+    final t = trackById(id) ?? _aaSearchHits[id];
+    return t?.toMediaItem();
+  }
+
+  @override
+  Future<void> playFromMediaId(String mediaId,
+      [Map<String, dynamic>? extras]) async {
+    final bar = mediaId.indexOf('|');
+    if (bar < 0) {
+      // A whole list (e.g. a playlist): play it from the top.
+      final list = _aaList(mediaId);
+      if (list.isNotEmpty) await playYouTubeList(list, 0);
+      return;
+    }
+    final listId = mediaId.substring(0, bar);
+    final id = mediaId.substring(bar + 1);
+    if (listId == 'search') {
+      final hit = _aaSearchHits[id] ?? trackById(id);
+      if (hit != null) await playYouTubeTrack(hit);
+      return;
+    }
+    final list = _aaList(listId);
+    final start = list.indexWhere((t) => t.id == id);
+    if (start >= 0) {
+      await playYouTubeList(list, start);
+    } else {
+      await playTrackById(id);
+    }
+  }
+
+  /// Songs for a search typed or spoken in the car: your library first,
+  /// then YouTube Music.
+  Future<List<TrackItem>> _aaFind(String query) async {
+    final q = query.toLowerCase().trim();
+    if (q.isEmpty) return const [];
+    final local = tracks
+        .where((t) =>
+            t.title.toLowerCase().contains(q) ||
+            '${t.title} ${t.artist}'.toLowerCase().contains(q) ||
+            '${t.artist} ${t.title}'.toLowerCase().contains(q))
+        .take(15)
+        .toList();
+    var online = <TrackItem>[];
+    try {
+      online = await YouTubeMusic.search(query);
+    } catch (_) {}
+    final seen = local.map((t) => t.id).toSet();
+    return [
+      ...local,
+      for (final t in online.take(20))
+        if (seen.add(t.id)) t,
+    ];
+  }
+
+  @override
+  Future<List<MediaItem>> search(String query,
+      [Map<String, dynamic>? extras]) async {
+    final found = await _aaFind(query);
+    _aaSearchHits
+      ..clear()
+      ..addEntries(found.map((t) => MapEntry(t.id, t)));
+    return [for (final t in found) _aaSong('search', t)];
+  }
+
+  @override
+  Future<void> playFromSearch(String query,
+      [Map<String, dynamic>? extras]) async {
+    // "Play music on AlexLMP" with no song named: carry on / start up.
+    if (query.trim().isEmpty) {
+      await play();
+      return;
+    }
+    final found = await _aaFind(query);
+    if (found.isEmpty) {
+      appNotice.value = 'Couldn\'t find "$query".';
+      return;
+    }
+    await playYouTubeTrack(found.first);
+  }
 
   @override
   Future<void> stop() async {
@@ -27485,7 +27646,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.7';
+const String kAppVersion = '2.8.8';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
