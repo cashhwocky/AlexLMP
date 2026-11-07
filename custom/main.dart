@@ -7457,16 +7457,25 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             ],
           ),
         ),
-        if (_libraryFilter == 0 && !yt)
+        if (_libraryFilter == 0)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.tonalIcon(
-                onPressed: () => showCreateOrEditPlaylistDialog(context),
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('New playlist'),
-              ),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (!yt)
+                  FilledButton.tonalIcon(
+                    onPressed: () => showCreateOrEditPlaylistDialog(context),
+                    icon: const Icon(Icons.add_rounded),
+                    label: const Text('New playlist'),
+                  ),
+                FilledButton.tonalIcon(
+                  onPressed: () => openSpotifyImport(context),
+                  icon: const Icon(Icons.file_download_rounded),
+                  label: const Text('Import from Spotify'),
+                ),
+              ],
             ),
           ),
         ...items,
@@ -8963,6 +8972,17 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             subtitle: 'Name it, add a cover',
             onTap: () => showCreateOrEditPlaylistDialog(context),
           ),
+          _libRow(
+            pal,
+            cover: Container(
+              color: pal.accent.withOpacity(0.12),
+              child: Icon(Icons.file_download_rounded,
+                  color: pal.accent, size: 28),
+            ),
+            title: 'Import from Spotify',
+            subtitle: 'Bring over a playlist with Exportify',
+            onTap: () => openSpotifyImport(context),
+          ),
           if (ytAccount.value.signedIn)
             Padding(
               padding: const EdgeInsets.only(top: 14),
@@ -9042,6 +9062,23 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               title: 'New playlist',
               subtitle: 'Name it, add a cover',
               onTap: () => showCreateOrEditPlaylistDialog(context),
+            ),
+            MediaCard(
+              width: cw,
+              cover: Container(
+                width: cw,
+                height: cw,
+                decoration: BoxDecoration(
+                  color: pal.accent.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: pal.accent.withOpacity(0.45)),
+                ),
+                child: Icon(Icons.file_download_rounded,
+                    color: pal.accent, size: 40),
+              ),
+              title: 'Import from Spotify',
+              subtitle: 'Bring over a playlist',
+              onTap: () => openSpotifyImport(context),
             ),
           ],
         ),
@@ -15220,9 +15257,6 @@ class SettingsScreen extends StatelessWidget {
         _tile(pal, Icons.refresh_rounded, 'Rescan music library',
             'Pick up newly added songs', () => scanDeviceAudio(),
             trailing: const SizedBox.shrink()),
-        _tile(pal, Icons.playlist_add_rounded, 'Import Spotify playlist',
-            'Pick a CSV export (Exportify works) and find the songs on YouTube Music',
-            () => openSpotifyImport(context)),
       ]),
     ];
   }
@@ -27422,7 +27456,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.7';
+const String kAppVersion = '2.8.8';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -30474,7 +30508,81 @@ Future<TrackItem?> _findOnYtm(_ImportRow r) async {
   return bestScore >= 2 ? best : null;
 }
 
+const kExportifyUrl = 'https://exportify.net';
+
 Future<void> openSpotifyImport(BuildContext context) async {
+  // Step 1: get a CSV from Exportify. Step 2: pick it.
+  final pick = await showModalBottomSheet<bool>(
+    context: context,
+    showDragHandle: true,
+    builder: (ctx) {
+      final cs = Theme.of(ctx).colorScheme;
+      Widget step(String n, String title, String body) => Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              CircleAvatar(
+                  radius: 13,
+                  backgroundColor: cs.primaryContainer,
+                  child: Text(n,
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: cs.onPrimaryContainer))),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 2),
+                      Text(body,
+                          style: TextStyle(
+                              fontSize: 13.5,
+                              height: 1.35,
+                              color: cs.onSurfaceVariant)),
+                    ]),
+              ),
+            ]),
+          );
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 0, 22, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Import from Spotify',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 16),
+              step('1', 'Export your playlist',
+                  'Open Exportify, log in with Spotify and tap Export next to the playlist. It saves a .csv file.'),
+              step('2', 'Pick the file here',
+                  'AlexLMP finds each song on YouTube Music and saves them as a playlist.'),
+              const SizedBox(height: 6),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(50)),
+                onPressed: () => openExternalUrl(kExportifyUrl),
+                icon: const Icon(Icons.open_in_new_rounded),
+                label: const Text('Open Exportify'),
+              ),
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(50)),
+                onPressed: () => Navigator.pop(ctx, true),
+                icon: const Icon(Icons.upload_file_rounded),
+                label: const Text('Pick CSV file'),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+  if (pick != true || !context.mounted) return;
   FilePickerResult? res;
   try {
     res = await FilePicker.platform.pickFiles(type: FileType.any, withData: true);
