@@ -45,6 +45,7 @@ jobs:
           cp custom/MainActivity.kt app_build/android/app/src/main/kotlin/com/alexlmp/app/MainActivity.kt
           cp custom/YtMusicBridge.kt app_build/android/app/src/main/kotlin/com/alexlmp/app/YtMusicBridge.kt
           cp custom/AlexWidget.kt app_build/android/app/src/main/kotlin/com/alexlmp/app/AlexWidget.kt
+          cp custom/UpdateWorker.kt app_build/android/app/src/main/kotlin/com/alexlmp/app/UpdateWorker.kt
           # Home screen widget layouts / icons
           mkdir -p app_build/android/app/src/main/res
           cp -r custom/res/. app_build/android/app/src/main/res/
@@ -313,6 +314,7 @@ jobs:
           dependencies {
               coreLibraryDesugaring "com.android.tools:desugar_jdk_libs_nio:2.0.4"
               implementation "com.github.teamnewpipe:NewPipeExtractor:v0.26.5"
+              implementation "androidx.work:work-runtime-ktx:2.9.1"
           }
           EOF
 

@@ -15263,7 +15263,7 @@ class SettingsScreen extends StatelessWidget {
             () => checkForUpdates(context, manual: true)),
         _flag(pal, Icons.notifications_active_rounded, 'update_check',
             'Update notifications',
-            'Tell me when a new version is released on GitHub',
+            'Checks every hour, even when AlexLMP is closed',
             def: true),
         _tile(pal, Icons.restart_alt_rounded, 'Reset settings',
             'Put every option on this page back to default (keeps your music, likes & playlists)',
@@ -27422,7 +27422,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.6';
+const String kAppVersion = '2.8.7';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -27768,7 +27768,7 @@ Future<void> checkForUpdates(BuildContext context, {bool manual = false}) async 
     if (!appState.b('update_check', true)) return;
     final last = prefs?.getInt('update_last_check') ?? 0;
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (now - last < const Duration(hours: 6).inMilliseconds) return;
+    if (now - last < const Duration(hours: 1).inMilliseconds) return;
     await prefs?.setInt('update_last_check', now);
   }
   AppRelease rel;
@@ -27791,6 +27791,7 @@ Future<void> checkForUpdates(BuildContext context, {bool manual = false}) async 
       'title': 'AlexLMP ${rel.version} is available',
       'text': 'Tap to download the update.',
       'url': rel.downloadUrl,
+      'version': rel.version,
     });
   } catch (_) {}
 

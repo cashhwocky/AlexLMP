@@ -173,10 +173,12 @@ class MainActivity : AudioServiceActivity() {
                     }
                     "showUpdateNotification" -> {
                         try {
-                            showUpdateNotification(
+                            UpdateWorker.notify(
+                                applicationContext,
                                 call.argument<String>("title") ?: "Update available",
                                 call.argument<String>("text") ?: "",
-                                call.argument<String>("url") ?: ""
+                                call.argument<String>("url") ?: "",
+                                call.argument<String>("version")
                             )
                             result.success(true)
                         } catch (e: Exception) {
@@ -194,6 +196,8 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+        // Hourly background check for new releases.
+        try { UpdateWorker.schedule(applicationContext) } catch (_: Exception) {}
         YtMusicBridge.init(applicationContext)
         YtMusicBridge.attachActivity(this)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, YtMusicBridge.CHANNEL)
@@ -255,38 +259,6 @@ class MainActivity : AudioServiceActivity() {
     }
 
     /** Posts an "update available" notification that opens [url] when tapped. */
-    private fun showUpdateNotification(title: String, text: String, url: String) {
-        val nm = getSystemService(android.content.Context.NOTIFICATION_SERVICE)
-            as android.app.NotificationManager
-        val channelId = "alexlmp_updates"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            nm.createNotificationChannel(
-                android.app.NotificationChannel(
-                    channelId, "App updates",
-                    android.app.NotificationManager.IMPORTANCE_DEFAULT
-                ).apply { description = "New AlexLMP versions" }
-            )
-        }
-        val open = android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(url))
-        val pi = android.app.PendingIntent.getActivity(
-            this, 4242, open,
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
-                android.app.PendingIntent.FLAG_IMMUTABLE
-        )
-        @Suppress("DEPRECATION")
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            android.app.Notification.Builder(this, channelId)
-        else android.app.Notification.Builder(this)
-        val n = builder
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setContentIntent(pi)
-            .setAutoCancel(true)
-            .build()
-        nm.notify(4242, n)
-    }
-
     /** Ask for the screen's fastest refresh rate (90/120 Hz) at the current
      *  resolution, or let the system choose again when [on] is false. */
     private fun applyRefreshRate(on: Boolean) {
