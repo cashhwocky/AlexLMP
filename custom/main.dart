@@ -1355,8 +1355,11 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         final detail = e is PlatformException ? (e.message ?? e.code) : '$e';
         if (detail.contains('AgeRestrictedContentException') ||
             detail.contains('age-restricted')) {
-          // Same as YouTube: ask first, then try with the user's account.
-          contentWarning.value = t;
+          // Signed-in-only songs can't be played yet (YouTube scrambles
+          // signed-in streams in a way the extractor can't decode). Say so
+          // plainly instead of showing a giant error.
+          appNotice.value = '"${t.title}" isn\'t playable in AlexLMP yet. '
+              'YouTube only allows it for signed-in accounts.';
         } else {
           appNotice.value =
               'Couldn\'t load "${t.title}" from YouTube Music. ($detail)';
@@ -27376,7 +27379,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.4';
+const String kAppVersion = '2.8.5';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
