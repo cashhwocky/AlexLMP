@@ -1,10 +1,13 @@
 All your music, one player.
 
-AlexLMP 2.8.8 makes update alerts automatic and makes Spotify import easier to find.
+AlexLMP 2.8.7 makes update alerts automatic, makes Spotify import easier to find and smooths out crossfade.
 
 ## New
 - **Background update checks.** AlexLMP now checks for a new version about once an hour, even when the app is closed, and sends you a notification when one is out. Tap it to download the update. You get one notification per version, and you can turn it off in Settings > Update notifications.
 - **Import from Spotify is in your Library.** It now sits next to New playlist instead of in Settings. It also walks you through it: open Exportify straight from the app, export your playlist as a CSV, then pick the file.
+
+## Fixed
+- **Crossfade is smooth now.** The next song no longer pops in partway through the fade or glitches as it starts. The fade waits until the song is actually playing, and the old song can't cut off in the middle of it.
 
 ## From 2.8.6
 - Heart button in the music notification to like or unlike the current song.

@@ -1746,7 +1746,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     final secs = appState.d('crossfade_secs', 6.0);
     final left = dur - pos;
     // Start a little early: the second player needs a moment to get ready.
-    if (left > Duration(milliseconds: ((secs + 2.5) * 1000).round()) ||
+    if (left > Duration(milliseconds: ((secs + 4) * 1000).round()) ||
         left < const Duration(milliseconds: 800)) {
       return;
     }
@@ -1834,16 +1834,45 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       }
       await ghost.setSpeed(speed);
       if (!player.playing || !identical(_ghost, ghost)) return;
-      // 4. Hand over gradually (not in one instant) so any tiny leftover
-      //    difference can't be heard as a jump.
+      // 4. Hand the old song over to the helper. Two copies of the same song
+      //    a few ms apart sound "phasey" if blended for long, so this is a
+      //    very short blend: long enough to avoid a click, too short to hear.
       crossfadingNow.value = true;
-      await _equalPower(out: player, into: ghost, base: base, secs: 0.25);
-      // 5. Next song starts on the main player; one fades out while the
-      //    other fades in, with an equal-power curve (no dip in the middle).
-      final left = (ghost.duration ?? Duration.zero) - ghost.position;
-      final fade = max(0.8, min(secs, left.inMilliseconds / 1000 - 0.2));
+      await _equalPower(
+          out: player, into: ghost, base: base, secs: 0.06, stepMs: 15);
+      try {
+        await player.setVolume(0);
+      } catch (_) {}
+      // 5. Load the next song on the main player (silent) and wait until it
+      //    is really playing. Fading in while it's still buffering made it
+      //    pop in partway through the fade.
       await skipToNext();
-      await _equalPower(out: ghost, into: player, base: base, secs: fade);
+      final ready = Stopwatch()..start();
+      while (ready.elapsedMilliseconds < 6000) {
+        if (!identical(_ghost, ghost)) return;
+        if (player.playing &&
+            player.processingState == ProcessingState.ready &&
+            player.position > const Duration(milliseconds: 80)) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      try {
+        await player.setVolume(0);
+      } catch (_) {}
+      // 6. Equal-power blend (no dip in loudness in the middle). The length
+      //    is worked out now, so the old song can't run out mid-fade.
+      final gDur = ghost.duration ?? Duration.zero;
+      final left = gDur - ghost.position;
+      final gone = ghost.processingState == ProcessingState.completed ||
+          left < const Duration(milliseconds: 400);
+      if (gone) {
+        // The old song already ended: just bring the new one up gently.
+        await _equalPower(out: ghost, into: player, base: base, secs: 0.6);
+      } else {
+        final fade = max(0.6, min(secs, left.inMilliseconds / 1000 - 0.15));
+        await _equalPower(out: ghost, into: player, base: base, secs: fade);
+      }
     } catch (_) {
     } finally {
       try {
@@ -1862,8 +1891,8 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     required AudioPlayer into,
     required double base,
     required double secs,
+    int stepMs = 30,
   }) async {
-    const stepMs = 30;
     final steps = max(1, (secs * 1000 / stepMs).round());
     for (var i = 1; i <= steps; i++) {
       await Future<void>.delayed(const Duration(milliseconds: stepMs));
@@ -27456,7 +27485,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.8';
+const String kAppVersion = '2.8.7';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
