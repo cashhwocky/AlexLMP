@@ -1895,7 +1895,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }) async {
     final steps = max(1, (secs * 1000 / stepMs).round());
     for (var i = 1; i <= steps; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: stepMs));
+      await Future<void>.delayed(Duration(milliseconds: stepMs));
       final x = i / steps * pi / 2;
       try {
         await Future.wait([
