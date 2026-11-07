@@ -1353,10 +1353,35 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       }
       if (t.isYouTube && play) {
         final detail = e is PlatformException ? (e.message ?? e.code) : '$e';
-        appNotice.value =
-            'Couldn\'t load "${t.title}" from YouTube Music. ($detail)';
+        if (detail.contains('AgeRestrictedContentException') ||
+            detail.contains('age-restricted')) {
+          // Same as YouTube: ask first, then try with the user's account.
+          contentWarning.value = t;
+        } else {
+          appNotice.value =
+              'Couldn\'t load "${t.title}" from YouTube Music. ($detail)';
+        }
       }
     }
+  }
+
+  /// The user tapped "Continue" on a content warning: ask YouTube for the
+  /// song as their signed-in account, then play it.
+  Future<void> playWithAccount(TrackItem t) async {
+    final id = t.ytVideoId;
+    if (id == null) return;
+    try {
+      await YouTubeMusic.prepare(id, signedIn: true);
+    } on PlatformException catch (e) {
+      appNotice.value =
+          'Couldn\'t play "${t.title}" with your account. (${e.message ?? e.code})';
+      return;
+    } catch (e) {
+      appNotice.value = 'Couldn\'t play "${t.title}" with your account. ($e)';
+      return;
+    }
+    final i = tracks.indexWhere((x) => x.id == t.id);
+    if (i >= 0) await _load(i);
   }
 
   /// Resolves the song through the native bridge and loads it. If the first
@@ -2920,13 +2945,16 @@ class YouTubeMusic {
   }
 
   /// Resolves a song and returns the local URL the player should load.
-  static Future<Uri> prepare(String videoId, {bool refresh = false}) async {
+  static Future<Uri> prepare(String videoId,
+      {bool refresh = false, bool signedIn = false}) async {
     // Saved for offline? Play the file — no internet needed.
     final local = OfflineStore.pathForVideo(videoId);
     if (local != null) return Uri.file(local);
     final url = await _ytChannel.invokeMethod<String>('ytPrepare', {
       'videoId': videoId,
       'refresh': refresh,
+      // true = the user tapped "Continue" on a content warning.
+      'signedIn': signedIn,
     });
     if (url == null || url.isEmpty) {
       throw Exception('No stream URL for $videoId');
@@ -3892,6 +3920,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   void initState() {
     super.initState();
     appNotice.addListener(_onNotice);
+    contentWarning.addListener(_onContentWarning);
     audioHandler.currentIndex.addListener(_trackRecent);
     startWidgetSync();
     // Pick up a new wallpaper colour when you come back to the app.
@@ -3925,6 +3954,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   @override
   void dispose() {
     appNotice.removeListener(_onNotice);
+    contentWarning.removeListener(_onContentWarning);
     audioHandler.currentIndex.removeListener(_trackRecent);
     _life?.dispose();
     super.dispose();
@@ -3940,6 +3970,15 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         s.contains('interrupted') ||
         s.contains('isn\'t') ||
         s.contains('up to date');
+  }
+
+  void _onContentWarning() {
+    final t = contentWarning.value;
+    if (t == null || !mounted) return;
+    contentWarning.value = null;
+    // The player may be open on top; use the top-most screen.
+    final ctx = Navigator.of(context, rootNavigator: true).context;
+    showContentWarning(ctx, t);
   }
 
   void _onNotice() {
@@ -16110,6 +16149,36 @@ void showSearchSheet(BuildContext context, {String? query}) {
 }
 
 /// One YouTube video search result.
+/// Set when a song is behind YouTube's content warning. The app asks the
+/// user (like YouTube does) before trying again with their account.
+final ValueNotifier<TrackItem?> contentWarning = ValueNotifier(null);
+
+Future<void> showContentWarning(BuildContext context, TrackItem t) async {
+  final go = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('This content may be inappropriate for some users'),
+      content: Text(ytAccount.value.signedIn
+          ? 'Do you wish to continue?'
+          : 'Sign in to YouTube Music to continue. YouTube decides if your account can play it.'),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Go back')),
+        FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(ytAccount.value.signedIn ? 'Continue' : 'Sign in')),
+      ],
+    ),
+  );
+  if (go != true || !context.mounted) return;
+  if (!ytAccount.value.signedIn) {
+    await ytSignInFlow(context);
+    if (!ytAccount.value.signedIn) return;
+  }
+  await audioHandler.playWithAccount(t);
+}
+
 class YtVideoResult {
   final TrackItem track;
   final int views;
@@ -27283,7 +27352,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.3';
+const String kAppVersion = '2.8.4';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});

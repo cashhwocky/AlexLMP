@@ -31,6 +31,7 @@ import org.schabi.newpipe.extractor.downloader.Response
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.localization.ContentCountry
 import org.schabi.newpipe.extractor.localization.Localization
+import org.schabi.newpipe.extractor.services.youtube.YoutubeJavaScriptPlayerManager
 import org.schabi.newpipe.extractor.services.youtube.linkHandler.YoutubeSearchQueryHandlerFactory
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
@@ -249,10 +250,14 @@ object YtMusicBridge {
             "ytPrepare" -> {
                 val videoId = call.argument<String>("videoId") ?: ""
                 val refresh = call.argument<Boolean>("refresh") ?: false
+                // The user tapped "Continue" on a content warning: from now on
+                // this song is fetched with their signed-in account.
+                val signedIn = call.argument<Boolean>("signedIn") ?: false
                 workers.execute {
                     try {
                         require(VIDEO_ID.matches(videoId)) { "Bad videoId" }
-                        resolve(videoId, force = refresh)
+                        if (signedIn) needsAccount.add(videoId)
+                        resolve(videoId, force = refresh || signedIn)
                         val port = Proxy.ensureStarted()
                         // Download the whole song in the background so playback never
                         // depends on fetching the last part at the last moment.
@@ -539,12 +544,20 @@ object YtMusicBridge {
         )
     }
 
+    /** Songs the user chose to play with their account (content warnings). */
+    private val needsAccount = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     private fun resolve(videoId: String, force: Boolean): Resolved {
         if (!force) cache[videoId]?.let { if (System.currentTimeMillis() < it.expiresAtMs) return it }
         val lock = resolveLocks.computeIfAbsent(videoId) { Any() }
         synchronized(lock) {
             if (!force) cache[videoId]?.let { if (System.currentTimeMillis() < it.expiresAtMs) return it }
             ensureInit()
+            if (needsAccount.contains(videoId)) {
+                val r = resolveWithAccount(videoId)
+                cache[videoId] = r
+                return r
+            }
 
             downloader.startRecordingPlayerAgents()
             val info: StreamInfo
@@ -593,6 +606,87 @@ object YtMusicBridge {
             cache[videoId] = resolved
             return resolved
         }
+    }
+
+    /**
+     * Asks YouTube for the song as the signed-in account, confirming the
+     * content warning (the same thing YouTube's own "Continue" button sends).
+     * YouTube decides whether this account may play it.
+     */
+    private fun resolveWithAccount(videoId: String): Resolved {
+        val sts = try {
+            YoutubeJavaScriptPlayerManager.getSignatureTimestamp(videoId)
+        } catch (_: Throwable) {
+            null
+        }
+        data class Client(val name: String, val version: String, val no: String, val host: String, val ua: String)
+        val clients = listOf(
+            Client("TVHTML5", "7.20250312.16.00", "7", "https://www.youtube.com",
+                "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version"),
+            Client("WEB_REMIX", "1.20251020.01.00", "67", "https://music.youtube.com",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+        )
+        val problems = ArrayList<String>()
+        for (c in clients) {
+            try {
+                val body = JSONObject()
+                    .put("videoId", videoId)
+                    .put("racyCheckOk", true)
+                    .put("contentCheckOk", true)
+                if (sts != null) {
+                    body.put("playbackContext", JSONObject().put(
+                        "contentPlaybackContext", JSONObject().put("signatureTimestamp", sts)))
+                }
+                val json = Account.player(c.host, c.name, c.version, c.no, c.ua, body)
+                val ps = json.optJSONObject("playabilityStatus")
+                val status = ps?.optString("status") ?: "?"
+                if (status != "OK") {
+                    problems.add("${c.name}: $status ${ps?.optString("reason") ?: ""}".trim())
+                    continue
+                }
+                val formats = json.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats")
+                if (formats == null) {
+                    problems.add("${c.name}: no streams")
+                    continue
+                }
+                var best: JSONObject? = null
+                for (i in 0 until formats.length()) {
+                    val f = formats.getJSONObject(i)
+                    if (!f.optString("mimeType").startsWith("audio/")) continue
+                    if (best == null || f.optInt("bitrate") > best.optInt("bitrate")) best = f
+                }
+                val f = best
+                if (f == null) {
+                    problems.add("${c.name}: no audio stream")
+                    continue
+                }
+                var url = f.optString("url")
+                if (url.isEmpty()) {
+                    val cipher = f.optString("signatureCipher").ifEmpty { f.optString("cipher") }
+                    val q = Uri.parse("https://x/?$cipher")
+                    val sig = q.getQueryParameter("s") ?: throw IOException("missing signature")
+                    val sp = q.getQueryParameter("sp") ?: "sig"
+                    val base = q.getQueryParameter("url") ?: throw IOException("missing url")
+                    url = "$base&$sp=" + Uri.encode(
+                        YoutubeJavaScriptPlayerManager.deobfuscateSignature(videoId, sig))
+                }
+                url = YoutubeJavaScriptPlayerManager.getUrlWithThrottlingParameterDeobfuscated(videoId, url)
+                val uri = Uri.parse(url)
+                val expireSec = uri.getQueryParameter("expire")?.toLongOrNull()
+                return Resolved(
+                    url = url,
+                    userAgent = c.ua,
+                    mimeType = f.optString("mimeType").substringBefore(';').ifEmpty { "audio/mp4" },
+                    contentLength = f.optString("contentLength").toLongOrNull()
+                        ?: uri.getQueryParameter("clen")?.toLongOrNull() ?: -1L,
+                    expiresAtMs = if (expireSec != null) expireSec * 1000 - 5 * 60 * 1000
+                    else System.currentTimeMillis() + 60 * 60 * 1000,
+                )
+            } catch (e: Throwable) {
+                problems.add("${c.name}: ${describe(e)}")
+            }
+        }
+        throw IOException("YouTube didn't allow this with your account (${problems.joinToString(" | ")})")
     }
 
     /**
@@ -1301,15 +1395,59 @@ object Account {
 
     // ── InnerTube ───────────────────────────────────────────────────────────
 
-    private fun sapisidHash(cookies: String): String? {
+    private fun sapisidHash(cookies: String, origin: String = YTM): String? {
         val sapisid = Regex("(?:^|;\\s*)SAPISID=([^;]+)").find(cookies)?.groupValues?.get(1)
             ?: Regex("(?:^|;\\s*)__Secure-3PAPISID=([^;]+)").find(cookies)?.groupValues?.get(1)
             ?: return null
         val ts = System.currentTimeMillis() / 1000
         val digest = MessageDigest.getInstance("SHA-1")
-            .digest("$ts $sapisid $YTM".toByteArray())
+            .digest("$ts $sapisid $origin".toByteArray())
             .joinToString("") { "%02x".format(it) }
         return "SAPISIDHASH ${ts}_$digest"
+    }
+
+    /** Signed-in /player request for one InnerTube client (see resolveWithAccount). */
+    fun player(
+        host: String,
+        clientName: String,
+        clientVersion: String,
+        clientNo: String,
+        ua: String,
+        body: JSONObject,
+    ): JSONObject {
+        val c = cookies() ?: throw IOException("Sign in to YouTube Music in AlexLMP to play this.")
+        val locale = Locale.getDefault()
+        val client = JSONObject()
+            .put("clientName", clientName)
+            .put("clientVersion", clientVersion)
+            .put("hl", locale.language.ifEmpty { "en" })
+            .put("gl", locale.country.takeIf { it.length == 2 } ?: "US")
+        body.put("context", JSONObject().put("client", client).put("user", JSONObject()))
+        val conn = URL("$host/youtubei/v1/player?prettyPrint=false").openConnection() as HttpURLConnection
+        try {
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 30_000
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("User-Agent", ua)
+            conn.setRequestProperty("Origin", host)
+            conn.setRequestProperty("X-Origin", host)
+            conn.setRequestProperty("Referer", "$host/")
+            conn.setRequestProperty("X-YouTube-Client-Name", clientNo)
+            conn.setRequestProperty("X-YouTube-Client-Version", clientVersion)
+            conn.setRequestProperty("Cookie", c)
+            sapisidHash(c, host)?.let { conn.setRequestProperty("Authorization", it) }
+            conn.setRequestProperty("X-Goog-AuthUser", "0")
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            val code = conn.responseCode
+            val raw = (if (code >= 400) conn.errorStream else conn.inputStream)
+            val text = raw?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
+            if (code !in 200..299) throw IOException("HTTP $code: ${text.take(200)}")
+            return JSONObject(text)
+        } finally {
+            conn.disconnect()
+        }
     }
 
     private fun call(endpoint: String, body: JSONObject, auth: Boolean): JSONObject {

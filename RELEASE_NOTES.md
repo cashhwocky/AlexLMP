@@ -1,12 +1,12 @@
 All your music, one player.
 
-AlexLMP 2.8.3 adds video search.
+AlexLMP 2.8.4 lets you continue past YouTube's content warnings.
 
 ## New
-- Videos in search: search anything, switch to YouTube Music, then pick the new Videos filter next to Songs, Albums and Artists. Find music videos, live performances, covers and remixes that aren't on YouTube Music. Each result shows the thumbnail, length, channel, views and upload date.
-- Tap a video to play it like a song, with the queue, lyrics, crossfade and everything else. Long press, or tap the three dots, to add it to a playlist.
+- Content warnings: some songs and videos are behind YouTube's "This content may be inappropriate for some users" warning. AlexLMP now shows the same warning with Go back and Continue. Tap Continue and AlexLMP asks YouTube for it again with your signed-in YouTube Music account, just like pressing Continue in the YouTube app. If YouTube allows your account to play it, it plays.
+- Not signed in? The warning offers to sign you in first.
 
-Live streams are left out, since they can't be played as songs. Videos YouTube restricts still can't be played.
+YouTube still decides who can play what. If it doesn't allow your account, AlexLMP tells you why.
 
 Updating installs over your current version. Your library, likes and settings stay.
 
