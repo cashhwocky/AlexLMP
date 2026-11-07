@@ -365,3 +365,29 @@ jobs:
           name: AlexLMP ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           files: AlexLMP-${{ github.ref_name }}.apk
+
+      # A push to main also fills in a release you already published for this
+      # version, even if its tag is missing the "v" (2.8.7 instead of v2.8.7).
+      # It never creates a release on its own.
+      - name: Find a published release for this version
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for t in "v$VERSION_NAME" "$VERSION_NAME"; do
+            if gh release view "$t" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Found release $t for version $VERSION_NAME"
+              echo "REL_TAG=$t" >> "$GITHUB_ENV"
+              cp app_build/build/app/outputs/flutter-apk/app-release.apk "AlexLMP-v$VERSION_NAME.apk"
+              break
+            fi
+          done
+
+      - name: Attach the APK to that release
+        if: env.REL_TAG != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.REL_TAG }}
+          name: AlexLMP v${{ env.VERSION_NAME }}
+          body_path: RELEASE_NOTES.md
+          files: AlexLMP-v${{ env.VERSION_NAME }}.apk
