@@ -146,6 +146,17 @@ class MainActivity : AudioServiceActivity() {
                             result.error("REVERB", e.toString(), null)
                         }
                     }
+                    "deviceInfo" -> {
+                        result.success(
+                            mapOf(
+                                "manufacturer" to android.os.Build.MANUFACTURER,
+                                "model" to android.os.Build.MODEL,
+                                "android" to android.os.Build.VERSION.RELEASE,
+                                "sdk" to android.os.Build.VERSION.SDK_INT,
+                                "build" to android.os.Build.DISPLAY
+                            )
+                        )
+                    }
                     "openUrl" -> {
                         val url = call.argument<String>("url") ?: ""
                         try {

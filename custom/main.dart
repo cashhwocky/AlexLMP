@@ -1006,6 +1006,33 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   MyAudioHandler() {
     _init();
+    // Keep the notification heart in sync when a song is liked anywhere.
+    appState.addListener(_onLikesChanged);
+  }
+
+  bool? _notifLiked;
+
+  bool get _currentLiked {
+    final t = currentTrack;
+    return t != null && appState.isLiked(t.id);
+  }
+
+  void _onLikesChanged() {
+    if (_currentLiked != _notifLiked) _publishState();
+  }
+
+  @override
+  Future<dynamic> customAction(String name,
+      [Map<String, dynamic>? extras]) async {
+    if (name == 'like') {
+      final t = currentTrack;
+      if (t == null) return null;
+      appState.toggleLike(t.id);
+      HapticFeedback.lightImpact();
+      _publishState();
+      return null;
+    }
+    return super.customAction(name, extras);
   }
 
   int get index => _index;
@@ -1137,11 +1164,20 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     if (_switching && state == AudioProcessingState.completed) {
       state = AudioProcessingState.buffering;
     }
+    final liked = _currentLiked;
+    _notifLiked = liked;
     return PlaybackState(
       controls: [
         MediaControl.skipToPrevious,
         if (playing) MediaControl.pause else MediaControl.play,
         MediaControl.skipToNext,
+        // Same heart as the players: filled when liked, outline when not.
+        MediaControl.custom(
+          androidIcon:
+              liked ? 'drawable/ic_n_heart' : 'drawable/ic_n_heart_outline',
+          label: liked ? 'Unlike' : 'Like',
+          name: 'like',
+        ),
         MediaControl.stop,
       ],
       // Every action is always available, whatever the current state, so
@@ -3989,6 +4025,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     if (msg == null || !mounted) return;
     appNotice.value = null;
     if (!_worthShowing(msg)) return;
+    lastAppError = msg;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -15183,6 +15220,9 @@ class SettingsScreen extends StatelessWidget {
         _tile(pal, Icons.refresh_rounded, 'Rescan music library',
             'Pick up newly added songs', () => scanDeviceAudio(),
             trailing: const SizedBox.shrink()),
+        _tile(pal, Icons.playlist_add_rounded, 'Import Spotify playlist',
+            'Pick a CSV export (Exportify works) and find the songs on YouTube Music',
+            () => openSpotifyImport(context)),
       ]),
     ];
   }
@@ -15265,6 +15305,9 @@ class SettingsScreen extends StatelessWidget {
             applicationLegalese: 'Licensed under GPL-3.0',
           );
         }),
+        _tile(pal, Icons.bug_report_rounded, 'Report a bug',
+            'Copies your app info and opens the AlexLMP Telegram chat',
+            () => reportBug(context)),
       ]),
     ];
   }
@@ -27379,7 +27422,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.5';
+const String kAppVersion = '2.8.6';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -30300,3 +30343,409 @@ class _ArtworkSymbolPainter extends CustomPainter {
   bool shouldRepaint(covariant _ArtworkSymbolPainter old) =>
       old.style != style || old.colors != colors;
 }
+
+// ═══════════════════════ Spotify playlist import ═══════════════════════
+// Reads a playlist exported from Spotify (Exportify, TuneMyMusic, etc. as a
+// .csv, or a plain text list of "Artist - Title" lines), finds each song on
+// YouTube Music and saves them as an AlexLMP playlist.
+
+class _ImportRow {
+  final String title;
+  final String artist;
+  final int? durationMs;
+  const _ImportRow(this.title, this.artist, this.durationMs);
+}
+
+/// Small CSV reader (handles quotes, commas and line breaks inside quotes).
+List<List<String>> _parseCsv(String text) {
+  final rows = <List<String>>[];
+  var row = <String>[];
+  final cell = StringBuffer();
+  var quoted = false;
+  for (var i = 0; i < text.length; i++) {
+    final c = text[i];
+    if (quoted) {
+      if (c == '"') {
+        if (i + 1 < text.length && text[i + 1] == '"') {
+          cell.write('"');
+          i++;
+        } else {
+          quoted = false;
+        }
+      } else {
+        cell.write(c);
+      }
+    } else if (c == '"') {
+      quoted = true;
+    } else if (c == ',') {
+      row.add(cell.toString());
+      cell.clear();
+    } else if (c == '\n' || c == '\r') {
+      if (c == '\r' && i + 1 < text.length && text[i + 1] == '\n') i++;
+      row.add(cell.toString());
+      cell.clear();
+      if (row.any((x) => x.trim().isNotEmpty)) rows.add(row);
+      row = <String>[];
+    } else {
+      cell.write(c);
+    }
+  }
+  row.add(cell.toString());
+  if (row.any((x) => x.trim().isNotEmpty)) rows.add(row);
+  return rows;
+}
+
+/// Pulls title/artist (and length, if there) out of an exported file.
+List<_ImportRow> _readPlaylistFile(String text) {
+  text = text.replaceFirst('﻿', '');
+  final rows = _parseCsv(text);
+  if (rows.isEmpty) return const [];
+  final head = [for (final h in rows.first) h.trim().toLowerCase()];
+  int col(bool Function(String h) test) => head.indexWhere(test);
+  final ti = col((h) => h == 'track name' || h == 'name' || h == 'title' ||
+      h == 'track' || h == 'song' || h.contains('track name'));
+  final ai = col((h) => h.contains('artist'));
+  final di = col((h) => h.contains('duration'));
+  final out = <_ImportRow>[];
+  if (ti >= 0) {
+    for (final r in rows.skip(1)) {
+      String at(int i) => i >= 0 && i < r.length ? r[i].trim() : '';
+      final title = at(ti);
+      if (title.isEmpty) continue;
+      // Several artists are joined with commas or semicolons.
+      final artist = at(ai).split(RegExp(r'[;,]')).first.trim();
+      out.add(_ImportRow(title, artist, int.tryParse(at(di))));
+    }
+    return out;
+  }
+  // No header: one song per line, "Artist - Title".
+  for (final line in text.split(RegExp(r'\r?\n'))) {
+    final l = line.trim();
+    if (l.isEmpty) continue;
+    final dash = l.indexOf(' - ');
+    out.add(dash > 0
+        ? _ImportRow(l.substring(dash + 3).trim(), l.substring(0, dash).trim(), null)
+        : _ImportRow(l, '', null));
+  }
+  return out;
+}
+
+String _norm(String s) => s
+    .toLowerCase()
+    .replaceAll(RegExp(r'\((feat|ft|with)[^)]*\)|\[(feat|ft|with)[^\]]*\]'), '')
+    .replaceAll(RegExp(r' - (remaster(ed)?|\d{4} remaster|mono|stereo).*$'), '')
+    .replaceAll(RegExp(r'[^a-z0-9 ]'), ' ')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
+
+/// Best YouTube Music match for one song, or null if nothing looks right.
+Future<TrackItem?> _findOnYtm(_ImportRow r) async {
+  final query = r.artist.isEmpty ? r.title : '${r.title} ${r.artist}';
+  final results = await YouTubeMusic.search(query);
+  final wantT = _norm(r.title), wantA = _norm(r.artist);
+  TrackItem? best;
+  var bestScore = -1.0;
+  for (final t in results.take(8)) {
+    final gotT = _norm(t.title), gotA = _norm(t.artist);
+    var score = 0.0;
+    if (gotT == wantT) {
+      score += 3;
+    } else if (gotT.contains(wantT) || wantT.contains(gotT)) {
+      score += 2;
+    }
+    if (wantA.isNotEmpty && (gotA.contains(wantA) || wantA.contains(gotA))) {
+      score += 2;
+    }
+    if (r.durationMs != null && t.durationSeconds > 0) {
+      final diff = (t.durationSeconds - r.durationMs! / 1000).abs();
+      if (diff < 4) {
+        score += 1;
+      } else if (diff > 30) {
+        score -= 1;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = t;
+    }
+  }
+  // Needs at least a title match (or title + artist close enough).
+  return bestScore >= 2 ? best : null;
+}
+
+Future<void> openSpotifyImport(BuildContext context) async {
+  FilePickerResult? res;
+  try {
+    res = await FilePicker.platform.pickFiles(type: FileType.any, withData: true);
+  } catch (e) {
+    appNotice.value = 'Couldn\'t open the file picker. ($e)';
+    return;
+  }
+  final file = res?.files.firstOrNull;
+  if (file == null || !context.mounted) return;
+  String text;
+  try {
+    final bytes = file.bytes ?? await File(file.path!).readAsBytes();
+    text = utf8.decode(bytes, allowMalformed: true);
+  } catch (e) {
+    appNotice.value = 'Couldn\'t read that file. ($e)';
+    return;
+  }
+  final rows = _readPlaylistFile(text);
+  if (rows.isEmpty) {
+    appNotice.value =
+        'Couldn\'t find any songs in that file. Export the playlist as a CSV (for example with Exportify) and try again.';
+    return;
+  }
+  final name = file.name.replaceAll(RegExp(r'\.(csv|txt)$', caseSensitive: false), '').replaceAll('_', ' ');
+  Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => SpotifyImportScreen(rows: rows, suggestedName: name)));
+}
+
+class SpotifyImportScreen extends StatefulWidget {
+  final List<_ImportRow> rows;
+  final String suggestedName;
+  const SpotifyImportScreen(
+      {super.key, required this.rows, required this.suggestedName});
+
+  @override
+  State<SpotifyImportScreen> createState() => _SpotifyImportScreenState();
+}
+
+class _SpotifyImportScreenState extends State<SpotifyImportScreen> {
+  late final TextEditingController _name =
+      TextEditingController(text: widget.suggestedName);
+  bool _running = false;
+  bool _done = false;
+  bool _cancel = false;
+  int _checked = 0;
+  String _current = '';
+  final List<TrackItem?> _found = [];
+  final List<_ImportRow> _missing = [];
+  Playlist? _playlist;
+
+  @override
+  void initState() {
+    super.initState();
+    _found.addAll(List<TrackItem?>.filled(widget.rows.length, null));
+  }
+
+  @override
+  void dispose() {
+    _cancel = true;
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _start() async {
+    setState(() => _running = true);
+    var next = 0;
+    // A few songs at a time, so a big playlist doesn't take forever.
+    Future<void> worker() async {
+      while (!_cancel) {
+        final i = next++;
+        if (i >= widget.rows.length) return;
+        final r = widget.rows[i];
+        if (mounted) setState(() => _current = '${r.title} · ${r.artist}');
+        TrackItem? t;
+        try {
+          t = await _findOnYtm(r);
+        } catch (_) {
+          t = null;
+        }
+        if (!mounted) return;
+        setState(() {
+          _found[i] = t;
+          if (t == null) _missing.add(r);
+          _checked++;
+        });
+      }
+    }
+
+    await Future.wait([for (var k = 0; k < 3; k++) worker()]);
+    if (!mounted || _cancel) return;
+    final pl = appState.createPlaylist(_name.text);
+    for (final t in _found) {
+      if (t == null) continue;
+      final lib = audioHandler.ensureInLibrary(t);
+      appState.addToPlaylist(pl.id, lib.id);
+    }
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _playlist = pl;
+      _done = true;
+      _running = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    final total = widget.rows.length;
+    final matched = _found.whereType<TrackItem>().length;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        surfaceTintColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        title: const Text('Import from Spotify'),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+        children: [
+          Text('$total ${total == 1 ? 'song' : 'songs'} in this file',
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          const Text(
+              'AlexLMP looks up each song on YouTube Music and saves the matches as a playlist.',
+              style: TextStyle(color: Colors.white60, fontSize: 14, height: 1.4)),
+          const SizedBox(height: 20),
+          TextField(
+            controller: _name,
+            enabled: !_running && !_done,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              labelText: 'Playlist name',
+              filled: true,
+              fillColor: Colors.white.withOpacity(0.06),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none),
+            ),
+          ),
+          const SizedBox(height: 20),
+          if (!_running && !_done)
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: pal.accent,
+                foregroundColor: pal.onAccent,
+                minimumSize: const Size.fromHeight(52),
+              ),
+              onPressed: _start,
+              icon: const Icon(Icons.playlist_add_rounded),
+              label: const Text('Find songs and import'),
+            ),
+          if (_running || _done) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: total == 0 ? 0 : _checked / total,
+                minHeight: 8,
+                backgroundColor: Colors.white10,
+                valueColor: AlwaysStoppedAnimation(pal.accent),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _done
+                  ? 'Done: $matched of $total songs found.'
+                  : 'Checked $_checked of $total · $matched found',
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700),
+            ),
+            if (_running)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(_current,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white54, fontSize: 13)),
+              ),
+          ],
+          if (_done && _playlist != null) ...[
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: pal.accent,
+                foregroundColor: pal.onAccent,
+                minimumSize: const Size.fromHeight(52),
+              ),
+              onPressed: () => Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                      builder: (_) =>
+                          PlaylistDetailScreen(playlistId: _playlist!.id))),
+              icon: const Icon(Icons.queue_music_rounded),
+              label: Text('Open "${_playlist!.name}"'),
+            ),
+          ],
+          if (_missing.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Text('Not found (${_missing.length})',
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            const Text('Search for these by hand and add them to the playlist.',
+                style: TextStyle(color: Colors.white54, fontSize: 13)),
+            const SizedBox(height: 8),
+            for (final r in _missing)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                leading: const Icon(Icons.search_off_rounded, color: Colors.white38),
+                title: Text(r.title,
+                    style: const TextStyle(color: Colors.white)),
+                subtitle: Text(r.artist,
+                    style: const TextStyle(color: Colors.white54)),
+                onTap: () => showSearchSheet(context,
+                    query: r.artist.isEmpty ? r.title : '${r.title} ${r.artist}'),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════ Report a bug ═══════════════════════
+
+const kBugReportUrl = 'https://t.me/DriftVaneCommunity';
+
+/// Last problem message the app showed (included in bug reports).
+String? lastAppError;
+
+Future<void> reportBug(BuildContext context) async {
+  var phone = 'Unknown phone';
+  var build = '';
+  try {
+    final m = Map<String, dynamic>.from(
+        await _mediaChannel.invokeMethod('deviceInfo') as Map);
+    phone = '${m['manufacturer']} ${m['model']} '
+        '(Android ${m['android']}, SDK ${m['sdk']})';
+    build = '${m['build'] ?? ''}';
+  } catch (_) {}
+  final report = [
+    'AlexLMP bug report',
+    'Version: $kAppVersion',
+    'Phone: $phone',
+    if (build.isNotEmpty) 'Build: $build',
+    'Style: ${appState.appStyle} · Player: ${appState.playerStyle} · Mode: ${appState.homeMode}',
+    'YouTube Music: ${ytAccount.value.signedIn ? 'signed in' : 'signed out'}',
+    'Last error: ${lastAppError ?? 'none'}',
+    '',
+    'What happened:',
+  ].join('\n');
+  await Clipboard.setData(ClipboardData(text: report));
+  if (!context.mounted) return;
+  final go = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      icon: const Icon(Icons.bug_report_rounded),
+      title: const Text('Report a bug'),
+      content: const Text(
+          'Your app version, phone and the last error were copied. '
+          'Paste them in the AlexLMP chat and say what happened.'),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel')),
+        FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Open chat')),
+      ],
+    ),
+  );
+  if (go == true) await openExternalUrl(kBugReportUrl);
+}
+
