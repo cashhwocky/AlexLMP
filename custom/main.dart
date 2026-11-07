@@ -2487,6 +2487,27 @@ class YouTubeMusic {
     return _tracks(raw);
   }
 
+  /// YouTube video search. Each result plays as a song (audio only).
+  static Future<List<YtVideoResult>> searchVideos(String query) async {
+    if (!Platform.isAndroid) return const [];
+    final raw = await _ytChannel.invokeMethod('ytSearchVideos', {'query': query})
+            as List? ??
+        const [];
+    final out = <YtVideoResult>[];
+    for (final e in raw) {
+      final m = _map(e);
+      final t = _track(m, album: 'YouTube video');
+      if (t == null) continue;
+      out.add(YtVideoResult(
+        t,
+        (m['views'] as num?)?.toInt() ?? -1,
+        m['uploaded'] as String?,
+        m['thumbnail'] as String?,
+      ));
+    }
+    return out;
+  }
+
   static Future<List<YtArtist>> searchArtists(String query) async {
     if (!Platform.isAndroid) return const [];
     final raw = await _ytChannel.invokeMethod('ytSearchArtists', {'query': query})
@@ -16088,6 +16109,113 @@ void showSearchSheet(BuildContext context, {String? query}) {
   ));
 }
 
+/// One YouTube video search result.
+class YtVideoResult {
+  final TrackItem track;
+  final int views;
+  final String? uploaded;
+  final String? thumbnail;
+  const YtVideoResult(this.track, this.views, this.uploaded, this.thumbnail);
+}
+
+/// A video search result: wide thumbnail with the length, then title and
+/// channel · views · when. Tap to play it (as audio).
+class YtVideoRow extends StatelessWidget {
+  final YtVideoResult video;
+  final VoidCallback onPlay;
+  const YtVideoRow({super.key, required this.video, required this.onPlay});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = video.track;
+    final meta = [
+      t.artist,
+      if (video.views >= 0) '${formatCompactCount(video.views)} views',
+      if ((video.uploaded ?? '').isNotEmpty) video.uploaded!,
+    ].join(' · ');
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onPlay,
+      onLongPress: () => showYtAddToPlaylist(context, t),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: SizedBox(
+                width: 150,
+                height: 84,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Container(color: Colors.white10),
+                    if (video.thumbnail != null)
+                      Image.network(
+                        video.thumbnail!,
+                        fit: BoxFit.cover,
+                        cacheWidth: 320,
+                        gaplessPlayback: true,
+                        errorBuilder: (_, __, ___) => const Icon(
+                            Icons.smart_display_rounded,
+                            color: Colors.white38),
+                      ),
+                    Positioned(
+                      right: 5,
+                      bottom: 5,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.8),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(TrackRow.fmt(t.durationSeconds),
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(t.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14.5,
+                          height: 1.2,
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Text(meta,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white54, fontSize: 12.5)),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.more_vert_rounded,
+                  color: Colors.white54, size: 20),
+              onPressed: () => showYtAddToPlaylist(context, t),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Full-screen search. Type to see quick matches from your library; press
 /// Enter for full results, then switch between Local and YouTube Music
 /// (with Songs / Albums / Artists filters).
@@ -16106,12 +16234,13 @@ class _SearchScreenState extends State<SearchScreen> {
   String? _submitted; // results mode when set
   // YouTube Music first (like YouTube Music clients); Local is one tap away.
   int _source = appState.b('search_yt_default', true) ? 1 : 0; // 0 local, 1 YouTube
-  int _filter = 0; // 0 songs, 1 albums, 2 artists
+  int _filter = 0; // 0 songs, 1 albums, 2 artists, 3 videos
 
   // YouTube results for the submitted query (cached per filter).
   Future<List<TrackItem>>? _ytSongs;
   Future<List<YtAlbum>>? _ytAlbums;
   Future<List<YtArtist>>? _ytArtists;
+  Future<List<YtVideoResult>>? _ytVideos;
 
   @override
   void initState() {
@@ -16162,6 +16291,7 @@ class _SearchScreenState extends State<SearchScreen> {
       _ytSongs = null;
       _ytAlbums = null;
       _ytArtists = null;
+      _ytVideos = null;
       // No local matches? Show YouTube Music.
       if (_localSongs(q).isEmpty && Platform.isAndroid) _source = 1;
     });
@@ -16438,6 +16568,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   (0, 'Songs', Icons.music_note_rounded),
                   (1, 'Albums', Icons.album_rounded),
                   (2, 'Artists', Icons.person_rounded),
+                  (3, 'Videos', Icons.smart_display_rounded),
                 ])
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
@@ -16586,6 +16717,26 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _ytResults(AppPalette pal, String q) {
     switch (_filter) {
+      case 3:
+        _ytVideos ??= YouTubeMusic.searchVideos(q);
+        return FutureBuilder<List<YtVideoResult>>(
+          future: _ytVideos,
+          builder: (context, snap) {
+            if (snap.hasError) return _ytError(snap.error);
+            if (!snap.hasData) return _loading(pal);
+            final list = snap.data!;
+            if (list.isEmpty) {
+              return ListView(children: [_empty('No videos found.')]);
+            }
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 40),
+              children: [
+                for (final v in list)
+                  YtVideoRow(video: v, onPlay: () => _playYt(v.track)),
+              ],
+            );
+          },
+        );
       case 1:
         _ytAlbums ??= YouTubeMusic.searchAlbums(q);
         return FutureBuilder<List<YtAlbum>>(
@@ -27132,7 +27283,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.2';
+const String kAppVersion = '2.8.3';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});

@@ -263,6 +263,12 @@ object YtMusicBridge {
                     }
                 }
             }
+            "ytSearchVideos" -> {
+                val query = (call.argument<String>("query") ?: "").trim()
+                runAsync(result, "YT_SEARCH") {
+                    if (query.isEmpty()) emptyList<Any>() else searchVideos(query)
+                }
+            }
             "ytSearchArtists", "ytSearchAlbums" -> {
                 val query = (call.argument<String>("query") ?: "").trim()
                 val artists = call.method == "ytSearchArtists"
@@ -370,6 +376,40 @@ object YtMusicBridge {
                 )
             )
             if (out.size >= 25) break
+        }
+        return out
+    }
+
+    /**
+     * Regular YouTube video search (music videos, live performances, covers,
+     * remixes...). Live streams are skipped since they can't be played as songs.
+     */
+    private fun searchVideos(query: String): List<Map<String, Any?>> {
+        ensureInit()
+        val extractor = ServiceList.YouTube.getSearchExtractor(
+            query,
+            listOf(YoutubeSearchQueryHandlerFactory.VIDEOS),
+            "",
+        )
+        extractor.fetchPage()
+        val out = ArrayList<Map<String, Any?>>()
+        for (item in extractor.initialPage.items) {
+            if (item !is StreamInfoItem) continue
+            if (item.duration <= 0) continue // live or unknown length
+            val id = VIDEO_ID_IN_URL.find(item.url)?.groupValues?.get(1) ?: continue
+            out.add(
+                mapOf(
+                    "videoId" to id,
+                    "title" to (item.name ?: ""),
+                    "artist" to cleanArtist(item.uploaderName),
+                    "durationSeconds" to item.duration.toInt(),
+                    // Video thumbnails are 16:9 (not square like song art).
+                    "thumbnail" to "https://i.ytimg.com/vi/$id/hqdefault.jpg",
+                    "views" to item.viewCount,
+                    "uploaded" to item.textualUploadDate,
+                )
+            )
+            if (out.size >= 30) break
         }
         return out
     }
