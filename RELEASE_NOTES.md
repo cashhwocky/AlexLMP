@@ -1,16 +1,9 @@
 All your music, one player.
 
-AlexLMP 2.8.8 brings AlexLMP to Android Auto.
+AlexLMP 2.8.9 lets you find playlists on YouTube Music.
 
 ## New
-- **Android Auto.** AlexLMP now shows up in your car's app list. Browse Liked, Playlists, Recent and Songs right on the car screen, and tap a song to play it with the rest of that list after it. Voice search works too: say "play (song) on AlexLMP" and it checks your library first, then YouTube Music.
-
-## Fixed
-- **The app icon is no longer a white dot** in the music notification and on Android Auto. It's now the AlexLMP logo.
-- On Android 13 and newer, AlexLMP's home screen icon follows themed icons if you turn them on.
-
-## Using it in the car
-Android Auto only lists music apps from the Play Store unless you allow others. On your phone, open Android Auto settings, tap Version about 10 times to turn on developer settings, then in the three-dot menu open Developer settings and turn on Unknown sources. Reconnect to your car and AlexLMP will be there.
+- **Search for playlists.** Search for something like "90s rock", "gym" or "rainy day" and AlexLMP shows YouTube Music playlists for it. YouTube's own mixes and ones made by other people are both included. They show up in a Playlists row in quick search, and under the new Playlists filter on the full search page. Tap one to see its songs and play it.
 
 Updating installs over your current version. Your library, likes and settings stay.
 

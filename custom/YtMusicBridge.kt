@@ -282,6 +282,12 @@ object YtMusicBridge {
                     else if (artists) searchArtists(query) else searchAlbums(query)
                 }
             }
+            "ytSearchPlaylists" -> {
+                val query = (call.argument<String>("query") ?: "").trim()
+                runAsync(result, "YT_SEARCH") {
+                    if (query.isEmpty()) emptyList<Any>() else searchPlaylists(query)
+                }
+            }
             "ytAlbum" -> {
                 val url = call.argument<String>("url") ?: ""
                 runAsync(result, "YT_ALBUM") { album(url) }
@@ -473,6 +479,26 @@ object YtMusicBridge {
         )
         ex.fetchPage()
         return ex.initialPage.items.filterIsInstance<PlaylistInfoItem>().take(15).map { albumItemMap(it) }
+    }
+
+    /** Playlists on YouTube Music (YouTube's own and community ones), e.g. "90s rock". */
+    private fun searchPlaylists(query: String): List<Map<String, Any?>> {
+        ensureInit()
+        val ex = ServiceList.YouTube.getSearchExtractor(
+            query, listOf(YoutubeSearchQueryHandlerFactory.MUSIC_PLAYLISTS), "",
+        )
+        ex.fetchPage()
+        return ex.initialPage.items.filterIsInstance<PlaylistInfoItem>().mapNotNull {
+            val id = Regex("[?&]list=([A-Za-z0-9_-]+)").find(it.url ?: "")?.groupValues?.get(1)
+                ?: return@mapNotNull null
+            mapOf(
+                "playlistId" to id,
+                "title" to (it.name ?: ""),
+                "owner" to cleanArtist(it.uploaderName),
+                "trackCount" to it.streamCount,
+                "thumbnail" to upscaleThumb(it.thumbnails.maxByOrNull { t -> t.height }?.url),
+            )
+        }.take(20)
     }
 
     /** YT Music album links are playlists; the regular YouTube playlist page parses most reliably. */

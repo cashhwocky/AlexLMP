@@ -2778,6 +2778,29 @@ class YouTubeMusic {
     }).where((a) => a.url.isNotEmpty).toList();
   }
 
+  /// YouTube Music playlists for a search like "90s rock".
+  static Future<List<YtPlaylistRef>> searchPlaylists(String query) async {
+    if (!Platform.isAndroid) return const [];
+    final raw = await _ytChannel
+            .invokeMethod('ytSearchPlaylists', {'query': query}) as List? ??
+        const [];
+    return raw.map((e) {
+      final m = _map(e);
+      final owner = cleanText(m['owner'], '');
+      final count = (m['trackCount'] as num?)?.toInt() ?? -1;
+      final parts = [
+        if (owner.isNotEmpty) owner,
+        if (count > 0) '$count ${count == 1 ? 'song' : 'songs'}',
+      ];
+      return YtPlaylistRef(
+        (m['playlistId'] ?? '').toString(),
+        cleanText(m['title'], 'Playlist'),
+        parts.isEmpty ? 'Playlist' : parts.join(' • '),
+        m['thumbnail'] as String?,
+      );
+    }).where((p) => p.playlistId.isNotEmpty).toList();
+  }
+
   static Future<List<YtAlbum>> searchAlbums(String query) async {
     if (!Platform.isAndroid) return const [];
     final raw = await _ytChannel.invokeMethod('ytSearchAlbums', {'query': query})
@@ -16604,6 +16627,7 @@ class _SearchScreenState extends State<SearchScreen> {
   Future<List<YtAlbum>>? _ytAlbums;
   Future<List<YtArtist>>? _ytArtists;
   Future<List<YtVideoResult>>? _ytVideos;
+  Future<List<YtPlaylistRef>>? _ytPlaylists;
 
   @override
   void initState() {
@@ -16655,6 +16679,7 @@ class _SearchScreenState extends State<SearchScreen> {
       _ytAlbums = null;
       _ytArtists = null;
       _ytVideos = null;
+      _ytPlaylists = null;
       // No local matches? Show YouTube Music.
       if (_localSongs(q).isEmpty && Platform.isAndroid) _source = 1;
     });
@@ -16929,6 +16954,7 @@ class _SearchScreenState extends State<SearchScreen> {
               children: [
                 for (final (i, label, icon) in const [
                   (0, 'Songs', Icons.music_note_rounded),
+                  (4, 'Playlists', Icons.queue_music_rounded),
                   (1, 'Albums', Icons.album_rounded),
                   (2, 'Artists', Icons.person_rounded),
                   (3, 'Videos', Icons.smart_display_rounded),
@@ -17080,6 +17106,39 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _ytResults(AppPalette pal, String q) {
     switch (_filter) {
+      case 4:
+        _ytPlaylists ??= YouTubeMusic.searchPlaylists(q);
+        return FutureBuilder<List<YtPlaylistRef>>(
+          future: _ytPlaylists,
+          builder: (context, snap) {
+            if (snap.hasError) return _ytError(snap.error);
+            if (!snap.hasData) return _loading(pal);
+            final list = snap.data!;
+            if (list.isEmpty) {
+              return ListView(children: [_empty('No playlists found.')]);
+            }
+            final w = (MediaQuery.of(context).size.width - 32 - 14) / 2;
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+              children: [
+                Wrap(
+                  spacing: 14,
+                  runSpacing: 18,
+                  children: [
+                    for (final p in list)
+                      MediaCard(
+                        width: w,
+                        cover: YtNetworkImage(url: p.thumbnail, size: w),
+                        title: p.title,
+                        subtitle: p.subtitle,
+                        onTap: () => openYtPlaylistRef(context, p),
+                      ),
+                  ],
+                ),
+              ],
+            );
+          },
+        );
       case 3:
         _ytVideos ??= YouTubeMusic.searchVideos(q);
         return FutureBuilder<List<YtVideoResult>>(
@@ -17216,6 +17275,7 @@ class _SearchSheetState extends State<SearchSheet> {
   List<TrackItem> _songs = const [];
   List<YtArtist> _artists = const [];
   List<YtAlbum> _albums = const [];
+  List<YtPlaylistRef> _playlists = const [];
 
   @override
   void dispose() {
@@ -17269,6 +17329,7 @@ class _SearchSheetState extends State<SearchSheet> {
         _songs = const [];
         _artists = const [];
         _albums = const [];
+        _playlists = const [];
       });
       return;
     }
@@ -17313,6 +17374,13 @@ class _SearchSheetState extends State<SearchSheet> {
         _artists = const [];
         _artistsLoading = false;
       });
+    });
+    YouTubeMusic.searchPlaylists(q).then((r) {
+      if (!mounted || seq != _ytSeq) return;
+      setState(() => _playlists = r);
+    }, onError: (Object _) {
+      if (!mounted || seq != _ytSeq) return;
+      setState(() => _playlists = const []);
     });
     YouTubeMusic.searchAlbums(q).then((r) {
       if (!mounted || seq != _ytSeq) return;
@@ -17484,6 +17552,19 @@ class _SearchSheetState extends State<SearchSheet> {
       ));
     } else if (_artistsLoading) {
       out.add(const SizedBox(height: 4));
+    }
+
+    if (_playlists.isNotEmpty) {
+      out.add(ytSectionHeader('Playlists'));
+      out.add(SizedBox(
+        height: 196,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: _playlists.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 14),
+          itemBuilder: (_, i) => YtPlaylistTile(playlist: _playlists[i]),
+        ),
+      ));
     }
 
     out.add(ytSectionHeader('Songs'));
@@ -27646,7 +27727,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.8';
+const String kAppVersion = '2.8.9';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -29323,6 +29404,57 @@ class YtArtistTile extends StatelessWidget {
                 fontWeight: FontWeight.w600,
                 fontSize: 13,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Opens a YouTube Music playlist found in search.
+void openYtPlaylistRef(BuildContext context, YtPlaylistRef p) {
+  Navigator.of(context).push(MaterialPageRoute(
+    builder: (_) => YtAlbumScreen(
+      album: YtAlbum('', p.title, p.subtitle, p.thumbnail, -1),
+      loader: () => YouTubeMusic.publicPlaylistPage(p.playlistId,
+          title: p.title, thumbnail: p.thumbnail),
+      playLabel: 'Play',
+    ),
+  ));
+}
+
+class YtPlaylistTile extends StatelessWidget {
+  final YtPlaylistRef playlist;
+  const YtPlaylistTile({super.key, required this.playlist});
+
+  @override
+  Widget build(BuildContext context) {
+    return SquishyGesture(
+      pressedScale: 0.95,
+      onTap: () => openYtPlaylistRef(context, playlist),
+      child: SizedBox(
+        width: 140,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            YtNetworkImage(url: playlist.thumbnail, size: 140),
+            const SizedBox(height: 8),
+            Text(
+              playlist.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 13.5,
+              ),
+            ),
+            Text(
+              playlist.subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFFA6ADB2), fontSize: 12.5),
             ),
           ],
         ),
