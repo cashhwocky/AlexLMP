@@ -6598,6 +6598,18 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 _libRow(
                   pal,
                   cover: GradientCover(
+                    icon: Icons.favorite_border_rounded,
+                    colors: [pal.playerButton, pal.accent],
+                    size: 60,
+                    iconColor: pal.onAccent,
+                  ),
+                  title: 'Shared Likes',
+                  subtitle: 'This phone + YouTube Music',
+                  onTap: () => openSharedLikes(context),
+                ),
+                _libRow(
+                  pal,
+                  cover: GradientCover(
                     icon: Icons.download_done_rounded,
                     colors: [pal.playerButton, pal.accent],
                     size: 60,
@@ -6636,6 +6648,18 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     title: 'Liked Songs',
                     subtitle: likedSub,
                     onTap: () => openYtLikedMusic(context),
+                  ),
+                  MediaCard(
+                    width: cw,
+                    cover: GradientCover(
+                      icon: Icons.favorite_border_rounded,
+                      colors: [pal.playerButton, pal.accent],
+                      size: cw,
+                      iconColor: pal.onAccent,
+                    ),
+                    title: 'Shared Likes',
+                    subtitle: 'This phone + YTM',
+                    onTap: () => openSharedLikes(context),
                   ),
                   MediaCard(
                     width: cw,
@@ -28759,6 +28783,51 @@ void openYtAccountPlaylist(BuildContext context, YtPlaylistRef p) {
           title: p.title, thumbnail: p.thumbnail),
       cached: () => YouTubeMusic.cachedPlaylistPage(p.playlistId,
           title: p.title, thumbnail: p.thumbnail),
+      playLabel: 'Play',
+    ),
+  ));
+}
+
+/// Songs you liked on this phone (local files).
+List<TrackItem> _localLikes() => audioHandler.tracks
+    .where((t) => !t.isYouTube && appState.isLiked(t.id))
+    .toList();
+
+/// Local likes and YouTube Music likes in one list (no duplicates).
+YtAlbumPage _sharedLikesPage(List<TrackItem> yt) {
+  final seen = <String>{};
+  final all = <TrackItem>[];
+  for (final t in [..._localLikes(), ...yt]) {
+    if (seen.add(t.id)) all.add(t);
+  }
+  final local = all.where((t) => !t.isYouTube).length;
+  return YtAlbumPage(
+    'Shared Likes',
+    '$local on this phone · ${all.length - local} on YouTube Music',
+    all.isNotEmpty ? all.first.artworkUrl : null,
+    all,
+  );
+}
+
+void openSharedLikes(BuildContext context) {
+  Navigator.of(context).push(MaterialPageRoute(
+    builder: (_) => YtAlbumScreen(
+      album: const YtAlbum('', 'Shared Likes', 'This phone + YouTube Music', null, -1),
+      loader: () async {
+        var yt = const <TrackItem>[];
+        try {
+          yt = (await YouTubeMusic.playlistPage('LM', title: 'Liked on YouTube'))
+              .tracks;
+        } catch (_) {
+          // Offline or signed out: still show the local likes.
+        }
+        return _sharedLikesPage(yt);
+      },
+      cached: () {
+        final page =
+            YouTubeMusic.cachedPlaylistPage('LM', title: 'Liked on YouTube');
+        return _sharedLikesPage(page?.tracks ?? const []);
+      },
       playLabel: 'Play',
     ),
   ));
