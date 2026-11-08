@@ -20498,14 +20498,18 @@ class AlexPlayerView extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(track.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: cs.onSurface,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.3)),
+                      // Title opens the album; artist opens the artist.
+                      GestureDetector(
+                        onTap: () => goToAlbum(context, track),
+                        child: Text(track.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                color: cs.onSurface,
+                                fontSize: 22,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.3)),
+                      ),
                       const SizedBox(height: 2),
                       GestureDetector(
                         onTap: () => goToArtist(context, track),
