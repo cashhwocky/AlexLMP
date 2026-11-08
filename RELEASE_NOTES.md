@@ -1,15 +1,16 @@
 All your music, one player.
 
-AlexLMP 2.9.1 fixes likes and brings the new design to more of the app.
+AlexLMP 2.9.2 makes it easier to get back to your music.
 
-## Fixed
-- **Liked songs stay liked.** After you liked a song, the heart could turn grey again even though the song was in your likes. The heart now stays filled.
+## New
+- **Add albums and playlists to your Library.** Album and playlist pages now have a + button. Tap it to add the album or playlist to your Library, and tap it again to remove it.
+- **Albums you play show up in your Library** on their own, in a new Albums & playlists row at the top of the Playlists tab.
+- **Pin your favorites.** Tap the pin on an album or playlist page, or long-press a playlist in your Library, to pin it. Pinned albums and playlists stay at the very top of your Library.
 
-## Changed
-- **AlexLMP is the default app style again,** with **AlexLMP Signal** as the default player. You can still pick any style in Settings > Appearance.
-- **New Library look.** Big Liked songs and Downloaded (or From Spotify) tiles at the top, rounder filter chips, cleaner rows and a new header.
-- **New playlist pages.** The playlist's artwork, blurred, fills the top of the page. The cover sits next to a big title, with large Play and Shuffle buttons plus Play next and More. Drag to reorder still works. Liked Songs got the same look.
-- **Livelier player.** The Signal player now shows the song's artwork, blurred, behind everything.
+## Also in 2.9.1
+- Liked songs stay liked (the heart no longer turns grey again).
+- AlexLMP is the default app style again, with AlexLMP Signal as the default player.
+- New Library look, new playlist and Liked Songs pages, and the song's artwork blurred behind the Signal player.
 
 Updating installs over your current version. Your library, likes and settings stay.
 

@@ -7220,6 +7220,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     title: p.name,
                     subtitle: mineSub(p),
                     onTap: () => openMine(p),
+                    onLongPress: () => LibraryStore.menu(
+                        context, LibItem('local', p.id, p.name, 'AlexLMP', null)),
                   ),
                 for (final p in pls)
                   _libRow(
@@ -7228,6 +7230,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     title: p.title,
                     subtitle: p.subtitle.isEmpty ? 'Playlist' : p.subtitle,
                     onTap: () => openYtAccountPlaylist(context, p),
+                    onLongPress: () => LibraryStore.menu(
+                        context,
+                        LibItem('playlist', p.playlistId, p.title, p.subtitle,
+                            p.thumbnail)),
                   ),
                 if (waiting) _ytSpinner(pal),
               ],
@@ -7286,12 +7292,19 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   for (var i = 0; i < pls.length; i++)
                     Reveal(
                       delayMs: min(i, 8) * 40,
-                      child: MediaCard(
-                        width: cw,
-                        cover: YtNetworkImage(url: pls[i].thumbnail, size: cw),
-                        title: pls[i].title,
-                        subtitle: pls[i].subtitle,
-                        onTap: () => openYtAccountPlaylist(context, pls[i]),
+                      child: GestureDetector(
+                        onLongPress: () => LibraryStore.menu(
+                            context,
+                            LibItem('playlist', pls[i].playlistId,
+                                pls[i].title, pls[i].subtitle, pls[i].thumbnail)),
+                        child: MediaCard(
+                          width: cw,
+                          cover:
+                              YtNetworkImage(url: pls[i].thumbnail, size: cw),
+                          title: pls[i].title,
+                          subtitle: pls[i].subtitle,
+                          onTap: () => openYtAccountPlaylist(context, pls[i]),
+                        ),
                       ),
                     ),
                 ],
@@ -9433,6 +9446,34 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 ),
               ],
             ),
+          ),
+        if (_libraryFilter == 0)
+          ValueListenableBuilder<int>(
+            valueListenable: LibraryStore.revision,
+            builder: (context, _, __) {
+              final pins = LibraryStore.pins;
+              final saved = LibraryStore.saved;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (pins.isNotEmpty) ...[
+                    const SignalSection('Pinned',
+                        padding: EdgeInsets.fromLTRB(16, 4, 12, 10)),
+                    LibItemRow(items: pins),
+                    const SizedBox(height: 8),
+                  ],
+                  if (saved.isNotEmpty) ...[
+                    const SignalSection('Albums & playlists',
+                        padding: EdgeInsets.fromLTRB(16, 4, 12, 10)),
+                    LibItemRow(items: saved),
+                    const SizedBox(height: 8),
+                  ],
+                  if (pins.isNotEmpty || saved.isNotEmpty)
+                    const SignalSection('Your playlists',
+                        padding: EdgeInsets.fromLTRB(16, 4, 12, 6)),
+                ],
+              );
+            },
           ),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 280),
@@ -28426,7 +28467,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.9.1';
+const String kAppVersion = '2.9.2';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -29484,6 +29525,7 @@ void openYtShelfItem(BuildContext context, YtShelfItem it) {
     case 'playlist':
       Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => YtAlbumScreen(
+          playlistId: it.id,
           album: YtAlbum('', it.title, it.subtitle, it.thumbnail, -1),
           loader: () => ytAccount.value.signedIn
               ? YouTubeMusic.playlistPage(it.id,
@@ -29979,6 +30021,7 @@ void openYtAlbum(BuildContext context, YtAlbum album) {
 void openYtAccountPlaylist(BuildContext context, YtPlaylistRef p) {
   Navigator.of(context).push(MaterialPageRoute(
     builder: (_) => YtAlbumScreen(
+      playlistId: p.playlistId,
       album: YtAlbum('', p.title, p.subtitle, p.thumbnail, -1),
       loader: () => YouTubeMusic.playlistPage(p.playlistId,
           title: p.title, thumbnail: p.thumbnail),
@@ -30367,6 +30410,7 @@ class YtArtistTile extends StatelessWidget {
 void openYtPlaylistRef(BuildContext context, YtPlaylistRef p) {
   Navigator.of(context).push(MaterialPageRoute(
     builder: (_) => YtAlbumScreen(
+      playlistId: p.playlistId,
       album: YtAlbum('', p.title, p.subtitle, p.thumbnail, -1),
       loader: () => YouTubeMusic.publicPlaylistPage(p.playlistId,
           title: p.title, thumbnail: p.thumbnail),
@@ -30570,12 +30614,15 @@ class YtAlbumScreen extends StatefulWidget {
   /// Saved copy to show instantly while the fresh one loads.
   final YtAlbumPage? Function()? cached;
   final String playLabel;
+  /// YouTube Music playlist id, so the playlist can be saved / pinned.
+  final String? playlistId;
   const YtAlbumScreen({
     super.key,
     required this.album,
     this.loader,
     this.cached,
     this.playLabel = 'Play album',
+    this.playlistId,
   });
 
   @override
@@ -30583,6 +30630,16 @@ class YtAlbumScreen extends StatefulWidget {
 }
 
 class _YtAlbumScreenState extends State<YtAlbumScreen> {
+  LibItem? _libItem;
+
+  /// Albums you play show up in your Library.
+  void _played() {
+    final it = _libItem;
+    if (it != null && it.kind == 'album' && !LibraryStore.isSaved(it)) {
+      LibraryStore.save(it);
+    }
+  }
+
   late Future<YtAlbumPage> _future;
   YtAlbumPage? _cached;
   bool _descOpen = false;
@@ -30626,6 +30683,13 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
               ? page!.artist
               : widget.album.artist;
           final isAlbum = page?.kind != null || page?.year != null;
+          _libItem = widget.album.url.isNotEmpty
+              ? LibItem('album', widget.album.url, title, artist, cover)
+              : (widget.playlistId != null &&
+                      widget.playlistId!.isNotEmpty &&
+                      widget.playlistId != 'LM')
+                  ? LibItem('playlist', widget.playlistId!, title, artist, cover)
+                  : null;
 
           final chips = <String>[
             if (page?.kind != null) page!.kind!,
@@ -30746,17 +30810,21 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
           return [
             ...header,
             if (tracks.isNotEmpty)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                runSpacing: 10,
                 children: [
                   _ytPlayButton(pal, widget.playLabel, () {
                     audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+                    _played();
                     audioHandler.playYouTubeList(tracks, 0);
                     openPlayer(context);
                   }),
                   const SizedBox(width: 10),
                   _circleAction(pal, Icons.shuffle_rounded, () {
                     audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
+                    _played();
                     audioHandler.playYouTubeList(
                         tracks, Random().nextInt(tracks.length));
                     openPlayer(context);
@@ -30777,6 +30845,45 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
                       () => OfflineStore.downloadAll(tracks),
                     ),
                   ),
+                  if (_libItem != null)
+                    ValueListenableBuilder<int>(
+                      valueListenable: LibraryStore.revision,
+                      builder: (_, __, ___) {
+                        final it = _libItem!;
+                        final saved = LibraryStore.isSaved(it);
+                        final pinned = LibraryStore.isPinned(it);
+                        return Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(width: 10),
+                            _circleAction(
+                                pal,
+                                saved
+                                    ? Icons.library_add_check_rounded
+                                    : Icons.add_rounded, () {
+                              HapticFeedback.lightImpact();
+                              if (saved) {
+                                LibraryStore.unsave(it);
+                                appNotice.value =
+                                    'Removed "${it.title}" from your Library.';
+                              } else {
+                                LibraryStore.save(it);
+                                appNotice.value =
+                                    'Added "${it.title}" to your Library.';
+                              }
+                            }),
+                            const SizedBox(width: 10),
+                            _circleAction(
+                                pal,
+                                pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                                () {
+                              HapticFeedback.lightImpact();
+                              LibraryStore.togglePin(it);
+                            }),
+                          ],
+                        );
+                      },
+                    ),
                 ],
               ),
             if (page.description != null && page.description!.isNotEmpty)
@@ -30815,7 +30922,8 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
                   : YtTrackRow(
                       track: tracks[i],
                       onPlay: () {
-                        audioHandler.playYouTubeList(tracks, i);
+                        _played();
+                    audioHandler.playYouTubeList(tracks, i);
                         openPlayer(context);
                       },
                     ),
@@ -30858,7 +30966,8 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
     return SquishyGesture(
       pressedScale: 0.98,
       onTap: () {
-        audioHandler.playYouTubeList(tracks, i);
+        _played();
+                    audioHandler.playYouTubeList(tracks, i);
         openPlayer(context);
       },
       child: Padding(
@@ -31354,6 +31463,7 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
                   if (it.kind == 'playlist') {
                     Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => YtAlbumScreen(
+                        playlistId: it.id,
                         album: YtAlbum('', it.title, it.subtitle, it.thumbnail, -1),
                         loader: () => YouTubeMusic.publicPlaylistPage(it.id,
                             title: it.title, thumbnail: it.thumbnail),
@@ -33032,6 +33142,236 @@ class SignalPlayerView extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════ Library: saved albums and pins ═══════════════════════
+
+/// An album or playlist kept in your Library (saved, played or pinned).
+class LibItem {
+  final String kind; // 'album', 'playlist' (YouTube Music) or 'local'
+  final String id;
+  final String title;
+  final String subtitle;
+  final String? thumbnail;
+  const LibItem(this.kind, this.id, this.title, this.subtitle, this.thumbnail);
+
+  String get key => '$kind:$id';
+
+  Map<String, dynamic> toJson() => {
+        'kind': kind,
+        'id': id,
+        'title': title,
+        'subtitle': subtitle,
+        'thumbnail': thumbnail,
+      };
+
+  static LibItem? fromJson(Object? e) {
+    if (e is! Map) return null;
+    final kind = e['kind']?.toString() ?? '';
+    final id = e['id']?.toString() ?? '';
+    if (kind.isEmpty || id.isEmpty) return null;
+    return LibItem(kind, id, e['title']?.toString() ?? '',
+        e['subtitle']?.toString() ?? '', e['thumbnail'] as String?);
+  }
+}
+
+class LibraryStore {
+  static final ValueNotifier<int> revision = ValueNotifier<int>(0);
+  static List<LibItem>? _saved;
+  static List<LibItem>? _pins;
+
+  static List<LibItem> _read(String key) {
+    try {
+      final raw = YouTubeMusic.prefs?.getString(key);
+      if (raw == null) return [];
+      return [
+        for (final e in jsonDecode(raw) as List)
+          if (LibItem.fromJson(e) case final i?) i
+      ];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static void _write(String key, List<LibItem> list) {
+    YouTubeMusic.prefs
+        ?.setString(key, jsonEncode([for (final i in list) i.toJson()]));
+    revision.value++;
+  }
+
+  static List<LibItem> get saved => _saved ??= _read('lib_saved_v1');
+  static List<LibItem> get pins => _pins ??= _read('lib_pins_v1');
+
+  static bool isSaved(LibItem i) => saved.any((x) => x.key == i.key);
+  static bool isPinned(LibItem i) => pins.any((x) => x.key == i.key);
+
+  static void save(LibItem i) {
+    saved
+      ..removeWhere((x) => x.key == i.key)
+      ..insert(0, i);
+    if (saved.length > 300) saved.removeRange(300, saved.length);
+    _write('lib_saved_v1', saved);
+  }
+
+  static void unsave(LibItem i) {
+    saved.removeWhere((x) => x.key == i.key);
+    _write('lib_saved_v1', saved);
+  }
+
+  static void togglePin(LibItem i) {
+    if (isPinned(i)) {
+      pins.removeWhere((x) => x.key == i.key);
+      appNotice.value = 'Unpinned "${i.title}".';
+    } else {
+      pins.insert(0, i);
+      appNotice.value = 'Pinned "${i.title}" to the top of your Library.';
+    }
+    _write('lib_pins_v1', pins);
+  }
+
+  static void open(BuildContext context, LibItem i) {
+    switch (i.kind) {
+      case 'local':
+        Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => PlaylistDetailScreen(playlistId: i.id)));
+        break;
+      case 'album':
+        openYtShelfItem(
+            context, YtShelfItem('album', i.id, i.title, i.subtitle, i.thumbnail));
+        break;
+      default:
+        openYtShelfItem(context,
+            YtShelfItem('playlist', i.id, i.title, i.subtitle, i.thumbnail));
+    }
+  }
+
+  /// Long-press menu: pin, and add to / remove from Library.
+  static void menu(BuildContext context, LibItem i) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: kSigS2,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                  isPinned(i) ? Icons.push_pin : Icons.push_pin_outlined,
+                  color: Colors.white70),
+              title: Text(isPinned(i) ? 'Unpin' : 'Pin to top',
+                  style: const TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(ctx);
+                togglePin(i);
+              },
+            ),
+            if (i.kind != 'local')
+              ListTile(
+                leading: Icon(
+                    isSaved(i)
+                        ? Icons.library_add_check_rounded
+                        : Icons.library_add_rounded,
+                    color: Colors.white70),
+                title: Text(
+                    isSaved(i) ? 'Remove from Library' : 'Add to Library',
+                    style: const TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  isSaved(i) ? unsave(i) : save(i);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Horizontal row of Library items (Pinned, Albums & playlists).
+class LibItemRow extends StatelessWidget {
+  final List<LibItem> items;
+  const LibItemRow({super.key, required this.items});
+
+  @override
+  Widget build(BuildContext context) {
+    const w = 132.0;
+    return SizedBox(
+      height: w + 54,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: items.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, n) {
+          final i = items[n];
+          Widget cover;
+          if (i.kind == 'local') {
+            final pl = appState.playlistById(i.id);
+            cover = pl == null
+                ? const ColoredBox(color: kSigS2)
+                : PlaylistCoverThumbnail(playlist: pl, size: w);
+          } else {
+            cover = YtNetworkImage(url: i.thumbnail, size: w);
+          }
+          return GestureDetector(
+            onLongPress: () => LibraryStore.menu(context, i),
+            child: SquishyGesture(
+              pressedScale: 0.95,
+              onTap: () => LibraryStore.open(context, i),
+              child: SizedBox(
+                width: w,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: SizedBox(width: w, height: w, child: cover),
+                        ),
+                        if (LibraryStore.isPinned(i))
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Container(
+                              padding: const EdgeInsets.all(5),
+                              decoration: BoxDecoration(
+                                color: appState.palette.accent,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(Icons.push_pin,
+                                  size: 14, color: appState.palette.onAccent),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(i.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600)),
+                    Text(
+                        i.kind == 'album'
+                            ? 'Album · ${i.subtitle}'
+                            : i.subtitle.isEmpty
+                                ? 'Playlist'
+                                : i.subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: kSigT2, fontSize: 12.5)),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
