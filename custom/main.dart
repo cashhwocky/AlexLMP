@@ -550,16 +550,18 @@ class AppState extends ChangeNotifier {
     swipeRightForNext = prefs.getBool('swipe_right_next') ?? false;
     // AlexLMP Signal becomes everyone's look once (other styles stay in
     // Settings).
-    if (prefs.getBool('signal_default_v1') != true) {
-      await prefs.setString('player_style', 'signal');
+    // AlexLMP Classic is the default player (Signal stays in Settings).
+    if (prefs.getBool('classic_player_default_v3') != true) {
+      await prefs.setString('player_style', 'alex');
       await prefs.setBool('signal_default_v1', true);
+      await prefs.setBool('classic_player_default_v3', true);
     }
     // Default app style is AlexLMP again (the player stays Signal).
     if (prefs.getBool('alex_app_default_v2') != true) {
       await prefs.setString('app_style', 'alex');
       await prefs.setBool('alex_app_default_v2', true);
     }
-    playerStyle = prefs.getString('player_style') ?? 'signal';
+    playerStyle = prefs.getString('player_style') ?? 'alex';
     // The Prestige player was removed.
     if (playerStyle == 'prestige') playerStyle = 'alex';
     animatedBackground = prefs.getBool('animated_bg') ?? false;
@@ -15900,8 +15902,8 @@ class SettingsScreen extends StatelessWidget {
           'How the player controls look',
           appState.playerStyle,
           const {
-            'signal': 'AlexLMP Signal (Default)',
-            'alex': 'AlexLMP Classic',
+            'alex': 'AlexLMP Classic (Default)',
+            'signal': 'AlexLMP Signal',
             'plus': 'PLUS',
             'simp': 'AlexLMP',
             'modern': 'Modern',
