@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart' show timeDilation, Ticker;
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -414,7 +415,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// 'alex' (default look) or 'community' (Google / Material 3 look).
-  String get appStyle => str('app_style', 'alex');
+  String get appStyle => str('app_style', 'signal');
   bool get community => appStyle == 'community';
 
   /// 'local' (files on your phone) or 'youtube' (your YouTube Music).
@@ -547,7 +548,14 @@ class AppState extends ChangeNotifier {
       await prefs.setBool('swipe_left_default_v1', true);
     }
     swipeRightForNext = prefs.getBool('swipe_right_next') ?? false;
-    playerStyle = prefs.getString('player_style') ?? 'alex';
+    // AlexLMP Signal becomes everyone's look once (other styles stay in
+    // Settings).
+    if (prefs.getBool('signal_default_v1') != true) {
+      await prefs.setString('app_style', 'signal');
+      await prefs.setString('player_style', 'signal');
+      await prefs.setBool('signal_default_v1', true);
+    }
+    playerStyle = prefs.getString('player_style') ?? 'signal';
     // The Prestige player was removed.
     if (playerStyle == 'prestige') playerStyle = 'alex';
     animatedBackground = prefs.getBool('animated_bg') ?? false;
@@ -4282,6 +4290,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         final tracks = audioHandler.tracks;
         final bottomInset = MediaQuery.of(context).padding.bottom;
 
+        if (appState.appStyle == 'signal') {
+          return _signalScaffold(context, pal, tracks);
+        }
         if (appState.appStyle == 'apple') {
           return _amScaffold(context, pal, tracks);
         }
@@ -4784,6 +4795,269 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.only(bottom: 30),
       children: out,
+    );
+  }
+
+  // ═══════════════════════ AlexLMP Signal app style ═══════════════════════
+
+  Widget _signalScaffold(
+      BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+    return Scaffold(
+      backgroundColor: kSigInk,
+      body: Column(
+        children: [
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 260),
+              switchInCurve: Curves.easeOut,
+              child: KeyedSubtree(
+                key: ValueKey('signal$_tab'),
+                child: _tab == 0
+                    ? _signalHome(context, pal, tracks)
+                    : SafeArea(
+                        bottom: false, child: _tabBody(context, pal, tracks)),
+              ),
+            ),
+          ),
+          SignalDock(
+            tab: _tab,
+            onTab: (i) => setState(() {
+              _dir = i >= _tab ? 1 : -1;
+              _tab = i;
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _signalHome(BuildContext context, AppPalette pal, List<TrackItem> all) {
+    final yt = appState.homeMode == 'youtube';
+    final top = MediaQuery.of(context).padding.top;
+    final h = DateTime.now().hour;
+    final greet = h < 5
+        ? 'Good night'
+        : h < 12
+            ? 'Good morning'
+            : h < 17
+                ? 'Good afternoon'
+                : 'Good evening';
+    final local = all.where((t) => !t.isYouTube).toList();
+    final pool = yt ? all.where((t) => t.isYouTube).toList() : local;
+    void shuffleAll() {
+      if (pool.isEmpty) {
+        yt ? showSearchSheet(context) : showAddMusicSheet(context);
+      } else {
+        _ytShuffle(pool);
+      }
+    }
+
+    final out = <Widget>[
+      Padding(
+        padding: EdgeInsets.fromLTRB(20, top + 16, 10, 0),
+        child: Row(
+          children: [
+            const SignalBars(size: 32),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(greet,
+                      style: const TextStyle(
+                          color: kSigT2,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 2),
+                  Text('Your music', style: sigHead(26)),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Shuffle all',
+              icon: const Icon(Icons.shuffle_rounded, color: Colors.white),
+              onPressed: shuffleAll,
+            ),
+            IconButton(
+              tooltip: 'YouTube Music account',
+              icon: const Icon(Icons.account_circle_outlined,
+                  color: Colors.white),
+              onPressed: () => showYtAccountSheet(context),
+            ),
+          ],
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+        child: Row(
+          children: [
+            SignalChip(
+                label: 'YouTube Music',
+                on: yt,
+                onTap: () => _setMode('youtube')),
+            const SizedBox(width: 8),
+            SignalChip(
+                label: 'On this phone',
+                on: !yt,
+                onTap: () => _setMode('local')),
+          ],
+        ),
+      ),
+    ];
+
+    if (yt) {
+      out.add(_ytData((d, err, loading) {
+        const w = 150.0;
+        final c = <Widget>[];
+        if (d.shelves.isEmpty) c.add(_ytHomeStatus(pal, err, loading));
+        if (d.again.isNotEmpty) {
+          c
+            ..add(const SignalSection('Jump back in'))
+            ..add(signalQuickGrid([
+              for (final it in d.again.take(6))
+                SignalQuickTile(
+                  art: YtNetworkImage(url: it.thumbnail, size: 44),
+                  title: it.title,
+                  onTap: () => openYtShelfItem(context, it),
+                ),
+            ]));
+        }
+        final quick = d.quick.take(6).toList();
+        if (quick.isNotEmpty) {
+          c.add(SignalSection('On repeat',
+              action: 'Play all', onAction: () => _ytPlay(d.quick, 0)));
+          for (var i = 0; i < quick.length; i++) {
+            c.add(SignalTrackRow(
+                track: quick[i], onTap: () => _ytPlay(quick, i)));
+          }
+        }
+        if (d.mixes.isNotEmpty) {
+          c
+            ..add(const SignalSection('Your mixes'))
+            ..add(_bigRow(
+                [for (final it in d.mixes) _shelfCard(context, it, w)], w));
+        }
+        if (d.liked.isNotEmpty) {
+          final liked = d.liked.take(20).toList();
+          c
+            ..add(SignalSection('From your likes',
+                action: 'Play all', onAction: () => _ytPlay(d.liked, 0)))
+            ..add(PlusCardRow(tracks: liked, onTap: (i) => _ytPlay(liked, i)));
+        }
+        for (final sh in d.rest) {
+          final title = sh.title.isEmpty ? 'For you' : sh.title;
+          if (sh.kind == 'song') {
+            final songs = [
+              for (final it in sh.items)
+                YouTubeMusic.trackFromShelf(it, it.subtitle)
+            ];
+            c
+              ..add(SignalSection(title,
+                  action: 'Play all', onAction: () => _ytPlay(songs, 0)))
+              ..add(PlusCardRow(tracks: songs, onTap: (i) => _ytPlay(songs, i)));
+          } else {
+            c
+              ..add(SignalSection(title))
+              ..add(_bigRow(
+                  [for (final it in sh.items) _shelfCard(context, it, w)], w));
+          }
+        }
+        c
+          ..add(const SignalSection('Your playlists'))
+          ..add(SizedBox(height: 214, child: _ytPlaylistRow(context, pal)));
+        return Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: c);
+      }));
+    } else if (local.isEmpty) {
+      out.add(Padding(
+        padding: const EdgeInsets.only(top: 40),
+        child: _emptyState(context, pal),
+      ));
+    } else {
+      final quick = _quickPicks(local, 6);
+      final recent = _recentFrom(local);
+      if (recent.isNotEmpty) {
+        final r = recent.take(6).toList();
+        out
+          ..add(const SignalSection('Jump back in'))
+          ..add(signalQuickGrid([
+            for (var i = 0; i < r.length; i++)
+              SignalQuickTile(
+                art: CustomAlbumArtwork(track: r[i]),
+                title: r[i].title,
+                onTap: () => _ytPlay(recent, i),
+              ),
+          ]));
+      }
+      out.add(SignalSection('On repeat',
+          action: 'Play all', onAction: () => _ytPlay(quick, 0)));
+      for (var i = 0; i < quick.length; i++) {
+        out.add(SignalTrackRow(track: quick[i], onTap: () => _ytPlay(quick, i)));
+      }
+      if (appState.playlists.isNotEmpty) {
+        out.add(const SignalSection('Your playlists'));
+        for (final pl in appState.playlists) {
+          final ts = pl.trackIds
+              .map(audioHandler.trackById)
+              .whereType<TrackItem>()
+              .toList();
+          out.add(SquishyGesture(
+            pressedScale: 0.98,
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => PlaylistDetailScreen(playlistId: pl.id))),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                      width: 52,
+                      height: 52,
+                      child: ts.isEmpty
+                          ? Container(
+                              color: kSigS2,
+                              child: const Icon(Icons.queue_music_rounded,
+                                  color: kSigT3))
+                          : CustomAlbumArtwork(track: ts.first),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(pl.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15.5,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 3),
+                        Text(
+                            'Playlist · ${ts.length} ${ts.length == 1 ? 'song' : 'songs'}',
+                            style:
+                                const TextStyle(color: kSigT2, fontSize: 13.5)),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right_rounded, color: kSigT3),
+                ],
+              ),
+            ),
+          ));
+        }
+      }
+    }
+
+    return ColoredBox(
+      color: kSigInk,
+      child: ListView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.only(bottom: 24),
+        children: out,
+      ),
     );
   }
 
@@ -6833,6 +7107,36 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           final pls = snap.data ?? const <YtPlaylistRef>[];
           final waiting = snap.data == null &&
               snap.connectionState != ConnectionState.done;
+          // AlexLMP playlists with YouTube Music songs in them (for example
+          // ones imported from Spotify) show up here too.
+          final mine = [
+            for (final p in appState.playlists)
+              if (p.trackIds.any(
+                  (id) => audioHandler.trackById(id)?.isYouTube ?? false))
+                p
+          ];
+          Widget mineCover(Playlist p, double size) {
+            final first = p.trackIds
+                .map(audioHandler.trackById)
+                .whereType<TrackItem>()
+                .firstOrNull;
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(size > 80 ? 18 : 10),
+              child: SizedBox(
+                width: size,
+                height: size,
+                child: first == null
+                    ? const ColoredBox(color: Colors.white10)
+                    : CustomAlbumArtwork(track: first),
+              ),
+            );
+          }
+
+          void openMine(Playlist p) => Navigator.of(context).push(
+              MaterialPageRoute(
+                  builder: (_) => PlaylistDetailScreen(playlistId: p.id)));
+          String mineSub(Playlist p) =>
+              'AlexLMP · ${p.trackIds.length} ${p.trackIds.length == 1 ? 'song' : 'songs'}';
           if (_listView) {
             return Column(
               children: [
@@ -6872,6 +7176,14 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   subtitle: '${OfflineStore.count} saved for offline',
                   onTap: () => openDownloads(context),
                 ),
+                for (final p in mine)
+                  _libRow(
+                    pal,
+                    cover: mineCover(p, 60),
+                    title: p.name,
+                    subtitle: mineSub(p),
+                    onTap: () => openMine(p),
+                  ),
                 for (final p in pls)
                   _libRow(
                     pal,
@@ -6926,6 +7238,14 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     subtitle: '${OfflineStore.count} saved',
                     onTap: () => openDownloads(context),
                   ),
+                  for (final p in mine)
+                    MediaCard(
+                      width: cw,
+                      cover: mineCover(p, cw),
+                      title: p.name,
+                      subtitle: mineSub(p),
+                      onTap: () => openMine(p),
+                    ),
                   for (var i = 0; i < pls.length; i++)
                     Reveal(
                       delayMs: min(i, 8) * 40,
@@ -12831,11 +13151,15 @@ class MiniPlayer extends StatefulWidget {
   /// Smaller version (used by the Apple Music app style).
   final bool compact;
 
+  /// AlexLMP Signal look (same swipe gestures, new design).
+  final bool signal;
+
   const MiniPlayer({
     super.key,
     required this.track,
     required this.palette,
     this.compact = false,
+    this.signal = false,
   });
 
   @override
@@ -12927,7 +13251,130 @@ class _MiniPlayerState extends State<MiniPlayer>
     );
   }
 
+  Widget _signalContent(BuildContext context) {
+    final t = widget.track;
+    final pal = widget.palette;
+    return SquishyGesture(
+      pressedScale: 0.98,
+      onTap: () => openPlayer(context),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+        decoration: BoxDecoration(
+            color: kSigS1, borderRadius: BorderRadius.circular(19)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Hero(
+                  tag: 'now_playing_art',
+                  createRectTween: _arcTween,
+                  flightShuttleBuilder: _artShuttle,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(11),
+                    child: SizedBox(
+                        width: 44, height: 44, child: CustomAlbumArtwork(track: t)),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(t.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
+                      Text(t.artist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: kSigT2, fontSize: 12.5)),
+                    ],
+                  ),
+                ),
+                ListenableBuilder(
+                  listenable: appState,
+                  builder: (context, _) {
+                    final liked = appState.isLiked(t.id);
+                    return IconButton(
+                      tooltip: liked ? 'Unlike' : 'Like',
+                      onPressed: () {
+                        HapticFeedback.lightImpact();
+                        appState.toggleLike(t.id);
+                      },
+                      icon: Icon(
+                          liked
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          color: liked ? pal.accent : Colors.white,
+                          size: 23),
+                    );
+                  },
+                ),
+                StreamBuilder<bool>(
+                  stream: audioHandler.player.playingStream,
+                  initialData: audioHandler.player.playing,
+                  builder: (context, snap) {
+                    final playing = snap.data ?? false;
+                    return Semantics(
+                      button: true,
+                      label: playing ? 'Pause' : 'Play',
+                      child: SquishyGesture(
+                        pressedScale: 0.85,
+                        onTap: () =>
+                            playing ? audioHandler.pause() : audioHandler.play(),
+                        child: Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                              color: pal.accent, shape: BoxShape.circle),
+                          child: Icon(
+                              playing
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              color: pal.onAccent,
+                              size: 26),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TrackProgress(
+              fallbackSeconds: t.durationSeconds,
+              builder: (context, pos, dur) {
+                final v = dur.inMilliseconds <= 0
+                    ? 0.0
+                    : (pos.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0);
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: v.toDouble(),
+                      minHeight: 3,
+                      backgroundColor: kSigLine,
+                      valueColor: AlwaysStoppedAnimation(pal.accent),
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _content(BuildContext context) {
+    if (widget.signal) return _signalContent(context);
     final track = widget.track;
     final palette = widget.palette;
     final k = widget.compact ? 0.8 : 1.0;
@@ -13123,6 +13570,18 @@ class NowPlayingScreen extends StatelessWidget {
             final repeat = state.repeatMode;
             final liked = appState.isLiked(track.id);
 
+            if (appState.playerStyle == 'signal') {
+              return SwipeDownDismiss(
+                child: _artModeSwitch(SignalPlayerView(
+                  track: track,
+                  playing: playing,
+                  loading: loading,
+                  shuffle: shuffle,
+                  repeat: repeat,
+                  liked: liked,
+                )),
+              );
+            }
             if (appState.playerStyle == 'modern') {
               return SwipeDownDismiss(
                 child: ModernPlayerView(
@@ -15187,6 +15646,7 @@ class SettingsScreen extends StatelessWidget {
           'Look and shapes of the whole app (not the player controls)',
           appState.appStyle,
           const {
+            'signal': 'AlexLMP Signal (Default)',
             'alex': 'AlexLMP',
             'plus': 'PLUS',
             'prestige': 'AlexLMP Prestige',
@@ -15198,6 +15658,7 @@ class SettingsScreen extends StatelessWidget {
             appState.setStr('app_style', v);
             if (v == 'apple') appState.setPlayerStyle('apple');
             if (v == 'plus') appState.setPlayerStyle('plus');
+            if (v == 'signal') appState.setPlayerStyle('signal');
           },
         ),
         _dropdown<String>(
@@ -15207,7 +15668,8 @@ class SettingsScreen extends StatelessWidget {
           'How the player controls look',
           appState.playerStyle,
           const {
-            'alex': 'AlexLMP Classic (Default)',
+            'signal': 'AlexLMP Signal (Default)',
+            'alex': 'AlexLMP Classic',
             'plus': 'PLUS',
             'simp': 'AlexLMP',
             'modern': 'Modern',
@@ -21367,6 +21829,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
   List<Widget> _look(Color accent) {
     const appStyles = {
+      'signal': 'Signal',
       'alex': 'AlexLMP',
       'plus': 'PLUS',
       'prestige': 'Prestige',
@@ -21375,6 +21838,7 @@ class _SetupScreenState extends State<SetupScreen> {
       'apple': 'Apple Music',
     };
     const players = {
+      'signal': 'Signal',
       'alex': 'Classic',
       'plus': 'PLUS',
       'simp': 'AlexLMP',
@@ -21492,7 +21956,9 @@ class _SetupScreenState extends State<SetupScreen> {
                   _choice(e.value, appState.appStyle == e.key,
                       () {
                         appState.setStr('app_style', e.key);
-                        if (e.key == 'plus' || e.key == 'apple') {
+                        if (e.key == 'plus' ||
+                            e.key == 'apple' ||
+                            e.key == 'signal') {
                           appState.setPlayerStyle(e.key);
                         }
                       }, accent),
@@ -21761,7 +22227,7 @@ class _SetupScreenState extends State<SetupScreen> {
 // ═══════════════════════ Big artwork (double-tap) ═══════════════════════
 
 /// Player styles that support big edge-to-edge artwork.
-const kImmersivePlayers = {'simp', 'alex', 'plus'};
+const kImmersivePlayers = {'simp', 'alex', 'plus', 'signal'};
 
 /// Edge-to-edge artwork filling the top of the player, fading out at the
 /// bottom into whatever is behind it. Double-tap it to go back.
@@ -27727,7 +28193,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.8.9';
+const String kAppVersion = '2.9.0';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -31180,3 +31646,884 @@ Future<void> reportBug(BuildContext context) async {
   if (go == true) await openExternalUrl(kBugReportUrl);
 }
 
+
+// ═══════════════════════ AlexLMP Signal (default look) ═══════════════════════
+// Near-black ink, one accent colour, Space Grotesk headings, and the AlexLMP
+// logo bars used as the scrubber, the "now playing" mark and section marks.
+// The mini player and the tabs sit together in one floating dock.
+
+const kSigInk = Color(0xFF0E0F13);
+const kSigS1 = Color(0xFF16181E);
+const kSigS2 = Color(0xFF1F222A);
+const kSigLine = Color(0xFF2A2E38);
+const kSigT2 = Color(0xFFA3A8B5);
+const kSigT3 = Color(0xFF7E8392);
+
+bool get signalLook => appState.appStyle == 'signal';
+
+TextStyle sigHead(double size,
+        {Color color = Colors.white, FontWeight weight = FontWeight.w700}) =>
+    GoogleFonts.spaceGrotesk(
+      fontSize: size,
+      fontWeight: weight,
+      color: color,
+      height: 1.08,
+      letterSpacing: -0.02 * size,
+    );
+
+/// The AlexLMP logo: five rounded bars.
+class SignalBars extends StatelessWidget {
+  final double size;
+  final Color? color;
+  const SignalBars({super.key, this.size = 18, this.color});
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: size,
+        height: size,
+        child: CustomPaint(
+            painter: _SignalBarsPainter(color ?? appState.palette.accent)),
+      );
+}
+
+class _SignalBarsPainter extends CustomPainter {
+  final Color color;
+  _SignalBarsPainter(this.color);
+  static const _h = [8.0, 24.0, 40.0, 12.0, 4.0];
+
+  @override
+  void paint(Canvas canvas, Size s) {
+    final k = s.width / 48;
+    final w = 5.2 * k;
+    final p = Paint()..color = color;
+    for (var i = 0; i < 5; i++) {
+      final cx = (8 + 8 * i) * k;
+      final h = _h[i] * k + w;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(center: Offset(cx, s.height / 2), width: w, height: h),
+            Radius.circular(w / 2)),
+        p,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SignalBarsPainter o) => o.color != color;
+}
+
+class SignalSection extends StatelessWidget {
+  final String title;
+  final String? action;
+  final VoidCallback? onAction;
+  final EdgeInsetsGeometry padding;
+  const SignalSection(this.title,
+      {super.key,
+      this.action,
+      this.onAction,
+      this.padding = const EdgeInsets.fromLTRB(20, 26, 12, 10)});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: padding,
+        child: Row(
+          children: [
+            const SignalBars(size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: sigHead(21)),
+            ),
+            if (action != null && onAction != null)
+              TextButton(
+                style: TextButton.styleFrom(
+                    foregroundColor: kSigT2,
+                    textStyle: const TextStyle(
+                        fontSize: 13.5, fontWeight: FontWeight.w600)),
+                onPressed: onAction,
+                child: Text(action!),
+              ),
+          ],
+        ),
+      );
+}
+
+class SignalChip extends StatelessWidget {
+  final String label;
+  final bool on;
+  final VoidCallback onTap;
+  final IconData? icon;
+  const SignalChip(
+      {super.key,
+      required this.label,
+      required this.on,
+      required this.onTap,
+      this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    return SquishyGesture(
+      pressedScale: 0.94,
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        height: 38,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: on ? pal.accent : kSigS1,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: on ? pal.accent : kSigLine),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 18, color: on ? pal.onAccent : Colors.white),
+              const SizedBox(width: 6),
+            ],
+            Text(label,
+                style: TextStyle(
+                    color: on ? pal.onAccent : Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Song row: artwork, title, artist; the playing song gets the logo bars.
+class SignalTrackRow extends StatelessWidget {
+  final TrackItem track;
+  final VoidCallback onTap;
+  final int? number;
+  const SignalTrackRow(
+      {super.key, required this.track, required this.onTap, this.number});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    return ValueListenableBuilder<int>(
+      valueListenable: audioHandler.currentIndex,
+      builder: (context, _, __) {
+        final playing = audioHandler.currentTrack?.id == track.id;
+        return SquishyGesture(
+          pressedScale: 0.98,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+            child: Row(
+              children: [
+                if (number != null) ...[
+                  SizedBox(
+                    width: 22,
+                    child: Text('$number',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: kSigT3,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                      width: 52,
+                      height: 52,
+                      child: CustomAlbumArtwork(track: track)),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          if (playing) ...[
+                            const SignalBars(size: 15),
+                            const SizedBox(width: 6),
+                          ],
+                          Expanded(
+                            child: Text(track.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: playing ? pal.accent : Colors.white,
+                                    fontSize: 15.5,
+                                    fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(track.artist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: kSigT2, fontSize: 13.5)),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.more_vert_rounded, color: kSigT2),
+                  onPressed: () => showAddToPlaylistSheet(context, track),
+                  tooltip: 'Add to playlist',
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Compact "Jump back in" tile.
+class SignalQuickTile extends StatelessWidget {
+  final Widget art;
+  final String title;
+  final VoidCallback onTap;
+  const SignalQuickTile(
+      {super.key, required this.art, required this.title, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => SquishyGesture(
+        pressedScale: 0.96,
+        onTap: onTap,
+        child: Container(
+          height: 56,
+          padding: const EdgeInsets.fromLTRB(6, 6, 10, 6),
+          decoration: BoxDecoration(
+              color: kSigS1, borderRadius: BorderRadius.circular(14)),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SizedBox(width: 44, height: 44, child: art),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13.5,
+                        height: 1.2,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
+Widget signalQuickGrid(List<Widget> tiles) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: LayoutBuilder(builder: (context, c) {
+        final w = (c.maxWidth - 8) / 2;
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [for (final t in tiles) SizedBox(width: w, child: t)],
+        );
+      }),
+    );
+
+/// Floating dock: swipeable mini player on top of the four tabs.
+class SignalDock extends StatelessWidget {
+  final int tab;
+  final ValueChanged<int> onTab;
+  const SignalDock({super.key, required this.tab, required this.onTab});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    final bottom = MediaQuery.of(context).padding.bottom;
+    final items = [
+      (Icons.home_rounded, 'Home', tab == 0, () => onTab(0)),
+      (Icons.search_rounded, 'Search', false, () => showSearchSheet(context)),
+      (Icons.library_music_rounded, 'Library', tab == 2, () => onTab(2)),
+      (Icons.tune_rounded, 'Settings', false, () => showSettingsSheet(context)),
+    ];
+    return ColoredBox(
+      color: kSigInk,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(12, 4, 12, 10 + bottom),
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: kSigS2,
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(color: kSigLine),
+            boxShadow: const [
+              BoxShadow(
+                  color: Color(0x8C000000), blurRadius: 30, offset: Offset(0, 14)),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ValueListenableBuilder<int>(
+                valueListenable: audioHandler.currentIndex,
+                builder: (context, _, __) {
+                  final t = audioHandler.currentTrack;
+                  if (t == null) return const SizedBox.shrink();
+                  return MiniPlayer(track: t, palette: pal, signal: true);
+                },
+              ),
+              SizedBox(
+                height: 56,
+                child: Row(
+                  children: [
+                    for (final (icon, label, on, tap) in items)
+                      Expanded(
+                        child: Semantics(
+                          button: true,
+                          selected: on,
+                          label: label,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              HapticFeedback.selectionClick();
+                              tap();
+                            },
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(icon,
+                                    size: 23,
+                                    color: on ? pal.accent : kSigT3),
+                                const SizedBox(height: 3),
+                                Text(label,
+                                    style: TextStyle(
+                                      color: on ? Colors.white : kSigT3,
+                                      fontSize: 11,
+                                      fontWeight:
+                                          on ? FontWeight.w700 : FontWeight.w500,
+                                    )),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Signal player ───────────────────────────────────────────────────────
+
+class SignalPlayerView extends StatelessWidget {
+  final TrackItem track;
+  final bool playing;
+  final bool loading;
+  final bool shuffle;
+  final AudioServiceRepeatMode repeat;
+  final bool liked;
+  const SignalPlayerView({
+    super.key,
+    required this.track,
+    required this.playing,
+    required this.loading,
+    required this.shuffle,
+    required this.repeat,
+    required this.liked,
+  });
+
+  static final Map<String, List<double>> _barCache = {};
+
+  void _more(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: kSigS2,
+      showDragHandle: true,
+      builder: (ctx) {
+        Widget item(IconData i, String t, VoidCallback f) => ListTile(
+              leading: Icon(i, color: Colors.white70),
+              title: Text(t, style: const TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(ctx);
+                f();
+              },
+            );
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              item(Icons.playlist_add_rounded, 'Add to playlist',
+                  () => showAddToPlaylistSheet(context, track)),
+              item(Icons.person_rounded, 'Go to artist',
+                  () => goToArtist(context, track)),
+              item(Icons.bedtime_outlined, 'Sleep timer',
+                  () => showSleepTimerSheet(context)),
+              item(Icons.ios_share_rounded, 'Share', () => shareTrack(track)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Color>(
+      future: artSeedFor(track),
+      builder: (context, snap) {
+        final seed = snap.data ?? track.artColors.first;
+        return TweenAnimationBuilder<Color?>(
+          tween: ColorTween(end: seed),
+          duration: const Duration(milliseconds: 600),
+          builder: (context, c, _) => _body(context, c ?? seed),
+        );
+      },
+    );
+  }
+
+  Widget _body(BuildContext context, Color seed) {
+    final pal = appState.palette;
+    final accent = pal.accent;
+    final onAccent = pal.onAccent;
+    final immersive = appState.b('immersive_art');
+    final bars = _barCache.putIfAbsent(track.id, () => _plusBars(track.id, 52));
+    final source = liked
+        ? 'Your likes'
+        : track.isYouTube
+            ? 'YouTube Music'
+            : 'On this phone';
+
+    Widget side(IconData icon, VoidCallback onTap, String label,
+            {bool on = false}) =>
+        Semantics(
+          button: true,
+          label: label,
+          child: SquishyGesture(
+            pressedScale: 0.85,
+            onTap: () {
+              HapticFeedback.selectionClick();
+              onTap();
+            },
+            child: SizedBox(
+              width: 48,
+              height: 48,
+              child: Icon(icon, size: 24, color: on ? accent : kSigT2),
+            ),
+          ),
+        );
+
+    Widget soft(IconData icon, VoidCallback onTap, String label) => Semantics(
+          button: true,
+          label: label,
+          child: SquishyGesture(
+            pressedScale: 0.88,
+            onTap: onTap,
+            child: Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.07),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: Colors.white, size: 34),
+            ),
+          ),
+        );
+
+    Widget tab(IconData icon, String label, VoidCallback onTap,
+            {bool on = false}) =>
+        Expanded(
+          child: SquishyGesture(
+            pressedScale: 0.9,
+            onTap: onTap,
+            child: SizedBox(
+              height: 58,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 21, color: on ? accent : Colors.white),
+                  const SizedBox(height: 4),
+                  Text(label,
+                      style: TextStyle(
+                          color: on ? accent : kSigT2,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+          ),
+        );
+
+    return Scaffold(
+      backgroundColor: kSigInk,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Soft glow in the song's colour behind the artwork.
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(0, -0.45),
+                radius: 0.95,
+                colors: [seed.withOpacity(0.24), kSigInk],
+              ),
+            ),
+          ),
+          if (immersive)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: ImmersiveArt(track: track, playing: playing),
+            ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                children: [
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Close player',
+                        icon: const Icon(Icons.keyboard_arrow_down_rounded,
+                            color: Colors.white, size: 30),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                      const Spacer(),
+                      Container(
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SignalBars(size: 15, color: accent),
+                            const SizedBox(width: 8),
+                            Text(source,
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        tooltip: 'More',
+                        icon: const Icon(Icons.more_vert_rounded,
+                            color: Colors.white),
+                        onPressed: () => _more(context),
+                      ),
+                    ],
+                  ),
+                  if (immersive)
+                    const Spacer()
+                  else
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 14, 12, 18),
+                        child: Center(
+                          child: AspectRatio(
+                            aspectRatio: 1,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(32),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: seed.withOpacity(0.28),
+                                    blurRadius: 50,
+                                    offset: const Offset(0, 24),
+                                  ),
+                                  const BoxShadow(
+                                    color: Color(0x80000000),
+                                    blurRadius: 26,
+                                    offset: Offset(0, 10),
+                                  ),
+                                ],
+                              ),
+                              child: Hero(
+                                tag: 'now_playing_art',
+                                createRectTween: _arcTween,
+                                flightShuttleBuilder: _artShuttle,
+                                child: SwipeArtCarousel(
+                                    track: track, playing: playing, radius: 32),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  // ── Title, artist, like
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(track.title,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: sigHead(30)),
+                              const SizedBox(height: 5),
+                              GestureDetector(
+                                onTap: () => goToArtist(context, track),
+                                child: Text(track.artist,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        color: accent,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Semantics(
+                          button: true,
+                          label: liked ? 'Unlike' : 'Like',
+                          child: SquishyGesture(
+                            pressedScale: 0.8,
+                            onTap: () {
+                              HapticFeedback.lightImpact();
+                              appState.toggleLike(track.id);
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 250),
+                              width: 50,
+                              height: 50,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: liked ? accent : Colors.white.withOpacity(0.07),
+                              ),
+                              child: Icon(
+                                liked
+                                    ? Icons.favorite_rounded
+                                    : Icons.favorite_border_rounded,
+                                color: liked ? onAccent : Colors.white,
+                                size: 25,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // ── Logo-bar scrubber
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: RepaintBoundary(
+                      child: PlayerSeek(
+                        fallbackSeconds: track.durationSeconds,
+                        height: 32,
+                        timeStyle: const TextStyle(
+                          color: kSigT2,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: [ui.FontFeature.tabularFigures()],
+                        ),
+                        track: (v, dragging) => CustomPaint(
+                          painter: _PlusSeekPainter(v, dragging, bars, accent),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  // ── Controls
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        side(Icons.shuffle_rounded, () {
+                          audioHandler.setShuffleMode(shuffle
+                              ? AudioServiceShuffleMode.none
+                              : AudioServiceShuffleMode.all);
+                        }, 'Shuffle', on: shuffle),
+                        soft(Icons.skip_previous_rounded,
+                            audioHandler.skipToPrevious, 'Previous'),
+                        Semantics(
+                          button: true,
+                          label: playing ? 'Pause' : 'Play',
+                          child: SquishyGesture(
+                            pressedScale: 0.9,
+                            onTap: () => playing
+                                ? audioHandler.pause()
+                                : audioHandler.play(),
+                            child: TweenAnimationBuilder<double>(
+                              tween: Tween(end: playing ? 30.0 : 43.0),
+                              duration: const Duration(milliseconds: 380),
+                              curve: Curves.easeOutBack,
+                              builder: (_, r, child) => Container(
+                                width: 86,
+                                height: 86,
+                                decoration: BoxDecoration(
+                                  color: accent,
+                                  borderRadius:
+                                      BorderRadius.circular(r.clamp(10.0, 43.0)),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: accent.withOpacity(0.3),
+                                      blurRadius: 30,
+                                      offset: const Offset(0, 14),
+                                    ),
+                                  ],
+                                ),
+                                child: child,
+                              ),
+                              child: Center(
+                                child: loading
+                                    ? SizedBox(
+                                        width: 30,
+                                        height: 30,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 3, color: onAccent),
+                                      )
+                                    : Icon(
+                                        playing
+                                            ? Icons.pause_rounded
+                                            : Icons.play_arrow_rounded,
+                                        color: onAccent,
+                                        size: 44),
+                              ),
+                            ),
+                          ),
+                        ),
+                        soft(Icons.skip_next_rounded, audioHandler.skipToNext,
+                            'Next'),
+                        side(
+                            repeat == AudioServiceRepeatMode.one
+                                ? Icons.repeat_one_rounded
+                                : Icons.repeat_rounded,
+                            () => audioHandler.setRepeatMode(_nextRepeat(repeat)),
+                            'Repeat',
+                            on: repeat != AudioServiceRepeatMode.none),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  // ── Up next + tools
+                  Container(
+                    decoration: BoxDecoration(
+                      color: kSigS2,
+                      borderRadius: BorderRadius.circular(26),
+                      border: Border.all(color: kSigLine),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      children: [
+                        ValueListenableBuilder<int>(
+                          valueListenable: audioHandler.upNextRevision,
+                          builder: (context, _, __) {
+                            final next = audioHandler.peekNext;
+                            if (next == null) return const SizedBox.shrink();
+                            return GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => showQueueSheet(context),
+                              onVerticalDragEnd: (d) {
+                                if ((d.primaryVelocity ?? 0) < -200) {
+                                  showQueueSheet(context);
+                                }
+                              },
+                              child: Container(
+                                padding:
+                                    const EdgeInsets.fromLTRB(12, 10, 14, 10),
+                                decoration: const BoxDecoration(
+                                  border: Border(
+                                      bottom: BorderSide(color: kSigLine)),
+                                ),
+                                child: Row(
+                                  children: [
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(9),
+                                      child: SizedBox(
+                                          width: 36,
+                                          height: 36,
+                                          child:
+                                              CustomAlbumArtwork(track: next)),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text('UP NEXT',
+                                              style: TextStyle(
+                                                  color: kSigT2,
+                                                  fontSize: 11,
+                                                  letterSpacing: 0.7,
+                                                  fontWeight: FontWeight.w600)),
+                                          const SizedBox(height: 1),
+                                          Text('${next.title} · ${next.artist}',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w600)),
+                                        ],
+                                      ),
+                                    ),
+                                    const Icon(Icons.keyboard_arrow_up_rounded,
+                                        color: kSigT3),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Row(
+                            children: [
+                              tab(Icons.lyrics_outlined, 'Lyrics',
+                                  () => showLyricsSheet(context, track)),
+                              tab(Icons.queue_music_rounded, 'Queue',
+                                  () => showQueueSheet(context)),
+                              tab(Icons.graphic_eq_rounded, 'Sound',
+                                  () => showPlaybackSheet(context),
+                                  on: soundModified),
+                              ValueListenableBuilder<String?>(
+                                valueListenable: audioHandler.sleepLabel,
+                                builder: (_, label, __) => tab(
+                                    Icons.bedtime_outlined,
+                                    'Sleep',
+                                    () => showSleepTimerSheet(context),
+                                    on: label != null),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
