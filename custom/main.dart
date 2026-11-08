@@ -415,7 +415,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// 'alex' (default look) or 'community' (Google / Material 3 look).
-  String get appStyle => str('app_style', 'signal');
+  String get appStyle => str('app_style', 'alex');
   bool get community => appStyle == 'community';
 
   /// 'local' (files on your phone) or 'youtube' (your YouTube Music).
@@ -551,9 +551,13 @@ class AppState extends ChangeNotifier {
     // AlexLMP Signal becomes everyone's look once (other styles stay in
     // Settings).
     if (prefs.getBool('signal_default_v1') != true) {
-      await prefs.setString('app_style', 'signal');
       await prefs.setString('player_style', 'signal');
       await prefs.setBool('signal_default_v1', true);
+    }
+    // Default app style is AlexLMP again (the player stays Signal).
+    if (prefs.getBool('alex_app_default_v2') != true) {
+      await prefs.setString('app_style', 'alex');
+      await prefs.setBool('alex_app_default_v2', true);
     }
     playerStyle = prefs.getString('player_style') ?? 'signal';
     // The Prestige player was removed.
@@ -729,9 +733,24 @@ class AppState extends ChangeNotifier {
     _prefs?.setStringList('yt_liked_ids', _ytLiked.toList());
   }
 
+  // Hearts tapped in the last few minutes. YouTube Music often sends back
+  // its likes list from before the tap, which used to un-fill the heart.
+  final Map<String, (bool, DateTime)> _recentLikeTaps = {};
+
   /// Replace the YouTube likes with what YouTube Music says (LM playlist).
   void syncYtLikes(Iterable<String> ids) {
-    _ytLikedCache = {...ids};
+    final next = {...ids};
+    final now = DateTime.now();
+    _recentLikeTaps
+        .removeWhere((_, v) => now.difference(v.$2).inMinutes >= 10);
+    _recentLikeTaps.forEach((id, v) {
+      if (v.$1) {
+        next.add(id);
+      } else {
+        next.remove(id);
+      }
+    });
+    _ytLikedCache = next;
     _saveYtLiked();
     notifyListeners();
   }
@@ -759,6 +778,7 @@ class AppState extends ChangeNotifier {
   void _toggleYtLike(String id, String videoId) {
     final wasLiked = isLiked(id);
     final hadLocal = liked.contains(id);
+    _recentLikeTaps[id] = (!wasLiked, DateTime.now());
     // Update the heart right away; undo if YouTube Music says no.
     if (wasLiked) {
       _ytLiked.remove(id);
@@ -784,6 +804,7 @@ class AppState extends ChangeNotifier {
           ? 'Removed from your YouTube Music likes.'
           : 'Added to your YouTube Music likes.';
     }).catchError((Object e) {
+      _recentLikeTaps.remove(id);
       YouTubeMusic.patchLikedCache(videoId, track, wasLiked);
       if (wasLiked) {
         _ytLiked.add(id);
@@ -9277,15 +9298,17 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
-              const Expanded(
-                child: Text(
-                  'Library',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 30,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.6,
-                  ),
+              Expanded(
+                child: Row(
+                  children: [
+                    const SignalBars(size: 26),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text('Library',
+                          overflow: TextOverflow.ellipsis,
+                          style: sigHead(32)),
+                    ),
+                  ],
                 ),
               ),
               _roundIcon(
@@ -9341,10 +9364,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                           ),
                         )
                       : BoxDecoration(
-                          color: selected ? pal.accent : pal.surface,
-                          borderRadius: BorderRadius.circular(21),
+                          color: selected ? pal.accent : kSigS1,
+                          borderRadius: BorderRadius.circular(999),
                           border: Border.all(
-                            color: selected ? pal.accent : Colors.white12,
+                            color: selected ? pal.accent : kSigLine,
                           ),
                         ),
                   child: Row(
@@ -9374,6 +9397,43 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           ),
         ),
         const SizedBox(height: 16),
+        if (_libraryFilter == 0 && !appState.community)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _libHeroTile(
+                    color: pal.accent,
+                    fg: pal.onAccent,
+                    icon: Icons.favorite_rounded,
+                    title: 'Liked songs',
+                    subtitle: yt ? 'YouTube Music' : 'On this phone',
+                    onTap: () => yt
+                        ? openYtLikedMusic(context)
+                        : Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) => const LikedSongsScreen())),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _libHeroTile(
+                    color: kSigS1,
+                    fg: Colors.white,
+                    iconColor: pal.accent,
+                    icon: yt
+                        ? Icons.download_done_rounded
+                        : Icons.file_download_rounded,
+                    title: yt ? 'Downloaded' : 'From Spotify',
+                    subtitle: yt ? 'Saved for offline' : 'Import a playlist',
+                    onTap: () => yt
+                        ? openDownloads(context)
+                        : openSpotifyImport(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 280),
           switchInCurve: kEmphasizedDecel,
@@ -9401,6 +9461,49 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   bool get _listView => appState.b('lib_list_view');
 
+  Widget _libHeroTile({
+    required Color color,
+    required Color fg,
+    Color? iconColor,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return SquishyGesture(
+      pressedScale: 0.96,
+      onTap: onTap,
+      child: Container(
+        height: 124,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(24),
+          border: color == kSigS1 ? Border.all(color: kSigLine) : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: iconColor ?? fg, size: 30),
+            const Spacer(),
+            Text(title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: sigHead(19, color: fg)),
+            const SizedBox(height: 2),
+            Text(subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: fg.withOpacity(0.75),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w500)),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// List-view row used by Library when "list" is chosen.
   Widget _libRow(
     AppPalette pal, {
@@ -9420,12 +9523,12 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           onTap: onTap,
           child: LiquidGlassBox(
             borderRadius: BorderRadius.circular(20),
-            fallbackColor: pal.surface,
+            fallbackColor: appState.community ? pal.surface : kSigS1,
             padding: const EdgeInsets.all(10),
             child: Row(
               children: [
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(circle ? 30 : 14),
+                  borderRadius: BorderRadius.circular(circle ? 30 : 12),
                   child: SizedBox(width: 60, height: 60, child: cover),
                 ),
                 const SizedBox(width: 14),
@@ -9438,18 +9541,17 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 16.5,
-                              fontWeight: FontWeight.w800)),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600)),
                       const SizedBox(height: 3),
                       Text(subtitle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: Color(0xFFA6ADB2), fontSize: 13)),
+                          style: const TextStyle(color: kSigT2, fontSize: 13.5)),
                     ],
                   ),
                 ),
-                Icon(Icons.chevron_right_rounded, color: pal.accent),
+                const Icon(Icons.chevron_right_rounded, color: kSigT3),
               ],
             ),
           ),
@@ -10877,13 +10979,26 @@ class LikedSongsScreen extends StatelessWidget {
             allTracks.where((t) => appState.isLiked(t.id)).toList();
 
         return Scaffold(
-          backgroundColor: pal.bg,
+          backgroundColor: kSigInk,
           body: Stack(
             children: [
-              AuroraPlasmaBackground(
-                accent: pal.accent,
-                secondary: const Color(0xFFF09CE2),
-                intense: true,
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 380,
+                child: ShaderMask(
+                  shaderCallback: (r) => const LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.white, Colors.transparent],
+                  ).createShader(r),
+                  blendMode: BlendMode.dstIn,
+                  child: PrestigeBackdrop(
+                      track: likedTracks.isEmpty ? null : likedTracks.first,
+                      dim: 0.55,
+                      animate: false),
+                ),
               ),
               SafeArea(
                 child: Column(
@@ -10958,15 +11073,18 @@ class LikedSongsScreen extends StatelessWidget {
                       child: Row(
                         children: [
                           Container(
-                            width: 104,
-                            height: 104,
+                            width: 120,
+                            height: 120,
                             decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [pal.accent, pal.container],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(25),
+                              color: pal.accent,
+                              borderRadius: BorderRadius.circular(24),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: pal.accent.withOpacity(0.35),
+                                  blurRadius: 30,
+                                  offset: const Offset(0, 14),
+                                ),
+                              ],
                             ),
                             child: Icon(
                               Icons.favorite_rounded,
@@ -10979,15 +11097,7 @@ class LikedSongsScreen extends StatelessWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text(
-                                  'Liked Songs',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: -0.4,
-                                  ),
-                                ),
+                                Text('Liked Songs', style: sigHead(30)),
                                 const SizedBox(height: 6),
                                 Text(
                                   '${likedTracks.length} ${likedTracks.length == 1 ? 'song' : 'songs'} saved',
@@ -11213,85 +11323,136 @@ class PlaylistDetailScreen extends StatelessWidget {
           openPlayer(context);
         }
 
+        Widget pill(String label, IconData icon, VoidCallback onTap,
+                {bool primary = false}) =>
+            Expanded(
+              child: SquishyGesture(
+                pressedScale: 0.95,
+                onTap: onTap,
+                child: Container(
+                  height: 54,
+                  decoration: BoxDecoration(
+                    color: primary ? pal.accent : kSigS2,
+                    borderRadius: BorderRadius.circular(999),
+                    border: primary ? null : Border.all(color: kSigLine),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(icon,
+                          color: primary ? pal.onAccent : Colors.white,
+                          size: 24),
+                      const SizedBox(width: 8),
+                      Text(label,
+                          style: TextStyle(
+                              color: primary ? pal.onAccent : Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              ),
+            );
+
+        Widget round(IconData icon, String label, VoidCallback onTap) =>
+            Semantics(
+              button: true,
+              label: label,
+              child: SquishyGesture(
+                pressedScale: 0.88,
+                onTap: onTap,
+                child: Container(
+                  width: 54,
+                  height: 54,
+                  decoration: BoxDecoration(
+                    color: kSigS2,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: kSigLine),
+                  ),
+                  child: Icon(icon, color: Colors.white, size: 22),
+                ),
+              ),
+            );
+
         final header = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 8),
-            Center(
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(22),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.5),
-                      blurRadius: 30,
-                      offset: const Offset(0, 14),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(22),
-                  child: PlaylistCoverThumbnail(playlist: pl, size: 220),
-                ),
-              ),
-            ),
-            const SizedBox(height: 18),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-              decoration: BoxDecoration(
-                color: pal.accent.withOpacity(0.16),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: pal.accent.withOpacity(0.5)),
-              ),
-              child: Text(
-                'PLAYLIST',
-                style: TextStyle(
-                  color: pal.accent,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.8,
-                ),
-              ),
-            ),
             const SizedBox(height: 10),
-            Text(
-              pl.name,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -0.4,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'You • $info',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white54, fontSize: 13),
-            ),
-            const SizedBox(height: 16),
             Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                if (tracks.isNotEmpty)
-                  _ytPlayButton(pal, 'Play', () {
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(22),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.55),
+                        blurRadius: 34,
+                        offset: const Offset(0, 16),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: PlaylistCoverThumbnail(playlist: pl, size: 150),
+                  ),
+                ),
+                const SizedBox(width: 18),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const SignalBars(size: 14),
+                            const SizedBox(width: 6),
+                            Text('PLAYLIST',
+                                style: TextStyle(
+                                    color: pal.accent,
+                                    fontSize: 11.5,
+                                    letterSpacing: 0.9,
+                                    fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(pl.name,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: sigHead(30)),
+                        const SizedBox(height: 8),
+                        Text('You · $info',
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 13.5)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 22),
+            Row(
+              children: [
+                if (tracks.isNotEmpty) ...[
+                  pill('Play', Icons.play_arrow_rounded, () {
                     audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
                     playFrom(0);
-                  }),
-                if (tracks.isNotEmpty) const SizedBox(width: 10),
-                if (tracks.isNotEmpty)
-                  _circle(pal, Icons.shuffle_rounded, () {
+                  }, primary: true),
+                  const SizedBox(width: 10),
+                  pill('Shuffle', Icons.shuffle_rounded, () {
                     audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
                     playFrom(Random().nextInt(tracks.length));
                   }),
-                if (tracks.isNotEmpty) const SizedBox(width: 10),
-                if (tracks.isNotEmpty)
-                  _circle(pal, Icons.queue_play_next_rounded, () {
+                  const SizedBox(width: 10),
+                  round(Icons.queue_play_next_rounded, 'Play next', () {
                     audioHandler.addToQueue(tracks, next: true);
                     appNotice.value = 'Playing "${pl.name}" next';
                   }),
-                if (tracks.isNotEmpty) const SizedBox(width: 10),
-                _circle(pal, Icons.more_horiz_rounded,
+                  const SizedBox(width: 10),
+                ] else
+                  const Spacer(),
+                round(Icons.more_horiz_rounded, 'More',
                     () => _playlistMenu(context, pl)),
               ],
             ),
@@ -11340,13 +11501,27 @@ class PlaylistDetailScreen extends StatelessWidget {
         );
 
         return Scaffold(
-          backgroundColor: pal.bg,
+          backgroundColor: kSigInk,
           body: Stack(
             children: [
-              AuroraPlasmaBackground(
-                accent: pal.accent,
-                secondary: const Color(0xFF8CD0F0),
-                intense: true,
+              // The playlist's own artwork, blurred, fading into the page.
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 420,
+                child: ShaderMask(
+                  shaderCallback: (r) => const LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.white, Colors.transparent],
+                  ).createShader(r),
+                  blendMode: BlendMode.dstIn,
+                  child: PrestigeBackdrop(
+                      track: tracks.isEmpty ? null : tracks.first,
+                      dim: 0.55,
+                      animate: false),
+                ),
               ),
               SafeArea(
                 child: Column(
@@ -15662,8 +15837,8 @@ class SettingsScreen extends StatelessWidget {
           'Look and shapes of the whole app (not the player controls)',
           appState.appStyle,
           const {
-            'signal': 'AlexLMP Signal (Default)',
-            'alex': 'AlexLMP',
+            'alex': 'AlexLMP (Default)',
+            'signal': 'AlexLMP Signal',
             'plus': 'PLUS',
             'prestige': 'AlexLMP Prestige',
             'pocket': 'Pocket',
@@ -28251,7 +28426,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.9.0';
+const String kAppVersion = '2.9.1';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -32497,13 +32672,20 @@ class SignalPlayerView extends StatelessWidget {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Soft glow in the song's colour behind the artwork.
+          // The song's artwork, blurred, behind everything; fades to ink at
+          // the bottom so the controls stay easy to read.
+          PrestigeBackdrop(track: track, dim: 0.5, animate: false),
           DecoratedBox(
             decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: const Alignment(0, -0.45),
-                radius: 0.95,
-                colors: [seed.withOpacity(0.24), kSigInk],
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: const [0.0, 0.55, 1.0],
+                colors: [
+                  seed.withOpacity(0.10),
+                  kSigInk.withOpacity(0.55),
+                  kSigInk.withOpacity(0.96),
+                ],
               ),
             ),
           ),
