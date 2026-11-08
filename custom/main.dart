@@ -2786,6 +2786,22 @@ class YouTubeMusic {
     }).where((a) => a.url.isNotEmpty).toList();
   }
 
+  /// Every song by an artist (artist page "See all").
+  static Future<List<TrackItem>> artistSongs(String name) async {
+    final raw = await _ytChannel.invokeMethod(
+            'ytArtistAll', {'name': name, 'kind': 'songs'}) as List? ??
+        const [];
+    return _tracks(raw);
+  }
+
+  /// Every album by an artist (artist page "See all").
+  static Future<List<YtAlbum>> artistAlbums(String name) async {
+    final raw = await _ytChannel.invokeMethod(
+            'ytArtistAll', {'name': name, 'kind': 'albums'}) as List? ??
+        const [];
+    return raw.map((e) => _album(_map(e))).where((a) => a.url.isNotEmpty).toList();
+  }
+
   /// YouTube Music playlists for a search like "90s rock".
   static Future<List<YtPlaylistRef>> searchPlaylists(String query) async {
     if (!Platform.isAndroid) return const [];
@@ -18001,6 +18017,48 @@ class _SearchSheetState extends State<SearchSheet> {
     }
     final out = <Widget>[];
 
+    // Top result: the artist if the search is their name, else the first song.
+    final q = _query.trim().toLowerCase();
+    final artistHit = _artists
+        .where((a) => a.name.toLowerCase() == q)
+        .firstOrNull;
+    if (artistHit != null) {
+      out.add(SearchTopResult(
+        art: YtNetworkImage(
+            url: artistHit.thumbnail,
+            size: 92,
+            circle: true,
+            fallbackIcon: Icons.person_rounded),
+        kind: 'Artist',
+        title: artistHit.name,
+        subtitle: artistHit.subscribers >= 0
+            ? '${formatCompactCount(artistHit.subscribers)} subscribers'
+            : '',
+        onTap: () => openYtArtist(context, artistHit.url, artistHit.name,
+            thumbnail: artistHit.thumbnail),
+      ));
+    } else if (_songs.isNotEmpty) {
+      final t = _songs.first;
+      void playTop() {
+        Navigator.pop(context);
+        audioHandler.playYouTubeTrack(t);
+        openPlayer(widget.parentContext);
+      }
+
+      out.add(SearchTopResult(
+        art: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: SizedBox(
+              width: 92, height: 92, child: CustomAlbumArtwork(track: t)),
+        ),
+        kind: 'Song',
+        title: t.title,
+        subtitle: t.artist,
+        onTap: playTop,
+        onPlay: playTop,
+      ));
+    }
+
     if (_artists.isNotEmpty) {
       out.add(ytSectionHeader('Artists'));
       out.add(SizedBox(
@@ -29524,19 +29582,169 @@ List<Widget> ytShelfWidgets(
   return out;
 }
 
-Widget ytSectionHeader(String text) {
+Widget ytSectionHeader(String text, {VoidCallback? onSeeAll}) {
+  if (signalLook) {
+    return SignalSection(text,
+        action: onSeeAll == null ? null : 'See all',
+        onAction: onSeeAll,
+        padding: const EdgeInsets.fromLTRB(2, 18, 0, 8));
+  }
   return Padding(
-    padding: const EdgeInsets.fromLTRB(2, 16, 2, 8),
-    child: Text(
-      text,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 17,
-        fontWeight: FontWeight.w800,
-      ),
+    padding: EdgeInsets.fromLTRB(2, 16, 2, onSeeAll == null ? 8 : 0),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        if (onSeeAll != null)
+          TextButton(onPressed: onSeeAll, child: const Text('See all')),
+      ],
     ),
   );
 }
+
+/// Every song or album by an artist ("See all" on artist pages).
+class ArtistAllScreen extends StatefulWidget {
+  final String artist;
+  final bool albums;
+  const ArtistAllScreen({super.key, required this.artist, required this.albums});
+
+  @override
+  State<ArtistAllScreen> createState() => _ArtistAllScreenState();
+}
+
+class _ArtistAllScreenState extends State<ArtistAllScreen> {
+  late final Future<List<TrackItem>> _songs = widget.albums
+      ? Future.value(const <TrackItem>[])
+      : YouTubeMusic.artistSongs(widget.artist);
+  late final Future<List<YtAlbum>> _albums = widget.albums
+      ? YouTubeMusic.artistAlbums(widget.artist)
+      : Future.value(const <YtAlbum>[]);
+
+  Widget _status(Object? err) => Padding(
+        padding: const EdgeInsets.all(32),
+        child: Center(
+          child: err == null
+              ? const CircularProgressIndicator()
+              : Text(
+                  'Couldn\'t load this list.\n\nDetails: ${err is PlatformException ? (err.message ?? err.code) : err}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white70)),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.albums ? 'Albums' : 'Songs';
+    return Scaffold(
+      backgroundColor: signalLook ? kSigInk : Colors.black,
+      appBar: AppBar(
+        backgroundColor: signalLook ? kSigInk : Colors.black,
+        surfaceTintColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        titleSpacing: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style: signalLook
+                    ? sigHead(20)
+                    : const TextStyle(fontWeight: FontWeight.w800)),
+            Text(widget.artist,
+                style: const TextStyle(color: Colors.white60, fontSize: 13)),
+          ],
+        ),
+      ),
+      body: widget.albums
+          ? FutureBuilder<List<YtAlbum>>(
+              future: _albums,
+              builder: (context, snap) {
+                if (!snap.hasData) return _status(snap.error);
+                final list = snap.data!;
+                if (list.isEmpty) {
+                  return const Center(
+                      child: Text('No albums found.',
+                          style: TextStyle(color: Colors.white54)));
+                }
+                final w = (MediaQuery.of(context).size.width - 32 - 14) / 2;
+                return ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
+                  children: [
+                    Wrap(
+                      spacing: 14,
+                      runSpacing: 18,
+                      children: [
+                        for (final a in list)
+                          MediaCard(
+                            width: w,
+                            cover: YtNetworkImage(url: a.thumbnail, size: w),
+                            title: a.title,
+                            subtitle: a.artist,
+                            onTap: () => openYtAlbum(context, a),
+                          ),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            )
+          : FutureBuilder<List<TrackItem>>(
+              future: _songs,
+              builder: (context, snap) {
+                if (!snap.hasData) return _status(snap.error);
+                final list = snap.data!;
+                if (list.isEmpty) {
+                  return const Center(
+                      child: Text('No songs found.',
+                          style: TextStyle(color: Colors.white54)));
+                }
+                return ListView(
+                  padding: const EdgeInsets.fromLTRB(0, 8, 0, 40),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Row(
+                        children: [
+                          Text('${list.length} songs',
+                              style: const TextStyle(color: Colors.white60)),
+                          const Spacer(),
+                          TextButton.icon(
+                            onPressed: () {
+                              audioHandler.playYouTubeList(list, 0);
+                              openPlayer(context);
+                            },
+                            icon: const Icon(Icons.play_arrow_rounded),
+                            label: const Text('Play all'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    for (var i = 0; i < list.length; i++)
+                      SignalTrackRow(
+                        track: list[i],
+                        onTap: () {
+                          audioHandler.playYouTubeList(list, i);
+                          openPlayer(context);
+                        },
+                      ),
+                  ],
+                );
+              },
+            ),
+    );
+  }
+}
+
+void openArtistAll(BuildContext context, String artist, {required bool albums}) =>
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ArtistAllScreen(artist: artist, albums: albums)));
 
 class YtNetworkImage extends StatelessWidget {
   final String? url;
@@ -29829,12 +30037,114 @@ class YtTrackRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (signalLook) {
+      return SignalTrackRow(
+        track: track,
+        onTap: onPlay,
+        inset: 0,
+        onMore: () => showYtAddToPlaylist(context, track),
+      );
+    }
     return TrackRow(
       track: track,
       palette: appState.palette,
       active: audioHandler.currentTrack?.id == track.id,
       onTap: onPlay,
       onMore: () => showYtAddToPlaylist(context, track),
+    );
+  }
+}
+
+/// Big "Top result" card at the top of search results.
+class SearchTopResult extends StatelessWidget {
+  final Widget art;
+  final String kind;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final VoidCallback? onPlay;
+  const SearchTopResult({
+    super.key,
+    required this.art,
+    required this.kind,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.onPlay,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    return SquishyGesture(
+      pressedScale: 0.98,
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(top: 12, bottom: 4),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: signalLook ? kSigS1 : Colors.white.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+              color: signalLook ? kSigLine : Colors.white.withOpacity(0.08)),
+        ),
+        child: Row(
+          children: [
+            art,
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('TOP RESULT · ${kind.toUpperCase()}',
+                      style: TextStyle(
+                          color: pal.accent,
+                          fontSize: 11.5,
+                          letterSpacing: 0.8,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 5),
+                  Text(title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: signalLook
+                          ? sigHead(21)
+                          : const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800)),
+                  if (subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white60, fontSize: 13.5)),
+                  ],
+                ],
+              ),
+            ),
+            if (onPlay != null)
+              Semantics(
+                button: true,
+                label: 'Play $title',
+                child: SquishyGesture(
+                  pressedScale: 0.85,
+                  onTap: onPlay!,
+                  child: Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                        color: pal.accent, shape: BoxShape.circle),
+                    child: Icon(Icons.play_arrow_rounded,
+                        color: pal.onAccent, size: 30),
+                  ),
+                ),
+              )
+            else
+              const Icon(Icons.chevron_right_rounded, color: Colors.white38),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -30693,7 +31003,8 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
     }
 
     if (songs.isNotEmpty) {
-      out.add(ytSectionHeader('Top songs'));
+      out.add(ytSectionHeader('Top songs',
+          onSeeAll: () => openArtistAll(context, page.name, albums: false)));
       for (var i = 0; i < shown.length; i++) {
         final t = shown[i];
         final active = audioHandler.currentTrack?.id == t.id;
@@ -30767,7 +31078,12 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
 
     // Shelves from YouTube Music (Albums, Singles, Videos, Fans also like…)
     for (final sh in page.shelves) {
-      out.add(ytSectionHeader(sh.title.isEmpty ? 'More' : sh.title));
+      final albumShelf = sh.kind == 'album' &&
+          sh.title.toLowerCase().contains('album');
+      out.add(ytSectionHeader(sh.title.isEmpty ? 'More' : sh.title,
+          onSeeAll: albumShelf
+              ? () => openArtistAll(context, page.name, albums: true)
+              : null));
       if (sh.kind == 'artist') {
         out.add(SizedBox(
           height: 136,
@@ -30889,7 +31205,8 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
 
     // Older simple page (fallback): albums row
     if (page.shelves.isEmpty && page.albums.isNotEmpty) {
-      out.add(ytSectionHeader('Albums'));
+      out.add(ytSectionHeader('Albums',
+          onSeeAll: () => openArtistAll(context, page.name, albums: true)));
       out.add(SizedBox(
         height: 196,
         child: ListView.separated(
@@ -31804,8 +32121,15 @@ class SignalTrackRow extends StatelessWidget {
   final TrackItem track;
   final VoidCallback onTap;
   final int? number;
+  final VoidCallback? onMore;
+  final double inset;
   const SignalTrackRow(
-      {super.key, required this.track, required this.onTap, this.number});
+      {super.key,
+      required this.track,
+      required this.onTap,
+      this.number,
+      this.onMore,
+      this.inset = 20});
 
   @override
   Widget build(BuildContext context) {
@@ -31818,7 +32142,7 @@ class SignalTrackRow extends StatelessWidget {
           pressedScale: 0.98,
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+            padding: EdgeInsets.fromLTRB(inset, 5, inset > 4 ? inset - 8 : 0, 5),
             child: Row(
               children: [
                 if (number != null) ...[
@@ -31872,7 +32196,10 @@ class SignalTrackRow extends StatelessWidget {
                 ),
                 IconButton(
                   icon: const Icon(Icons.more_vert_rounded, color: kSigT2),
-                  onPressed: () => showAddToPlaylistSheet(context, track),
+                  onPressed: onMore ??
+                      () => track.isYouTube
+                          ? showYtAddToPlaylist(context, track)
+                          : showAddToPlaylistSheet(context, track),
                   tooltip: 'Add to playlist',
                 ),
               ],

@@ -282,6 +282,13 @@ object YtMusicBridge {
                     else if (artists) searchArtists(query) else searchAlbums(query)
                 }
             }
+            "ytArtistAll" -> {
+                val name = (call.argument<String>("name") ?: "").trim()
+                val albums = call.argument<String>("kind") == "albums"
+                runAsync(result, "YT_ARTIST") {
+                    if (name.isEmpty()) emptyList<Any>() else artistAll(name, albums)
+                }
+            }
             "ytSearchPlaylists" -> {
                 val query = (call.argument<String>("query") ?: "").trim()
                 runAsync(result, "YT_SEARCH") {
@@ -479,6 +486,43 @@ object YtMusicBridge {
         )
         ex.fetchPage()
         return ex.initialPage.items.filterIsInstance<PlaylistInfoItem>().take(15).map { albumItemMap(it) }
+    }
+
+    /**
+     * Every song (or album) by an artist for "See all": pages through
+     * YouTube Music search and keeps the ones credited to that artist.
+     */
+    private fun artistAll(artistName: String, albums: Boolean): List<Map<String, Any?>> {
+        ensureInit()
+        val ex = ServiceList.YouTube.getSearchExtractor(
+            artistName,
+            listOf(
+                if (albums) YoutubeSearchQueryHandlerFactory.MUSIC_ALBUMS
+                else YoutubeSearchQueryHandlerFactory.MUSIC_SONGS
+            ),
+            "",
+        )
+        ex.fetchPage()
+        val items = ArrayList<org.schabi.newpipe.extractor.InfoItem>()
+        var page = ex.initialPage
+        items.addAll(page.items)
+        var pages = 1
+        while (pages < 10 && items.size < 200 && org.schabi.newpipe.extractor.Page.isValid(page.nextPage)) {
+            page = runCatching { ex.getPage(page.nextPage) }.getOrNull() ?: break
+            if (page.items.isEmpty()) break
+            items.addAll(page.items)
+            pages++
+        }
+        val seen = HashSet<String>()
+        return if (albums) {
+            val all = items.filterIsInstance<PlaylistInfoItem>().filter { seen.add(it.url ?: "") }
+            val mine = all.filter { cleanArtist(it.uploaderName).contains(artistName, ignoreCase = true) }
+            (if (mine.isNotEmpty()) mine else all).map { albumItemMap(it) }
+        } else {
+            val all = items.filterIsInstance<StreamInfoItem>().filter { seen.add(it.url ?: "") }
+            val mine = all.filter { cleanArtist(it.uploaderName).contains(artistName, ignoreCase = true) }
+            (if (mine.size >= 3) mine else all).mapNotNull { songMap(it) }
+        }
     }
 
     /** Playlists on YouTube Music (YouTube's own and community ones), e.g. "90s rock". */
