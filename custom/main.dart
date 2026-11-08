@@ -32897,10 +32897,14 @@ class SignalPlayerView extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(track.title,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: sigHead(30)),
+                              // Title opens the album; artist opens the artist.
+                              GestureDetector(
+                                onTap: () => goToAlbum(context, track),
+                                child: Text(track.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: sigHead(30)),
+                              ),
                               const SizedBox(height: 5),
                               GestureDetector(
                                 onTap: () => goToArtist(context, track),
