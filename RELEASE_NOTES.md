@@ -1,10 +1,9 @@
 All your music, one player.
 
-AlexLMP 2.9.3 adds a white app icon and turns on Liquid Glass.
+AlexLMP 2.9.4 plays more of your music files.
 
-## New
-- **White app icon.** A clean white icon with the AlexLMP bars in black. It's optional: pick it in Settings > App icon. Classic stays the default.
-- **Liquid Glass is on by default.** The glass look is now on for everyone. You can turn it off in Settings > Liquid Glass UI.
+## Fixed
+- **ALAC .m4a files play now.** Apple Lossless (ALAC) songs in .m4a files wouldn't play on phones without their own ALAC decoder. AlexLMP now includes an FFmpeg audio decoder that steps in whenever your phone can't play a format itself. Everything your phone already handles plays exactly like before.
 
 Updating installs over your current version. Your library, likes and settings stay.
 

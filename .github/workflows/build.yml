@@ -318,6 +318,9 @@ jobs:
               coreLibraryDesugaring "com.android.tools:desugar_jdk_libs_nio:2.0.4"
               implementation "com.github.teamnewpipe:NewPipeExtractor:v0.26.5"
               implementation "androidx.work:work-runtime-ktx:2.9.1"
+              // FFmpeg audio decoder for formats the phone can't decode itself
+              // (ALAC .m4a, etc.). Same ExoPlayer version as just_audio 0.9.42.
+              implementation "org.jellyfin.exoplayer:exoplayer-ffmpeg-extension:2.18.7+1"
           }
           EOF
 
@@ -349,6 +352,15 @@ jobs:
           KEY_ALIAS: alexlmp
         run: |
           flutter pub get
+          # just_audio never turns on extension decoders, so the FFmpeg
+          # decoder would sit unused. Switch them on (MODE_ON = only used when
+          # the phone has no decoder of its own for that format, like ALAC).
+          JA=$(find "${PUB_CACHE:-$HOME/.pub-cache}" -path "*just_audio-0.9.42/android/src/main/java/com/ryanheise/just_audio/AudioPlayer.java" | head -1)
+          if [ -z "$JA" ]; then echo "::error::just_audio AudioPlayer.java not found"; exit 1; fi
+          sed -i 's/new ExoPlayer.Builder(context);/new ExoPlayer.Builder(context, new DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON));/' "$JA"
+          sed -i 's/new DefaultRenderersFactory(context).setEnableAudioOffload(true)/new DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON).setEnableAudioOffload(true)/' "$JA"
+          grep -q "EXTENSION_RENDERER_MODE_ON));" "$JA" || { echo "::error::Couldn't enable the FFmpeg decoder in just_audio"; exit 1; }
+          echo "FFmpeg decoder enabled in $JA"
           flutter build apk --release
 
       - name: Upload Artifact
