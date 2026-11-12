@@ -4253,7 +4253,19 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     if (appState.b('auto_scan', true)) await scanDeviceAudio();
     await audioHandler.restoreLastSession();
     applyNativeSettings();
-    if (mounted) checkForUpdates(context);
+    // Tapping the "update available" notification opens AlexLMP straight
+    // into the update.
+    _mediaChannel.setMethodCallHandler((call) async {
+      if (call.method == 'updateTapped' && mounted) {
+        checkForUpdates(context, manual: true);
+      }
+      return null;
+    });
+    var tapped = false;
+    try {
+      tapped = await _mediaChannel.invokeMethod<bool>('takeUpdateTap') ?? false;
+    } catch (_) {}
+    if (mounted) checkForUpdates(context, manual: tapped);
   }
 
   @override
@@ -28848,7 +28860,7 @@ Future<void> checkForUpdates(BuildContext context, {bool manual = false}) async 
   try {
     await _mediaChannel.invokeMethod('showUpdateNotification', {
       'title': 'AlexLMP ${rel.version} is available',
-      'text': 'Tap to download the update.',
+      'text': 'Tap to update.',
       'url': rel.downloadUrl,
       'version': rel.version,
     });
@@ -28899,10 +28911,10 @@ Future<void> checkForUpdates(BuildContext context, {bool manual = false}) async 
         FilledButton.icon(
           onPressed: () {
             Navigator.pop(ctx);
-            openExternalUrl(rel.downloadUrl);
+            downloadAndInstallUpdate(context, rel);
           },
-          icon: const Icon(Icons.download_rounded),
-          label: const Text('Download'),
+          icon: const Icon(Icons.system_update_rounded),
+          label: const Text('Update'),
         ),
       ],
     ),
@@ -33392,5 +33404,139 @@ class LibItemRow extends StatelessWidget {
         },
       ),
     );
+  }
+}
+
+// ═══════════════════════ In-app updates ═══════════════════════
+// Downloads the new APK inside AlexLMP (with progress) and hands it straight
+// to Android's installer: no browser, no Downloads folder, no re-tries.
+
+Future<void> downloadAndInstallUpdate(BuildContext context, AppRelease rel) async {
+  final url = rel.apkUrl;
+  if (url == null || url.isEmpty) {
+    await openExternalUrl(rel.pageUrl);
+    return;
+  }
+  final progress = ValueNotifier<double?>(null);
+  final status = ValueNotifier<String>('Downloading AlexLMP ${rel.version}…');
+  var cancelled = false;
+  final pal = appState.palette;
+  final nav = Navigator.of(context, rootNavigator: true);
+
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      icon: Icon(Icons.system_update_rounded, color: pal.accent, size: 34),
+      title: Text('Updating to ${rel.version}'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ValueListenableBuilder<String>(
+            valueListenable: status,
+            builder: (_, s, __) =>
+                Text(s, style: const TextStyle(color: Colors.white70)),
+          ),
+          const SizedBox(height: 16),
+          ValueListenableBuilder<double?>(
+            valueListenable: progress,
+            builder: (_, v, __) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: v,
+                    minHeight: 8,
+                    backgroundColor: Colors.white12,
+                    valueColor: AlwaysStoppedAnimation(pal.accent),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(v == null ? '' : '${(v * 100).round()}%',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12.5)),
+              ],
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            cancelled = true;
+            Navigator.pop(ctx);
+          },
+          child: const Text('Cancel'),
+        ),
+      ],
+    ),
+  );
+
+  void close() {
+    if (!cancelled && nav.canPop()) nav.pop();
+  }
+
+  final client = HttpClient();
+  try {
+    final dir = await getTemporaryDirectory();
+    final file = File(p.join(dir.path, 'AlexLMP-update.apk'));
+    if (await file.exists()) await file.delete();
+    final req = await client.getUrl(Uri.parse(url));
+    final res = await req.close();
+    if (res.statusCode != 200) {
+      throw HttpException('HTTP ${res.statusCode}', uri: Uri.parse(url));
+    }
+    final total = res.contentLength;
+    var got = 0;
+    final sink = file.openWrite();
+    try {
+      await for (final chunk in res) {
+        if (cancelled) break;
+        sink.add(chunk);
+        got += chunk.length;
+        if (total > 0) progress.value = got / total;
+      }
+    } finally {
+      await sink.close();
+    }
+    if (cancelled) {
+      await file.delete().catchError((_) => file);
+      return;
+    }
+    if (total > 0 && got != total) {
+      throw Exception('Download stopped early ($got of $total bytes).');
+    }
+    status.value = 'Opening the installer…';
+    progress.value = 1;
+
+    var r = await _mediaChannel.invokeMethod<String>('installApk', {'path': file.path});
+    if (r == 'needs_permission') {
+      // Android sends the user to "Install unknown apps" once. Install as soon
+      // as they come back to AlexLMP.
+      status.value =
+          'Turn on "Allow from this source" for AlexLMP, then come back. The update installs right after.';
+      final back = Completer<void>();
+      final l = AppLifecycleListener(onResume: () {
+        if (!back.isCompleted) back.complete();
+      });
+      await back.future.timeout(const Duration(minutes: 5), onTimeout: () {});
+      l.dispose();
+      if (cancelled) return;
+      r = await _mediaChannel.invokeMethod<String>('installApk', {'path': file.path});
+      if (r == 'needs_permission') {
+        close();
+        appNotice.value =
+            'Update isn\'t installed: AlexLMP isn\'t allowed to install apps yet. Allow it in Settings > Apps > AlexLMP > Install unknown apps, then try again.';
+        return;
+      }
+    }
+    close();
+  } catch (e) {
+    close();
+    final detail = e is PlatformException ? (e.message ?? e.code) : e.toString();
+    appNotice.value = 'Update failed: $detail';
+  } finally {
+    client.close(force: true);
   }
 }

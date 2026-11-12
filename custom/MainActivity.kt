@@ -65,11 +65,40 @@ class MainActivity : AudioServiceActivity() {
         }, 900)
     }
 
+    private var mediaChannel: MethodChannel? = null
+    private var updateTapped = false
+
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (intent?.getBooleanExtra("alexlmp_update", false) == true) updateTapped = true
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra("alexlmp_update", false)) {
+            updateTapped = false
+            mediaChannel?.invokeMethod("updateTapped", null)
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+        mediaChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+        mediaChannel!!
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "takeUpdateTap" -> {
+                        result.success(updateTapped)
+                        updateTapped = false
+                    }
+                    "installApk" -> {
+                        val path = call.argument<String>("path") ?: ""
+                        try {
+                            result.success(SelfUpdater.install(this, path))
+                        } catch (e: Exception) {
+                            result.error("INSTALL", e.toString(), null)
+                        }
+                    }
                     "scanDeviceAudio" -> {
                         Thread {
                             val songs = scanLocalAudio()

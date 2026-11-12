@@ -57,7 +57,7 @@ class UpdateWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
                     }
                 }
             }
-            notify(ctx, "AlexLMP $latest is available", "Tap to download the update.", url, latest)
+            notify(ctx, "AlexLMP $latest is available", "Tap to update.", url, latest)
             Result.success()
         } catch (_: Exception) {
             Result.retry()
@@ -112,8 +112,14 @@ class UpdateWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
                     ).apply { description = "New AlexLMP versions" }
                 )
             }
-            val open = android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(url))
-                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            // Opens AlexLMP, which downloads and installs the update itself.
+            val open = android.content.Intent(ctx, MainActivity::class.java)
+                .putExtra("alexlmp_update", true)
+                .putExtra("alexlmp_update_url", url)
+                .addFlags(
+                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
             val pi = android.app.PendingIntent.getActivity(
                 ctx, 4242, open,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or
@@ -133,6 +139,87 @@ class UpdateWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
             nm.notify(4242, n)
             // Only one notification per version, wherever it came from.
             if (version != null) prefs(ctx).edit().putString(KEY_NOTIFIED, version).apply()
+        }
+    }
+}
+
+/**
+ * Installs an AlexLMP update APK the app downloaded itself, through Android's
+ * own package installer (no browser, no Downloads folder). Android still shows
+ * its one "Update this app?" confirmation.
+ */
+object SelfUpdater {
+    const val ACTION_RESULT = "com.alexlmp.app.UPDATE_INSTALL_RESULT"
+
+    /** Returns "ok", "needs_permission" or throws with the reason. */
+    fun install(activity: android.app.Activity, path: String): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !activity.packageManager.canRequestPackageInstalls()
+        ) {
+            val i = android.content.Intent(
+                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:" + activity.packageName)
+            )
+            activity.startActivity(i)
+            return "needs_permission"
+        }
+        val file = java.io.File(path)
+        val installer = activity.packageManager.packageInstaller
+        val params = android.content.pm.PackageInstaller.SessionParams(
+            android.content.pm.PackageInstaller.SessionParams.MODE_FULL_INSTALL
+        )
+        params.setAppPackageName(activity.packageName)
+        if (Build.VERSION.SDK_INT >= 31) {
+            params.setRequireUserAction(
+                android.content.pm.PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED
+            )
+        }
+        val id = installer.createSession(params)
+        installer.openSession(id).use { session ->
+            file.inputStream().use { input ->
+                session.openWrite("AlexLMP.apk", 0, file.length()).use { out ->
+                    input.copyTo(out, 1 shl 16)
+                    session.fsync(out)
+                }
+            }
+            val intent = android.content.Intent(activity, UpdateInstallReceiver::class.java)
+                .setAction(ACTION_RESULT)
+            var flags = android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            if (Build.VERSION.SDK_INT >= 31) flags = flags or android.app.PendingIntent.FLAG_MUTABLE
+            val pi = android.app.PendingIntent.getBroadcast(activity, 4343, intent, flags)
+            session.commit(pi.intentSender)
+        }
+        return "ok"
+    }
+}
+
+/** Shows Android's install confirmation, or the reason an install failed. */
+class UpdateInstallReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(ctx: Context, intent: android.content.Intent) {
+        val status = intent.getIntExtra(
+            android.content.pm.PackageInstaller.EXTRA_STATUS,
+            android.content.pm.PackageInstaller.STATUS_FAILURE
+        )
+        when (status) {
+            android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                @Suppress("DEPRECATION")
+                val confirm = intent.getParcelableExtra<android.content.Intent>(
+                    android.content.Intent.EXTRA_INTENT
+                )
+                if (confirm != null) {
+                    confirm.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    ctx.startActivity(confirm)
+                }
+            }
+            android.content.pm.PackageInstaller.STATUS_SUCCESS -> {}
+            else -> {
+                val msg = intent.getStringExtra(
+                    android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE
+                ) ?: "status $status"
+                android.widget.Toast.makeText(
+                    ctx, "AlexLMP update didn't install: $msg", android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 }
