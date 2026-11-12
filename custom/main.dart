@@ -539,13 +539,14 @@ class AppState extends ChangeNotifier {
       ..clear()
       ..addAll(prefs.getStringList('recent_ids') ?? const []);
     themeName = prefs.getString('theme_name') ?? themeName;
-    // Liquid Glass is on by default now (once for everyone; can be turned
-    // off in Settings).
-    if (prefs.getBool('liquid_glass_default_v1') != true) {
-      await prefs.setBool('liquid_glass_beta', true);
+    // Liquid Glass is off by default (once for everyone; can be turned on
+    // in Settings).
+    if (prefs.getBool('liquid_glass_default_v2') != true) {
+      await prefs.setBool('liquid_glass_beta', false);
       await prefs.setBool('liquid_glass_default_v1', true);
+      await prefs.setBool('liquid_glass_default_v2', true);
     }
-    liquidGlass = prefs.getBool('liquid_glass_beta') ?? true;
+    liquidGlass = prefs.getBool('liquid_glass_beta') ?? false;
     stopOnTaskClear = prefs.getBool('stop_on_task_clear') ?? true;
     linkSpeedAndPitch = prefs.getBool('link_speed_pitch') ?? false;
     // Swipe left = next is now the default (the old default felt backwards).
@@ -4176,8 +4177,8 @@ void openPlayer(BuildContext context) {
       .push(
     PageRouteBuilder(
       opaque: false,
-      transitionDuration: const Duration(milliseconds: 520),
-      reverseTransitionDuration: const Duration(milliseconds: 360),
+      transitionDuration: const Duration(milliseconds: 600),
+      reverseTransitionDuration: const Duration(milliseconds: 420),
       pageBuilder: (_, __, ___) => const NowPlayingScreen(),
       transitionsBuilder: (_, anim, __, child) {
         final curved = CurvedAnimation(
@@ -4218,7 +4219,13 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   void _trackRecent() {
     final t = audioHandler.currentTrack;
-    if (t != null) appState.addRecent(t.id);
+    if (t != null) {
+      appState.addRecent(t.id);
+      // Ready before the player opens (smoother opening).
+      artSeedFor(t);
+      final next = audioHandler.peekNext;
+      if (next != null) artSeedFor(next);
+    }
   }
 
   @override
@@ -11843,8 +11850,8 @@ class PlaylistDetailScreen extends StatelessWidget {
 }
 
 const Curve kEmphasized = Cubic(0.2, 0.0, 0.0, 1.0);
-const Curve kEmphasizedDecel = Cubic(0.05, 0.7, 0.1, 1.0);
-const Curve kEmphasizedAccel = Cubic(0.3, 0.0, 0.8, 0.15);
+const Curve kEmphasizedDecel = Cubic(0.2, 0.65, 0.25, 1.0);
+const Curve kEmphasizedAccel = Cubic(0.4, 0.0, 0.75, 0.3);
 
 class Reveal extends StatelessWidget {
   final int delayMs;
@@ -19755,15 +19762,22 @@ final Map<String, Future<Color>> _artSeedCache = {};
 
 /// Main colour of a song's artwork (cached per song).
 Future<Color> artSeedFor(TrackItem t) => _artSeedCache.putIfAbsent(t.id, () async {
+      var out = t.artColors.first;
       try {
         final bytes = await loadArt(t);
         if (bytes != null && bytes.isNotEmpty) {
           final c = await _dominantColor(bytes);
-          if (c != null) return c;
+          if (c != null) out = c;
         }
       } catch (_) {}
-      return t.artColors.first;
+      _artSeedDone[t.id] = out;
+      return out;
     });
+
+/// Colours already worked out, so the player's very first frame has the
+/// right colour (no rebuild in the middle of the opening animation).
+final Map<String, Color> _artSeedDone = {};
+Color? artSeedNow(TrackItem t) => _artSeedDone[t.id];
 
 /// Copies a link to the song (or its name for local files).
 Future<void> shareTrack(TrackItem t) async {
@@ -20360,6 +20374,7 @@ class AlexPlayerView extends StatelessWidget {
   Widget build(BuildContext context) {
     return FutureBuilder<Color>(
       future: artSeedFor(track),
+      initialData: artSeedNow(track),
       builder: (context, snap) {
         final seed = snap.data ?? track.artColors.first;
         final cs = AppPalette.scheme(seed);
@@ -21149,6 +21164,7 @@ class ExpressivePlayerView extends StatelessWidget {
   Widget build(BuildContext context) {
     return FutureBuilder<Color>(
       future: artSeedFor(track),
+      initialData: artSeedNow(track),
       builder: (context, snap) {
         final cs = AppPalette.scheme(snap.data ?? track.artColors.first);
         return AnimatedTheme(
@@ -22796,6 +22812,7 @@ class SimpPlayerView extends StatelessWidget {
   Widget build(BuildContext context) {
     return FutureBuilder<Color>(
       future: artSeedFor(track),
+      initialData: artSeedNow(track),
       builder: (context, snap) {
         final seed = snap.data ?? track.artColors.first;
         return AnimatedTheme(
@@ -23913,6 +23930,7 @@ class PlusPlayerView extends StatelessWidget {
   Widget build(BuildContext context) {
     return FutureBuilder<Color>(
       future: artSeedFor(track),
+      initialData: artSeedNow(track),
       builder: (context, snap) {
         final seed = snap.data ?? track.artColors.first;
         final accent = Color.lerp(seed, Colors.white, 0.4)!;
@@ -28493,7 +28511,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.9.4';
+const String kAppVersion = '2.9.5';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -32719,6 +32737,7 @@ class SignalPlayerView extends StatelessWidget {
   Widget build(BuildContext context) {
     return FutureBuilder<Color>(
       future: artSeedFor(track),
+      initialData: artSeedNow(track),
       builder: (context, snap) {
         final seed = snap.data ?? track.artColors.first;
         return TweenAnimationBuilder<Color?>(
