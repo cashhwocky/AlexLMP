@@ -18,7 +18,7 @@ class MainActivity : AudioServiceActivity() {
     // Launcher icons (activity-aliases in AndroidManifest.xml).
     private val appIcons = listOf(
         "classic", "midnight", "sunset", "aurora", "neon",
-        "mint", "ember", "gold", "ocean",
+        "mint", "ember", "gold", "ocean", "white",
     )
 
     private fun iconAlias(key: String) = android.content.ComponentName(

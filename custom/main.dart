@@ -539,7 +539,13 @@ class AppState extends ChangeNotifier {
       ..clear()
       ..addAll(prefs.getStringList('recent_ids') ?? const []);
     themeName = prefs.getString('theme_name') ?? themeName;
-    liquidGlass = prefs.getBool('liquid_glass_beta') ?? false;
+    // Liquid Glass is on by default now (once for everyone; can be turned
+    // off in Settings).
+    if (prefs.getBool('liquid_glass_default_v1') != true) {
+      await prefs.setBool('liquid_glass_beta', true);
+      await prefs.setBool('liquid_glass_default_v1', true);
+    }
+    liquidGlass = prefs.getBool('liquid_glass_beta') ?? true;
     stopOnTaskClear = prefs.getBool('stop_on_task_clear') ?? true;
     linkSpeedAndPitch = prefs.getBool('link_speed_pitch') ?? false;
     // Swipe left = next is now the default (the old default felt backwards).
@@ -25996,6 +26002,8 @@ const List<AppIconStyle> kAppIcons = [
       [Color(0xFFF8E3A3), Color(0xFFC9962E)], 'glow', 'Shine'),
   AppIconStyle('ocean', 'Ocean', [Color(0xFF0B3D91), Color(0xFF1CB5E0)],
       null, null, [Color(0xFFFFFFFF)], 'spin', 'Orbit'),
+  AppIconStyle('white', 'White', [Color(0xFFFFFFFF)], null, null,
+      [Color(0xFF111318)], 'bounce', 'Bounce'),
 ];
 
 const double kIconBarScale = 1.35;
@@ -28473,7 +28481,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.9.2';
+const String kAppVersion = '2.9.3';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
