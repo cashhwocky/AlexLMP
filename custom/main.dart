@@ -5640,7 +5640,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           x.key,
           '${x.value.length} ${x.value.length == 1 ? 'song' : 'songs'}',
           (s) => CustomAlbumArtwork(track: x.value.first),
-          () => showArtistTracksSheet(context, x.key, x.value),
+          () => openLocalArtist(context, x.key, x.value),
           circle: true,
         ),
     ];
@@ -6179,7 +6179,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     return [
       for (final k in keys)
         AmItem(k, '', (s) => CustomAlbumArtwork(track: by[k]!.first),
-            () => showArtistTracksSheet(context, k, by[k]!),
+            () => openLocalArtist(context, k, by[k]!),
             circle: true),
     ];
   }
@@ -6195,7 +6195,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       for (final k in keys)
         AmItem(k, by[k]!.first.artist,
             (s) => CustomAlbumArtwork(track: by[k]!.first),
-            () => showArtistTracksSheet(context, k, by[k]!)),
+            () => openLocalAlbum(context, k, by[k]!)),
     ];
   }
 
@@ -7917,7 +7917,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             title: e.key,
             subtitle:
                 'Album • ${e.value.first.artist} • ${e.value.length} ${e.value.length == 1 ? 'song' : 'songs'}',
-            onTap: () => showArtistTracksSheet(context, e.key, e.value),
+            onTap: () => openLocalAlbum(context, e.key, e.value),
           ));
         }
         break;
@@ -7934,7 +7934,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             title: e.key,
             subtitle:
                 'Artist • ${e.value.length} ${e.value.length == 1 ? 'song' : 'songs'}',
-            onTap: () => showArtistTracksSheet(context, e.key, e.value),
+            onTap: () => openLocalArtist(context, e.key, e.value),
           ));
         }
         break;
@@ -10047,7 +10047,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               title: e.key,
               subtitle:
                   'Artist • ${e.value.length} ${e.value.length == 1 ? 'song' : 'songs'}',
-              onTap: () => showArtistTracksSheet(context, e.key, e.value),
+              onTap: () => openLocalArtist(context, e.key, e.value),
             ),
         ],
       );
@@ -10063,7 +10063,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             child: SquishyGesture(
               pressedScale: 0.94,
               onTap: () =>
-                  showArtistTracksSheet(context, entries[i].key, entries[i].value),
+                  openLocalArtist(context, entries[i].key, entries[i].value),
               child: SizedBox(
                 width: cw,
                 child: Column(
@@ -10135,7 +10135,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               title: e.key,
               subtitle:
                   'Album • ${e.value.first.artist} • ${e.value.length} ${e.value.length == 1 ? 'song' : 'songs'}',
-              onTap: () => showArtistTracksSheet(context, e.key, e.value),
+              onTap: () => openLocalAlbum(context, e.key, e.value),
             ),
         ],
       );
@@ -10155,7 +10155,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               subtitle:
                   '${entries[i].value.first.artist} • ${entries[i].value.length} ${entries[i].value.length == 1 ? 'song' : 'songs'}',
               onTap: () =>
-                  showArtistTracksSheet(context, entries[i].key, entries[i].value),
+                  openLocalAlbum(context, entries[i].key, entries[i].value),
             ),
           ),
       ],
@@ -17734,7 +17734,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   Padding(
                     padding: const EdgeInsets.only(right: 14),
                     child: SquishyGesture(
-                      onTap: () => showArtistTracksSheet(context, e.key, e.value),
+                      onTap: () => openLocalArtist(context, e.key, e.value),
                       child: SizedBox(
                         width: 86,
                         child: Column(
@@ -17778,7 +17778,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       cover: CustomAlbumArtwork(track: e.value.first),
                       title: e.key,
                       subtitle: e.value.first.artist,
-                      onTap: () => showArtistTracksSheet(context, e.key, e.value),
+                      onTap: () => openLocalAlbum(context, e.key, e.value),
                     ),
                   ),
               ],
@@ -30215,7 +30215,7 @@ void showYtAccountSheet(BuildContext context) {
 Future<void> goToAlbum(BuildContext context, TrackItem t) async {
   if (!t.isYouTube) {
     final list = audioHandler.tracks.where((x) => x.album == t.album).toList();
-    showArtistTracksSheet(context, t.album, list);
+    openLocalAlbum(context, t.album, list);
     return;
   }
   appNotice.value = 'Finding album…';
@@ -30242,7 +30242,7 @@ Future<void> goToAlbum(BuildContext context, TrackItem t) async {
 Future<void> goToArtist(BuildContext context, TrackItem t) async {
   if (!t.isYouTube) {
     final list = audioHandler.tracks.where((x) => x.artist == t.artist).toList();
-    showArtistTracksSheet(context, t.artist, list);
+    openLocalArtist(context, t.artist, list);
     return;
   }
   appNotice.value = 'Finding artist…';
@@ -33538,5 +33538,288 @@ Future<void> downloadAndInstallUpdate(BuildContext context, AppRelease rel) asyn
     appNotice.value = 'Update failed: $detail';
   } finally {
     client.close(force: true);
+  }
+}
+
+// ═══════════════════════ Local album & artist pages ═══════════════════════
+// Full-screen pages for albums and artists from music on this phone (instead
+// of a pop-up list).
+
+void openLocalAlbum(BuildContext context, String album, List<TrackItem> tracks) =>
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) =>
+            LocalCollectionScreen(name: album, tracks: tracks, artist: false)));
+
+void openLocalArtist(BuildContext context, String artist, List<TrackItem> tracks) =>
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) =>
+            LocalCollectionScreen(name: artist, tracks: tracks, artist: true)));
+
+class LocalCollectionScreen extends StatelessWidget {
+  final String name;
+  final List<TrackItem> tracks;
+  final bool artist;
+  const LocalCollectionScreen(
+      {super.key, required this.name, required this.tracks, required this.artist});
+
+  String _length() {
+    final secs = tracks.fold<int>(0, (a, t) => a + max(0, t.durationSeconds));
+    if (secs <= 0) return '';
+    final h = secs ~/ 3600, m = (secs % 3600) ~/ 60;
+    return h > 0 ? '$h hr $m min' : '$m min';
+  }
+
+  void _play(BuildContext context, int i, {bool shuffle = false}) {
+    audioHandler.setShuffleMode(
+        shuffle ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none);
+    audioHandler.playYouTubeList(tracks, i);
+    openPlayer(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    final first = tracks.isEmpty ? null : tracks.first;
+    final count = '${tracks.length} ${tracks.length == 1 ? 'song' : 'songs'}';
+    final len = _length();
+    final albums = <String, List<TrackItem>>{};
+    if (artist) {
+      for (final t in tracks) {
+        albums.putIfAbsent(t.album, () => []).add(t);
+      }
+    }
+    final albumArtists = {for (final t in tracks) t.artist};
+    final sub = artist
+        ? [count, if (albums.length > 1) '${albums.length} albums'].join(' · ')
+        : [
+            albumArtists.length == 1 ? albumArtists.first : 'Various artists',
+            count,
+            if (len.isNotEmpty) len,
+          ].join(' · ');
+
+    Widget pill(String label, IconData icon, VoidCallback onTap,
+            {bool primary = false}) =>
+        Expanded(
+          child: SquishyGesture(
+            pressedScale: 0.95,
+            onTap: onTap,
+            child: Container(
+              height: 54,
+              decoration: BoxDecoration(
+                color: primary ? pal.accent : kSigS2,
+                borderRadius: BorderRadius.circular(999),
+                border: primary ? null : Border.all(color: kSigLine),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon,
+                      color: primary ? pal.onAccent : Colors.white, size: 24),
+                  const SizedBox(width: 8),
+                  Text(label,
+                      style: TextStyle(
+                          color: primary ? pal.onAccent : Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+          ),
+        );
+
+    final cover = first == null
+        ? Container(
+            color: kSigS2,
+            child: Icon(artist ? Icons.person_rounded : Icons.album_rounded,
+                color: kSigT3, size: 60))
+        : CustomAlbumArtwork(track: first);
+
+    final header = <Widget>[
+      const SizedBox(height: 8),
+      if (artist)
+        Center(
+          child: Container(
+            width: 190,
+            height: 190,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withOpacity(0.55),
+                    blurRadius: 36,
+                    offset: const Offset(0, 16)),
+              ],
+            ),
+            child: ClipOval(child: cover),
+          ),
+        )
+      else
+        Center(
+          child: Container(
+            width: 230,
+            height: 230,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withOpacity(0.55),
+                    blurRadius: 40,
+                    offset: const Offset(0, 18)),
+              ],
+            ),
+            child: ClipRRect(
+                borderRadius: BorderRadius.circular(24), child: cover),
+          ),
+        ),
+      const SizedBox(height: 22),
+      Row(
+        mainAxisAlignment:
+            artist ? MainAxisAlignment.center : MainAxisAlignment.start,
+        children: [
+          const SignalBars(size: 14),
+          const SizedBox(width: 6),
+          Text(artist ? 'ARTIST' : 'ALBUM',
+              style: TextStyle(
+                  color: pal.accent,
+                  fontSize: 11.5,
+                  letterSpacing: 0.9,
+                  fontWeight: FontWeight.w700)),
+        ],
+      ),
+      const SizedBox(height: 8),
+      Text(name.isEmpty ? (artist ? 'Unknown artist' : 'Unknown album') : name,
+          textAlign: artist ? TextAlign.center : TextAlign.start,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: sigHead(artist ? 36 : 30)),
+      const SizedBox(height: 8),
+      GestureDetector(
+        onTap: !artist && albumArtists.length == 1 && first != null
+            ? () => openLocalArtist(
+                context,
+                first.artist,
+                audioHandler.tracks
+                    .where((x) => !x.isYouTube && x.artist == first.artist)
+                    .toList())
+            : null,
+        child: Text(sub,
+            textAlign: artist ? TextAlign.center : TextAlign.start,
+            style: const TextStyle(color: Colors.white70, fontSize: 14)),
+      ),
+      const SizedBox(height: 22),
+      if (tracks.isNotEmpty)
+        Row(
+          children: [
+            pill('Play', Icons.play_arrow_rounded, () => _play(context, 0),
+                primary: true),
+            const SizedBox(width: 10),
+            pill('Shuffle', Icons.shuffle_rounded,
+                () => _play(context, Random().nextInt(tracks.length),
+                    shuffle: true)),
+          ],
+        ),
+    ];
+
+    final body = <Widget>[
+      if (artist && albums.length > 1) ...[
+        const SignalSection('Albums', padding: EdgeInsets.fromLTRB(0, 26, 0, 10)),
+        SizedBox(
+          height: 190,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              for (final e in albums.entries)
+                Padding(
+                  padding: const EdgeInsets.only(right: 14),
+                  child: MediaCard(
+                    width: 132,
+                    cover: SizedBox(
+                      width: 132,
+                      height: 132,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: CustomAlbumArtwork(track: e.value.first),
+                      ),
+                    ),
+                    title: e.key.isEmpty ? 'Unknown album' : e.key,
+                    subtitle:
+                        '${e.value.length} ${e.value.length == 1 ? 'song' : 'songs'}',
+                    onTap: () => openLocalAlbum(context, e.key, e.value),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+      SignalSection(artist ? 'Songs' : 'Tracks',
+          padding: const EdgeInsets.fromLTRB(0, 26, 0, 6)),
+      for (var i = 0; i < tracks.length; i++)
+        SignalTrackRow(
+          track: tracks[i],
+          number: artist ? null : i + 1,
+          inset: 0,
+          onTap: () => _play(context, i),
+        ),
+    ];
+
+    return Scaffold(
+      backgroundColor: kSigInk,
+      body: Stack(
+        children: [
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 460,
+            child: ShaderMask(
+              shaderCallback: (r) => const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.white, Colors.transparent],
+              ).createShader(r),
+              blendMode: BlendMode.dstIn,
+              child: PrestigeBackdrop(track: first, dim: 0.55, animate: false),
+            ),
+          ),
+          SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Back',
+                        icon: const Icon(Icons.arrow_back_rounded,
+                            color: Colors.white),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                      const Spacer(),
+                      if (tracks.isNotEmpty)
+                        IconButton(
+                          tooltip: 'Play next',
+                          icon: const Icon(Icons.queue_play_next_rounded,
+                              color: Colors.white),
+                          onPressed: () {
+                            audioHandler.addToQueue(tracks, next: true);
+                            appNotice.value = 'Playing "$name" next';
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView(
+                    physics: const BouncingScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 140),
+                    children: [...header, ...body],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

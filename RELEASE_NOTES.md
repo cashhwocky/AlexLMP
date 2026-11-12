@@ -5,6 +5,8 @@ AlexLMP 2.9.4 makes updating painless and plays more of your music files.
 ## New
 - **Updates install right inside AlexLMP.** When a new version is out, tap Update in the pop-up or tap the update notification. AlexLMP downloads it with a progress bar and opens Android's installer directly: no Chrome, no Downloads folder, no installing it twice. The very first time, Android asks you to allow AlexLMP to install updates. Turn it on, come back, and the update continues on its own.
 
+- **Real album and artist pages for music on your phone.** Tapping a local album or artist now opens a full-screen page instead of a pop-up list. Album pages show the cover, artist, song count and length with Play and Shuffle and a numbered track list. Artist pages show the artist's picture, Play and Shuffle, their albums and all their songs.
+
 ## Fixed
 - **ALAC .m4a files play now.** Apple Lossless (ALAC) songs in .m4a files wouldn't play on phones without their own ALAC decoder. AlexLMP now includes an FFmpeg audio decoder that steps in whenever your phone can't play a format itself. Everything your phone already handles plays exactly like before.
 
