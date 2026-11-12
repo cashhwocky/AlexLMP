@@ -26039,7 +26039,7 @@ const List<AppIconStyle> kAppIcons = [
 const double kIconBarScale = 1.35;
 
 AppIconStyle appIconStyle([String? key]) {
-  final k = key ?? appState.str('app_icon', 'classic');
+  final k = key ?? appState.str('app_icon', 'white');
   return kAppIcons.firstWhere((e) => e.key == k, orElse: () => kAppIcons.first);
 }
 
@@ -26403,7 +26403,7 @@ Future<void> showAppIconPicker(BuildContext context) async {
     builder: (ctx) => ListenableBuilder(
       listenable: appState,
       builder: (ctx, _) {
-        final current = appState.str('app_icon', 'classic');
+        final current = appState.str('app_icon', 'white');
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),

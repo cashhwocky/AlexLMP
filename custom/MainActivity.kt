@@ -29,11 +29,35 @@ class MainActivity : AudioServiceActivity() {
     private fun currentAppIcon(): String {
         val pm = packageManager
         for (k in appIcons) {
-            if (k == "classic") continue
+            if (k == "white") continue
             val st = pm.getComponentEnabledSetting(iconAlias(k))
             if (st == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return k
         }
-        return "classic"
+        return "white"
+    }
+
+    /**
+     * White is the default icon now. Anyone who picked an icon before keeps
+     * it: turn the default White entry off so they don't get two icons.
+     */
+    private fun keepChosenIcon() {
+        try {
+            val pm = packageManager
+            val enabled = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            val chosen = appIcons.any {
+                it != "white" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
+            }
+            val white = iconAlias("white")
+            if (chosen && pm.getComponentEnabledSetting(white) ==
+                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+            ) {
+                pm.setComponentEnabledSetting(
+                    white,
+                    android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    android.content.pm.PackageManager.DONT_KILL_APP,
+                )
+            }
+        } catch (_: Exception) {}
     }
 
     /** Turns on the chosen icon, reopens the app through it, then turns the
@@ -70,6 +94,7 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
+        keepChosenIcon()
         if (intent?.getBooleanExtra("alexlmp_update", false) == true) updateTapped = true
     }
 
@@ -136,7 +161,7 @@ class MainActivity : AudioServiceActivity() {
                     }
                     "getAppIcon" -> result.success(currentAppIcon())
                     "setAppIcon" -> {
-                        val key = call.argument<String>("key") ?: "classic"
+                        val key = call.argument<String>("key") ?: "white"
                         if (key !in appIcons) {
                             result.error("ICON", "Unknown icon: $key", null)
                         } else {
