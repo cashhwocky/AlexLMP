@@ -34806,6 +34806,7 @@ class DesktopNowPlaying extends StatefulWidget {
 class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
   late int _panel = widget.panel;
   static final Map<String, List<double>> _bars = {};
+  double _lastVolume = 1.0;
 
   @override
   Widget build(BuildContext context) {
@@ -35062,7 +35063,64 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
                   );
                 },
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
+              // Volume (AlexLMP's own, like the player bar's).
+              StreamBuilder<double>(
+                stream: audioHandler.player.volumeStream,
+                initialData: audioHandler.player.volume,
+                builder: (context, snap) {
+                  final v = (snap.data ?? 1).clamp(0.0, 1.0).toDouble();
+                  return Row(
+                    children: [
+                      IconButton(
+                        tooltip: v == 0 ? 'Unmute' : 'Mute',
+                        icon: Icon(
+                            v == 0
+                                ? Icons.volume_off_rounded
+                                : v < 0.5
+                                    ? Icons.volume_down_rounded
+                                    : Icons.volume_up_rounded,
+                            color: Colors.white70),
+                        onPressed: () {
+                          if (v == 0) {
+                            audioHandler.player.setVolume(_lastVolume);
+                          } else {
+                            _lastVolume = v;
+                            audioHandler.player.setVolume(0);
+                          }
+                        },
+                      ),
+                      Expanded(
+                        child: SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 6,
+                            thumbShape:
+                                const RoundSliderThumbShape(enabledThumbRadius: 8),
+                            overlayShape: SliderComponentShape.noOverlay,
+                          ),
+                          child: Slider(
+                            value: v,
+                            activeColor: accent,
+                            inactiveColor: Colors.white24,
+                            onChanged: (x) => audioHandler.player.setVolume(x),
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 44,
+                        child: Text('${(v * 100).round()}%',
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                                color: Colors.white60,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                                fontFeatures: [ui.FontFeature.tabularFigures()])),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 14),
               Wrap(
                 runSpacing: 8,
                 children: [
