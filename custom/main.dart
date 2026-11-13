@@ -12940,7 +12940,7 @@ class PlaylistDetailScreen extends StatelessWidget {
           ],
         );
 
-        return Scaffold(
+        return deskPlaylistPane(context, pl, tracks, info, header, () => _playlistMenu(context, pl), Scaffold(
           backgroundColor: kSigInk,
           body: Stack(
             children: [
@@ -13003,7 +13003,7 @@ class PlaylistDetailScreen extends StatelessWidget {
                     ),
                     Expanded(
                       child: ReorderableListView.builder(
-                        header: header,
+                        header: isDesktop ? null : header,
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
                         buildDefaultDragHandles: false,
                         proxyDecorator: (child, index, anim) => Material(
@@ -18033,7 +18033,7 @@ Widget _queueBody() => ListenableBuilder(
               child: Text(
                 'Nothing queued. Use "Play next" or "Add to queue" in a song\'s ⋮ menu.',
                 style: TextStyle(color: Colors.white38, fontSize: 13),
-              ),
+              )),
             ),
           for (var q = 0; q < upNext.length; q++)
             ListTile(
@@ -31974,6 +31974,14 @@ class _YtPageShell extends StatelessWidget {
       ]),
       builder: (context, _) {
         final pal = appState.palette;
+        if (isDesktop) {
+          final body = buildBody(context);
+          final cut = body.indexWhere((w) => w is PaneSplit);
+          if (cut >= 0) {
+            return deskTwoPane(context,
+                left: body.sublist(0, cut), right: body.sublist(cut + 1));
+          }
+        }
         return Scaffold(
           backgroundColor: pal.bg,
           body: Stack(
@@ -32174,7 +32182,7 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(22),
-                  child: YtNetworkImage(url: cover, size: 240),
+                  child: YtNetworkImage(url: cover, size: isDesktop ? 300 : 240),
                 ),
               ),
             ),
@@ -32372,6 +32380,7 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
                   ),
                 ),
               ),
+            const PaneSplit(),
             const SizedBox(height: 12),
             if (tracks.isEmpty)
               const Center(
@@ -36220,12 +36229,11 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
           final w = c.maxWidth, h = c.maxHeight;
           // The real player, a bit narrower so the art shrinks and every
           // control fits; lyrics take the right half when the song has them.
-          final colW = min(min(480.0, h - 430), lyrics ? w / 2 - 60 : w - 80)
-              .clamp(320.0, 480.0);
+          final colW = min(min(480.0, h - 430), w / 2 - 60).clamp(320.0, 480.0);
           final contentH = min(h - 32, colW + 400);
           final top = max(16.0, (h - contentH) / 2);
           return TweenAnimationBuilder<double>(
-            tween: Tween(end: lyrics ? 0.25 : 0.5),
+            tween: Tween(end: 0.25),
             duration: const Duration(milliseconds: 420),
             curve: Curves.easeOutCubic,
             builder: (context, f, _) {
@@ -36256,18 +36264,37 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
                     right: 24,
                     top: 24,
                     bottom: 24,
-                    child: IgnorePointer(
-                      ignoring: !lyrics,
-                      child: AnimatedOpacity(
-                        opacity: lyrics && f < 0.3 ? 1 : 0,
-                        duration: const Duration(milliseconds: 260),
-                        child: lyrics
-                            ? LyricsScreen(
-                                key: ValueKey('dly${t.id}'),
-                                track: t,
-                                embedded: true)
-                            : const SizedBox.shrink(),
-                      ),
+                    // Lyrics when the song has them, otherwise what's up next.
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 260),
+                      child: lyrics
+                          ? LyricsScreen(
+                              key: ValueKey('dly${t.id}'),
+                              track: t,
+                              embedded: true)
+                          : Column(
+                              key: const ValueKey('dq'),
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Padding(
+                                  padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
+                                  child: Text('Up next',
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 28,
+                                          letterSpacing: -0.6,
+                                          fontWeight: FontWeight.w800)),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
+                                  child: Text('No lyrics for this song',
+                                      style: TextStyle(
+                                          color: Colors.white54, fontSize: 13.5)),
+                                ),
+                                const Expanded(
+                                    child: QueueScreen(embedded: true)),
+                              ],
+                            ),
                     ),
                   ),
                 ],
@@ -37371,4 +37398,212 @@ class DeskArtRatio extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       AspectRatio(aspectRatio: aspectRatio, child: child);
+}
+
+
+/// Where a page splits on the computer: everything before it goes in the
+/// left panel (artwork, title, buttons), everything after it on the right.
+class PaneSplit extends StatelessWidget {
+  const PaneSplit({super.key});
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
+/// Computer layout for album / playlist pages: a panel on the left with the
+/// artwork, details and buttons, and the songs on the right.
+Widget deskTwoPane(BuildContext context,
+    {required List<Widget> left, required List<Widget> right}) {
+  final pal = appState.palette;
+  final accent = pal.accent;
+  return Scaffold(
+    backgroundColor: const Color(0xFF0B0B0F),
+    body: Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          width: 380,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [accent.withOpacity(0.30), const Color(0xFF15151B)],
+              stops: const [0.0, 0.7],
+            ),
+          ),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(24, 18, 24, 24),
+            children: [
+              if (appState.appStyle != 'alex')
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: IconButton(
+                    icon: const Icon(Icons.arrow_back_rounded,
+                        color: Colors.white),
+                    onPressed: () => Navigator.maybePop(context),
+                  ),
+                ),
+              ...left,
+            ],
+          ),
+        ),
+        const SizedBox(width: 24),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(4, 6, 12, 40),
+            children: right,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+
+/// Computer layout for your own playlists: artwork, details and buttons on
+/// the left, the (reorderable) songs on the right.
+Widget deskPlaylistPane(BuildContext context, Playlist pl, List<TrackItem> tracks,
+    String info, Widget header, VoidCallback onMore, Widget songs) {
+  if (!isDesktop) return songs;
+  final pal = appState.palette;
+  void play(int i, bool shuffle) {
+    audioHandler.setShuffleMode(
+        shuffle ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none);
+    audioHandler.playYouTubeList(tracks, i);
+  }
+
+  Widget btn(String label, IconData icon, VoidCallback onTap,
+          {bool primary = false}) =>
+      Material(
+        color: primary ? pal.accent : Colors.white.withOpacity(0.07),
+        shape: StadiumBorder(
+            side: primary
+                ? BorderSide.none
+                : const BorderSide(color: Color(0xFF2A2A34))),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onTap,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: primary ? 22 : 18),
+            child: SizedBox(
+              height: 46,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(icon,
+                    size: 19, color: primary ? pal.onAccent : Colors.white),
+                const SizedBox(width: 8),
+                Text(label,
+                    style: TextStyle(
+                        color: primary ? pal.onAccent : Colors.white,
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700)),
+              ]),
+            ),
+          ),
+        ),
+      );
+
+  final left = <Widget>[
+    Center(
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.5),
+                blurRadius: 30,
+                offset: const Offset(0, 14)),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(22),
+          child: PlaylistCoverThumbnail(playlist: pl, size: 300),
+        ),
+      ),
+    ),
+    const SizedBox(height: 22),
+    Text('PLAYLIST',
+        style: TextStyle(
+            color: pal.accent,
+            fontSize: 12,
+            letterSpacing: 1.4,
+            fontWeight: FontWeight.w700)),
+    const SizedBox(height: 6),
+    Text(pl.name,
+        style: const TextStyle(
+            color: Colors.white,
+            fontSize: 36,
+            height: 1.1,
+            letterSpacing: -1,
+            fontWeight: FontWeight.w800)),
+    const SizedBox(height: 8),
+    Text('You · $info', style: const TextStyle(color: kSigT2, fontSize: 14)),
+    const SizedBox(height: 22),
+    Wrap(spacing: 10, runSpacing: 10, children: [
+      if (tracks.isNotEmpty) ...[
+        btn('Play', Icons.play_arrow_rounded, () => play(0, false),
+            primary: true),
+        btn('Shuffle', Icons.shuffle_rounded,
+            () => play(Random().nextInt(tracks.length), true)),
+        btn('Play next', Icons.queue_play_next_rounded, () {
+          audioHandler.addToQueue(tracks, next: true);
+          appNotice.value = 'Playing "${pl.name}" next';
+        }),
+      ],
+      btn('Add songs', Icons.playlist_add_rounded,
+          () => showAddTracksToPlaylistPicker(context, pl)),
+      btn('Edit', Icons.edit_rounded,
+          () => showCreateOrEditPlaylistDialog(context, existing: pl)),
+      btn('More', Icons.more_horiz_rounded, onMore),
+    ]),
+    if (tracks.isNotEmpty) ...[
+      const SizedBox(height: 18),
+      const Text('Drag ≡ to reorder songs',
+          style: TextStyle(color: Colors.white38, fontSize: 12)),
+    ],
+  ];
+
+  return Scaffold(
+    backgroundColor: const Color(0xFF0B0B0F),
+    body: Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          width: 380,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [pal.accent.withOpacity(0.30), const Color(0xFF15151B)],
+              stops: const [0.0, 0.7],
+            ),
+          ),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+            children: left,
+          ),
+        ),
+        const SizedBox(width: 24),
+        Expanded(
+          child: tracks.isEmpty
+              ? Center(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.queue_music_rounded,
+                        size: 54, color: pal.accent.withOpacity(0.6)),
+                    const SizedBox(height: 10),
+                    const Text('This playlist is empty',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    const Text('Use "Add songs" on the left.',
+                        style: TextStyle(color: Colors.white54, fontSize: 13)),
+                  ]),
+                )
+              : songs,
+        ),
+      ],
+    ),
+  );
 }
