@@ -29194,7 +29194,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.0.0';
+const String kAppVersion = '3.0.1';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -31732,6 +31732,7 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
         final badgeBottom =
             (page?.kind ?? (isAlbum ? 'Album' : 'Songs')).toUpperCase();
 
+        final tail = <Widget>[];
         final list = <Widget>[
           Row(
             children: [
@@ -31939,22 +31940,9 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
             list.add(Center(
                 child: Text('No playable songs here.',
                     style: bloomText(14, color: c.t2))));
-          } else {
-            list.add(bloomGroup([
-              for (var i = 0; i < tracks.length; i++)
-                BloomSongRow(
-                  track: tracks[i],
-                  number: isAlbum ? i + 1 : null,
-                  showArt: !isAlbum,
-                  subtitle: isAlbum
-                      ? (tracks[i].artist.isNotEmpty ? tracks[i].artist : artist)
-                      : null,
-                  onTap: () => play(i),
-                ),
-            ]));
           }
           for (final sh in page.shelves) {
-            list
+            tail
               ..add(BloomSection(sh.title.isEmpty ? 'More' : sh.title))
               ..add(bloomRow([
                 for (final a in sh.items)
@@ -31978,9 +31966,32 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
               const Positioned.fill(child: BloomBackdrop()),
               SafeArea(
                 bottom: false,
-                child: ListView(
+                // Built lazily: a playlist can have thousands of songs.
+                child: ListView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 60),
-                  children: list,
+                  itemCount: list.length + tracks.length + tail.length,
+                  itemBuilder: (context, i) {
+                    if (i < list.length) return list[i];
+                    i -= list.length;
+                    if (i < tracks.length) {
+                      return bloomGroupItem(
+                        BloomSongRow(
+                          track: tracks[i],
+                          number: isAlbum ? i + 1 : null,
+                          showArt: !isAlbum,
+                          subtitle: isAlbum
+                              ? (tracks[i].artist.isNotEmpty
+                                  ? tracks[i].artist
+                                  : artist)
+                              : null,
+                          onTap: () => play(i),
+                        ),
+                        i,
+                        tracks.length,
+                      );
+                    }
+                    return tail[i - tracks.length];
+                  },
                 ),
               ),
             ],
@@ -35439,6 +35450,21 @@ Widget bloomGroup(List<Widget> rows,
   );
 }
 
+/// One row of a grouped list, for lazy lists (index [i] of [n]).
+Widget bloomGroupItem(Widget row, int i, int n,
+    {double outer = 24, double inner = 6, Color? color}) {
+  return Padding(
+    padding: EdgeInsets.only(bottom: i == n - 1 ? 0 : 3),
+    child: ClipRRect(
+      borderRadius: BorderRadius.vertical(
+        top: Radius.circular(i == 0 ? outer : inner),
+        bottom: Radius.circular(i == n - 1 ? outer : inner),
+      ),
+      child: ColoredBox(color: color ?? bc.s1, child: row),
+    ),
+  );
+}
+
 String bloomDur(int s) =>
     s <= 0 ? '' : '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
 
@@ -36730,16 +36756,7 @@ class _BloomLibraryPageState extends State<BloomLibraryPage> {
               child: Center(
                   child: Text('No songs yet.',
                       style: bloomText(14, color: c.t2))))
-          : bloomGroup([
-              for (var i = 0; i < min(300, songs.length); i++)
-                BloomSongRow(
-                    track: songs[i],
-                    onTap: () {
-                      audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
-                      audioHandler.playYouTubeList(songs, i);
-                      openPlayer(context);
-                    }),
-            ]));
+          : const SizedBox.shrink());
     } else if (items.isEmpty) {
       out.add(Padding(
         padding: const EdgeInsets.all(30),
@@ -36814,9 +36831,25 @@ class _BloomLibraryPageState extends State<BloomLibraryPage> {
         setState(() => _ytPl = YouTubeMusic.libraryPlaylists(refresh: true));
         await _ytPl;
       },
-      child: ListView(
+      // Built lazily: the Songs list can be very long.
+      child: ListView.builder(
         padding: EdgeInsets.fromLTRB(16, top + 12, 16, 200),
-        children: out,
+        itemCount: out.length + (_chip == 2 ? songs.length : 0),
+        itemBuilder: (context, i) {
+          if (i < out.length) return out[i];
+          i -= out.length;
+          return bloomGroupItem(
+            BloomSongRow(
+                track: songs[i],
+                onTap: () {
+                  audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+                  audioHandler.playYouTubeList(songs, i);
+                  openPlayer(context);
+                }),
+            i,
+            songs.length,
+          );
+        },
       ),
     );
   }

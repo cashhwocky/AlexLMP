@@ -1,7 +1,7 @@
 name: alex_lmp
 description: AlexLMP Material You Music Player
 publish_to: 'none'
-version: 3.0.0+44
+version: 3.0.1+45
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
