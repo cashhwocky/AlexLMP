@@ -4914,6 +4914,751 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   // ═══════════════════════ AlexLMP Signal app style ═══════════════════════
 
+  // ═══════════════════════ Desktop: AlexLMP layout (default) ═══════════════
+  // Sidebar with your library, a top bar with search, Home in the middle, a
+  // Now playing panel on the right and the floating player bar.
+
+  static const _dBg = Color(0xFF0B0B0F);
+  static const _dP1 = Color(0xFF15151B);
+  static const _dP2 = Color(0xFF1E1E26);
+  static const _dLine = Color(0xFF2A2A34);
+
+  final _DeskHistory _deskHist = _DeskHistory();
+  final FocusNode _deskSearchFocus = FocusNode();
+  final TextEditingController _deskSearch = TextEditingController();
+  bool? _deskPanelOn;
+
+  bool get _deskPanel => _deskPanelOn ?? appState.b('desk_now_panel', true);
+  void _setDeskPanel(bool v) {
+    setState(() => _deskPanelOn = v);
+    appState.setB('desk_now_panel', v);
+  }
+
+  void _deskOpen(Widget page) {
+    _deskNav.currentState?.push(MaterialPageRoute(builder: (_) => page));
+  }
+
+  void _deskDoSearch(String q) {
+    final query = q.trim();
+    if (query.isEmpty) return;
+    _deskOpen(SearchScreen(key: ValueKey('s$query'), initialQuery: query));
+  }
+
+  Future<void> _deskPlayShelf(YtShelfItem it, {bool shuffle = false}) async {
+    if (it.kind != 'playlist') {
+      openYtShelfItem(_deskNav.currentContext ?? context, it);
+      return;
+    }
+    try {
+      final page = ytAccount.value.signedIn
+          ? await YouTubeMusic.playlistPage(it.id,
+              title: it.title, thumbnail: it.thumbnail)
+          : await YouTubeMusic.publicPlaylistPage(it.id,
+              title: it.title, thumbnail: it.thumbnail);
+      if (page.tracks.isEmpty) return;
+      audioHandler.setShuffleMode(
+          shuffle ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none);
+      await audioHandler.playYouTubeList(
+          page.tracks, shuffle ? Random().nextInt(page.tracks.length) : 0);
+    } catch (e) {
+      appNotice.value = 'Couldn\'t play "${it.title}". ($e)';
+    }
+  }
+
+  Widget _deskModern(BuildContext context, AppPalette pal) {
+    final yt = appState.homeMode == 'youtube';
+    final accent = pal.accent;
+    final on = pal.onAccent;
+
+    Widget navItem(int i, IconData icon, String label) =>
+        ValueListenableBuilder<int>(
+          valueListenable: _deskTab,
+          builder: (context, tab, _) {
+            final sel = tab == i;
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Material(
+                color: sel ? accent.withOpacity(0.16) : Colors.transparent,
+                borderRadius: BorderRadius.circular(999),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: () => _deskGo(i),
+                  child: SizedBox(
+                    height: 42,
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 14),
+                        Icon(icon, size: 21, color: sel ? accent : kSigT2),
+                        const SizedBox(width: 14),
+                        Text(label,
+                            style: TextStyle(
+                                color: sel ? Colors.white : kSigT2,
+                                fontSize: 14.5,
+                                fontWeight:
+                                    sel ? FontWeight.w700 : FontWeight.w500)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+
+    Widget libRow(Widget cover, String title, String sub, VoidCallback onTap,
+            {VoidCallback? onLong}) =>
+        InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          onLongPress: onLong,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(width: 40, height: 40, child: cover),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600)),
+                      Text(sub,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: kSigT3, fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+
+    Widget sourceHalf(String value, String label) {
+      final sel = (yt ? 'youtube' : 'local') == value;
+      return Expanded(
+        child: Material(
+          color: sel ? accent : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: () {
+              if (sel) return;
+              _setMode(value);
+              _deskGo(_deskTab.value);
+            },
+            child: SizedBox(
+              height: 34,
+              child: Center(
+                child: Text(label,
+                    style: TextStyle(
+                        color: sel ? on : kSigT2,
+                        fontSize: 12.5,
+                        fontWeight: sel ? FontWeight.w700 : FontWeight.w600)),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final likedCount = yt ? null : audioHandler.likedTracks.length;
+    final account = ytAccount.value;
+
+    final sidebar = Container(
+      width: 248,
+      padding: const EdgeInsets.fromLTRB(12, 18, 12, 12),
+      decoration: BoxDecoration(
+          color: _dP1, borderRadius: BorderRadius.circular(24)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 4, 10, 16),
+            child: Row(
+              children: [
+                SignalBars(size: 28, color: accent),
+                const SizedBox(width: 10),
+                const Text('AlexLMP',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4)),
+              ],
+            ),
+          ),
+          navItem(0, Icons.home_rounded, 'Home'),
+          navItem(1, Icons.sensors_rounded, 'Mix'),
+          navItem(2, Icons.library_music_rounded, 'Library'),
+          Container(
+            margin: const EdgeInsets.fromLTRB(4, 14, 4, 8),
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(children: [
+              sourceHalf('youtube', 'YouTube Music'),
+              sourceHalf('local', 'This computer'),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 0, 4),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text('YOUR LIBRARY',
+                      style: TextStyle(
+                          color: kSigT3,
+                          fontSize: 12,
+                          letterSpacing: 0.7,
+                          fontWeight: FontWeight.w700)),
+                ),
+                IconButton(
+                  tooltip: 'New playlist',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.add_rounded, color: kSigT2, size: 20),
+                  onPressed: () => showCreateOrEditPlaylistDialog(
+                      _deskNav.currentContext ?? context),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ValueListenableBuilder<int>(
+              valueListenable: LibraryStore.revision,
+              builder: (context, _, __) => ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  libRow(
+                    Container(
+                        color: accent,
+                        child: Icon(Icons.favorite_rounded, color: on, size: 20)),
+                    'Liked songs',
+                    likedCount == null
+                        ? 'YouTube Music'
+                        : '$likedCount ${likedCount == 1 ? 'song' : 'songs'}',
+                    () => yt
+                        ? openYtLikedMusic(_deskNav.currentContext ?? context)
+                        : _deskOpen(const LikedSongsScreen()),
+                  ),
+                  for (final i in LibraryStore.pins)
+                    libRow(
+                      i.kind == 'local'
+                          ? (appState.playlistById(i.id) == null
+                              ? const ColoredBox(color: _dP2)
+                              : PlaylistCoverThumbnail(
+                                  playlist: appState.playlistById(i.id)!,
+                                  size: 40))
+                          : YtNetworkImage(url: i.thumbnail, size: 40),
+                      i.title,
+                      i.kind == 'album' ? 'Pinned · Album' : 'Pinned · Playlist',
+                      () => LibraryStore.open(_deskNav.currentContext ?? context, i),
+                      onLong: () => LibraryStore.menu(context, i),
+                    ),
+                  for (final pl in appState.playlists)
+                    libRow(
+                      PlaylistCoverThumbnail(playlist: pl, size: 40),
+                      pl.name,
+                      'Playlist',
+                      () => _deskOpen(PlaylistDetailScreen(playlistId: pl.id)),
+                    ),
+                  for (final i in LibraryStore.saved
+                      .where((x) => !LibraryStore.isPinned(x))
+                      .take(30))
+                    libRow(
+                      YtNetworkImage(url: i.thumbnail, size: 40),
+                      i.title,
+                      i.kind == 'album' ? 'Album · ${i.subtitle}' : 'Playlist',
+                      () => LibraryStore.open(_deskNav.currentContext ?? context, i),
+                      onLong: () => LibraryStore.menu(context, i),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Material(
+            color: Colors.white.withOpacity(0.04),
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () => _deskGo(4),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 17,
+                      backgroundColor: const Color(0xFF3A3550),
+                      backgroundImage: account.photo == null
+                          ? null
+                          : NetworkImage(account.photo!),
+                      child: account.photo != null
+                          ? null
+                          : Text(
+                              ((account.name ?? '').trim().isEmpty ? 'A' : account.name!.trim().substring(0, 1)).toUpperCase(),
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700)),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(account.signedIn ? (account.name ?? 'You') : 'Not signed in',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600)),
+                          Text(account.signedIn ? 'YouTube Music' : 'Settings',
+                              style: const TextStyle(color: kSigT3, fontSize: 11.5)),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.tune_rounded, color: kSigT2, size: 19),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    Widget roundBtn(IconData icon, String tip, VoidCallback? onTap) => Tooltip(
+          message: tip,
+          child: Material(
+            color: _dP2,
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: onTap,
+              child: SizedBox(
+                width: 40,
+                height: 40,
+                child: Icon(icon,
+                    size: 20, color: onTap == null ? kSigT3 : Colors.white),
+              ),
+            ),
+          ),
+        );
+
+    final topBar = ValueListenableBuilder<int>(
+      valueListenable: _deskHist.revision,
+      builder: (context, _, __) => Row(
+        children: [
+          roundBtn(Icons.chevron_left_rounded, 'Back',
+              (_deskNav.currentState?.canPop() ?? false)
+                  ? () => _deskNav.currentState?.maybePop()
+                  : null),
+          const SizedBox(width: 8),
+          roundBtn(Icons.chevron_right_rounded, 'Forward',
+              _deskHist.forward.isEmpty
+                  ? null
+                  : () => _deskHist.goForward(_deskNav.currentState)),
+          const SizedBox(width: 14),
+          SizedBox(
+            width: 420,
+            height: 44,
+            child: TextField(
+              controller: _deskSearch,
+              focusNode: _deskSearchFocus,
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+              textInputAction: TextInputAction.search,
+              onSubmitted: _deskDoSearch,
+              decoration: InputDecoration(
+                hintText: 'Search songs, albums, artists, playlists',
+                hintStyle: const TextStyle(color: kSigT3, fontSize: 14),
+                prefixIcon:
+                    const Icon(Icons.search_rounded, color: kSigT2, size: 20),
+                suffixIcon: Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: Center(
+                    widthFactor: 1,
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: _dLine),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text('Ctrl K',
+                          style: TextStyle(
+                              color: kSigT3,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                ),
+                filled: true,
+                fillColor: _dP2,
+                contentPadding: EdgeInsets.zero,
+                enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(999),
+                    borderSide: const BorderSide(color: _dLine)),
+                focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(999),
+                    borderSide: BorderSide(color: accent, width: 1.5)),
+              ),
+            ),
+          ),
+          const Spacer(),
+          roundBtn(
+              _deskPanel
+                  ? Icons.view_sidebar_rounded
+                  : Icons.view_sidebar_outlined,
+              _deskPanel ? 'Hide Now playing' : 'Show Now playing',
+              () => _setDeskPanel(!_deskPanel)),
+        ],
+      ),
+    );
+
+    final content = Navigator(
+      key: _deskNav,
+      observers: [_deskHist],
+      onGenerateRoute: (_) => MaterialPageRoute(
+        builder: (_) => ValueListenableBuilder<int>(
+          valueListenable: _deskTab,
+          builder: (context, tab, __) => ListenableBuilder(
+            listenable: Listenable.merge(
+                [appState, audioHandler.libraryRevision, ytAccount]),
+            builder: (context, _) {
+              switch (tab) {
+                case 3:
+                  return SearchScreen(
+                      key: ValueKey('q$_deskQuery'),
+                      initialQuery: _deskQuery.isEmpty ? null : _deskQuery);
+                case 4:
+                  return const SettingsScreen();
+                case 0:
+                  return Scaffold(
+                      backgroundColor: _dBg, body: _deskHome(context, pal));
+                default:
+                  return Scaffold(
+                    backgroundColor: _dBg,
+                    body: _tabBody(context, pal, audioHandler.tracks, tab: tab),
+                  );
+              }
+            },
+          ),
+        ),
+      ),
+    );
+
+    return Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.keyK, control: true): _DeskFocusSearch(),
+      },
+      child: Actions(
+        actions: {
+          _DeskFocusSearch: CallbackAction<_DeskFocusSearch>(
+              onInvoke: (_) => _deskSearchFocus.requestFocus()),
+        },
+        child: DesktopPlayerKeys(
+          child: Focus(
+            autofocus: true,
+            child: Scaffold(
+              backgroundColor: _dBg,
+              body: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          sidebar,
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6, bottom: 14),
+                                  child: topBar,
+                                ),
+                                Expanded(
+                                  child: ClipRect(
+                                    child: LayoutBuilder(builder: (context, box) {
+                                      final mq = MediaQuery.of(context);
+                                      return MediaQuery(
+                                        data: mq.copyWith(
+                                            size: Size(
+                                                box.maxWidth.clamp(360.0, 620.0),
+                                                box.maxHeight),
+                                            padding: EdgeInsets.zero),
+                                        child: content,
+                                      );
+                                    }),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (_deskPanel) ...[
+                            const SizedBox(width: 14),
+                            DesktopNowPanel(
+                              background: _dP1,
+                              accent: accent,
+                              onClose: () => _setDeskPanel(false),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    DesktopPlayerBar(background: _dP1, accent: accent),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Desktop Home from the mockup: greeting, Jump back in, Quick picks in
+  /// columns, then Listen again and the rest.
+  Widget _deskHome(BuildContext context, AppPalette pal) {
+    final yt = appState.homeMode == 'youtube';
+    final accent = pal.accent;
+    final h = DateTime.now().hour;
+    final greet = h < 5
+        ? 'Good night'
+        : h < 12
+            ? 'Good morning'
+            : h < 17
+                ? 'Good afternoon'
+                : 'Good evening';
+    final first = (ytAccount.value.name ?? '').split(' ').first;
+
+    Widget header(String title, {String? action, VoidCallback? onAction}) =>
+        Padding(
+          padding: const EdgeInsets.fromLTRB(0, 30, 0, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(title,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4)),
+              ),
+              if (action != null)
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: kSigT2),
+                  onPressed: onAction,
+                  child: Text(action,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+            ],
+          ),
+        );
+
+    Widget hero(Widget art, String kicker, String title, String sub,
+        VoidCallback onPlay, VoidCallback onShuffle) {
+      return Container(
+        padding: const EdgeInsets.all(22),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(24),
+          gradient: LinearGradient(
+            colors: [Color.lerp(_dP2, accent, 0.18)!, _dP2],
+          ),
+        ),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: SizedBox(width: 132, height: 132, child: art),
+            ),
+            const SizedBox(width: 22),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(kicker,
+                      style: TextStyle(
+                          color: accent,
+                          fontSize: 11.5,
+                          letterSpacing: 1,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 6),
+                  Text(title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 30,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.6)),
+                  const SizedBox(height: 6),
+                  Text(sub,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: kSigT2, fontSize: 14)),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                            backgroundColor: accent,
+                            foregroundColor: pal.onAccent,
+                            minimumSize: const Size(0, 44),
+                            padding: const EdgeInsets.symmetric(horizontal: 22)),
+                        onPressed: onPlay,
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        label: const Text('Play',
+                            style: TextStyle(fontWeight: FontWeight.w700)),
+                      ),
+                      const SizedBox(width: 10),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: const BorderSide(color: _dLine),
+                            backgroundColor: Colors.white.withOpacity(0.06),
+                            minimumSize: const Size(0, 44),
+                            padding: const EdgeInsets.symmetric(horizontal: 18)),
+                        onPressed: onShuffle,
+                        icon: const Icon(Icons.shuffle_rounded, size: 18),
+                        label: const Text('Shuffle',
+                            style: TextStyle(fontWeight: FontWeight.w700)),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget picks(List<TrackItem> list) => LayoutBuilder(builder: (context, c) {
+          final cols = c.maxWidth > 900 ? 3 : (c.maxWidth > 560 ? 2 : 1);
+          final w = (c.maxWidth - 12 * (cols - 1)) / cols;
+          final shown = list.take(cols * 3).toList();
+          return Wrap(
+            spacing: 12,
+            runSpacing: 2,
+            children: [
+              for (var i = 0; i < shown.length; i++)
+                SizedBox(
+                  width: w,
+                  child: _DeskSongRow(
+                      track: shown[i], onTap: () => _ytPlay(list, i)),
+                ),
+            ],
+          );
+        });
+
+    final out = <Widget>[
+      Text(greet, style: const TextStyle(color: kSigT2, fontSize: 14)),
+      const SizedBox(height: 2),
+      Text(first.isEmpty ? 'Welcome back' : 'Welcome back, $first',
+          style: const TextStyle(
+              color: Colors.white,
+              fontSize: 34,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.9)),
+      const SizedBox(height: 22),
+    ];
+
+    if (yt) {
+      out.add(_ytData((d, err, loading) {
+        final c = <Widget>[];
+        if (d.shelves.isEmpty) c.add(_ytHomeStatus(pal, err, loading));
+        if (d.mixes.isNotEmpty) {
+          final m = d.mixes.first;
+          c.add(hero(YtNetworkImage(url: m.thumbnail, size: 132), 'JUMP BACK IN',
+              m.title, m.subtitle, () => _deskPlayShelf(m),
+              () => _deskPlayShelf(m, shuffle: true)));
+        } else if (d.quick.isNotEmpty) {
+          c.add(hero(CustomAlbumArtwork(track: d.quick.first), 'JUMP BACK IN',
+              'Quick picks', 'Made from what you play',
+              () => _ytPlay(d.quick, 0), () => _ytShuffle(d.quick)));
+        }
+        if (d.quick.isNotEmpty) {
+          c
+            ..add(header('Quick picks',
+                action: 'Play all', onAction: () => _ytPlay(d.quick, 0)))
+            ..add(picks(d.quick));
+        }
+        if (d.again.isNotEmpty) {
+          c
+            ..add(header('Listen again'))
+            ..add(_bigRow(
+                [for (final it in d.again) _shelfCard(context, it, 172)], 172));
+        }
+        if (d.mixes.length > 1) {
+          c
+            ..add(header('Your mixes'))
+            ..add(_bigRow([
+              for (final it in d.mixes.skip(1)) _shelfCard(context, it, 172)
+            ], 172));
+        }
+        for (final sh in d.rest) {
+          final title = sh.title.isEmpty ? 'For you' : sh.title;
+          if (sh.kind == 'song') {
+            final songs = [
+              for (final it in sh.items)
+                YouTubeMusic.trackFromShelf(it, it.subtitle)
+            ];
+            c
+              ..add(header(title,
+                  action: 'Play all', onAction: () => _ytPlay(songs, 0)))
+              ..add(picks(songs));
+          } else {
+            c
+              ..add(header(title))
+              ..add(_bigRow(
+                  [for (final it in sh.items) _shelfCard(context, it, 172)], 172));
+          }
+        }
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: c);
+      }));
+    } else {
+      final local = audioHandler.tracks.where((t) => !t.isYouTube).toList();
+      if (local.isEmpty) {
+        out.add(_emptyState(context, pal));
+      } else {
+        final quick = _quickPicks(local, 9);
+        out
+          ..add(hero(CustomAlbumArtwork(track: local.first), 'YOUR MUSIC',
+              'Everything on this computer',
+              '${local.length} ${local.length == 1 ? 'song' : 'songs'}',
+              () => _ytPlay(local, 0), () => _ytShuffle(local)))
+          ..add(header('Quick picks',
+              action: 'Play all', onAction: () => _ytPlay(quick, 0)))
+          ..add(picks(quick));
+        final recent = _recentFrom(local);
+        if (recent.isNotEmpty) {
+          out
+            ..add(header('Listen again'))
+            ..add(picks(recent));
+        }
+      }
+    }
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(4, 8, 8, 32),
+      children: out,
+    );
+  }
+
   // ═══════════════════════ Desktop layout ═══════════════════════
 
   final GlobalKey<NavigatorState> _deskNav = GlobalKey<NavigatorState>();
@@ -4930,6 +5675,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   Widget _desktopScaffold(
       BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+    // AlexLMP (default app style): the desktop layout from the mockup.
+    if (appState.appStyle == 'alex') return _deskModern(context, pal);
     final yt = appState.homeMode == 'youtube';
     // Your app style (Settings > Appearance) shapes the desktop too.
     final style = appState.appStyle;
@@ -35619,5 +36366,382 @@ class _DeskKeyAction extends Action<_DeskKeyIntent> {
         audioHandler.player.playing ? audioHandler.pause() : audioHandler.play();
     }
     return null;
+  }
+}
+
+/// Back / forward history for the desktop's middle area.
+class _DeskHistory extends NavigatorObserver {
+  final List<WidgetBuilder> forward = [];
+  final ValueNotifier<int> revision = ValueNotifier<int>(0);
+  bool _replaying = false;
+
+  void _bump() =>
+      WidgetsBinding.instance.addPostFrameCallback((_) => revision.value++);
+
+  @override
+  void didPush(Route route, Route? previousRoute) {
+    if (!_replaying && previousRoute != null) forward.clear();
+    _bump();
+  }
+
+  @override
+  void didPop(Route route, Route? previousRoute) {
+    if (route is MaterialPageRoute) forward.add(route.builder);
+    _bump();
+  }
+
+  void goForward(NavigatorState? nav) {
+    if (nav == null || forward.isEmpty) return;
+    final b = forward.removeLast();
+    _replaying = true;
+    nav.push(MaterialPageRoute(builder: b));
+    _replaying = false;
+  }
+}
+
+class _DeskFocusSearch extends Intent {
+  const _DeskFocusSearch();
+}
+
+String _fmtLen(int secs) {
+  if (secs <= 0) return '';
+  final m = secs ~/ 60, s = secs % 60;
+  return '$m:${s.toString().padLeft(2, '0')}';
+}
+
+/// Song row used in desktop Quick picks.
+class _DeskSongRow extends StatelessWidget {
+  final TrackItem track;
+  final VoidCallback onTap;
+  const _DeskSongRow({required this.track, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = appState.palette.accent;
+    return ValueListenableBuilder<int>(
+      valueListenable: audioHandler.currentIndex,
+      builder: (context, _, __) {
+        final playing = audioHandler.currentTrack?.id == track.id;
+        return Material(
+          color: playing ? accent.withOpacity(0.10) : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onTap,
+            onSecondaryTap: () => track.isYouTube
+                ? showYtAddToPlaylist(context, track)
+                : showAddToPlaylistSheet(context, track),
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: CustomAlbumArtwork(track: track)),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            if (playing) ...[
+                              SignalBars(size: 13, color: accent),
+                              const SizedBox(width: 6),
+                            ],
+                            Expanded(
+                              child: Text(track.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: playing ? accent : Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(track.artist,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: kSigT2, fontSize: 12.5)),
+                      ],
+                    ),
+                  ),
+                  Text(_fmtLen(track.durationSeconds),
+                      style: const TextStyle(color: kSigT3, fontSize: 12)),
+                  const SizedBox(width: 6),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Right-hand "Now playing" panel: artwork, the song, and Up next / Lyrics /
+/// Related.
+class DesktopNowPanel extends StatefulWidget {
+  final Color background;
+  final Color accent;
+  final VoidCallback onClose;
+  const DesktopNowPanel(
+      {super.key,
+      required this.background,
+      required this.accent,
+      required this.onClose});
+
+  @override
+  State<DesktopNowPanel> createState() => _DesktopNowPanelState();
+}
+
+class _DesktopNowPanelState extends State<DesktopNowPanel> {
+  int _tab = 0;
+  final Map<String, Future<List<TrackItem>>> _related = {};
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = widget.accent;
+    return Container(
+      width: 300,
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+      decoration: BoxDecoration(
+          color: widget.background, borderRadius: BorderRadius.circular(24)),
+      child: ListenableBuilder(
+        listenable: Listenable.merge([
+          audioHandler.currentIndex,
+          audioHandler.upNextRevision,
+          audioHandler.libraryRevision,
+          appState,
+        ]),
+        builder: (context, _) {
+          final t = audioHandler.currentTrack;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text('Now playing',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                  IconButton(
+                    tooltip: 'Hide',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.close_rounded, color: kSigT2, size: 18),
+                    onPressed: widget.onClose,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (t == null)
+                const Expanded(
+                  child: Center(
+                    child: Text('Play something and it shows up here.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: kSigT3)),
+                  ),
+                )
+              else ...[
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () => openPlayer(context),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: AspectRatio(
+                          aspectRatio: 1, child: CustomAlbumArtwork(track: t)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          GestureDetector(
+                            onTap: () => goToAlbum(context, t),
+                            child: Text(t.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w800)),
+                          ),
+                          const SizedBox(height: 2),
+                          GestureDetector(
+                            onTap: () => goToArtist(context, t),
+                            child: Text(t.artist,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: accent,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: appState.isLiked(t.id) ? 'Unlike' : 'Like',
+                      onPressed: () => appState.toggleLike(t.id),
+                      icon: Icon(
+                          appState.isLiked(t.id)
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          color: appState.isLiked(t.id) ? accent : Colors.white70),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    children: [
+                      for (final (i, label) in const [
+                        (0, 'Up next'),
+                        (1, 'Lyrics'),
+                        (2, 'Related')
+                      ])
+                        Expanded(
+                          child: Material(
+                            color: _tab == i
+                                ? const Color(0xFF1E1E26)
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(999),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(999),
+                              onTap: () => setState(() => _tab = i),
+                              child: SizedBox(
+                                height: 32,
+                                child: Center(
+                                  child: Text(label,
+                                      style: TextStyle(
+                                          color: _tab == i
+                                              ? Colors.white
+                                              : kSigT2,
+                                          fontSize: 12.5,
+                                          fontWeight: _tab == i
+                                              ? FontWeight.w700
+                                              : FontWeight.w600)),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Expanded(child: _panelBody(t)),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _row(TrackItem x, VoidCallback onTap) => InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                    width: 40, height: 40, child: CustomAlbumArtwork(track: x)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(x.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
+                    Text(x.artist,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: kSigT2, fontSize: 12)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _panelBody(TrackItem t) {
+    switch (_tab) {
+      case 1:
+        return LyricsScreen(key: ValueKey('ply${t.id}'), track: t, embedded: true);
+      case 2:
+        final f = _related.putIfAbsent(
+            t.id,
+            () => YouTubeMusic.search(t.artist).then((r) => r
+                .where((x) => x.id != t.id && x.title != t.title)
+                .take(15)
+                .toList()));
+        return FutureBuilder<List<TrackItem>>(
+          future: f,
+          builder: (context, snap) {
+            if (!snap.hasData) {
+              return snap.hasError
+                  ? const Center(
+                      child: Text('Couldn\'t load related songs.',
+                          style: TextStyle(color: kSigT3)))
+                  : const Center(child: CircularProgressIndicator());
+            }
+            final list = snap.data!;
+            return ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                for (final x in list)
+                  _row(x, () => audioHandler.playYouTubeTrack(x)),
+              ],
+            );
+          },
+        );
+      default:
+        final idx = audioHandler.tracks.indexWhere((x) => x.id == t.id);
+        final next = <TrackItem>[
+          ...audioHandler.upNext,
+          if (idx >= 0) ...audioHandler.tracks.skip(idx + 1).take(30),
+        ];
+        if (next.isEmpty) {
+          return const Center(
+              child: Text('Nothing up next.', style: TextStyle(color: kSigT3)));
+        }
+        return ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            for (final x in next)
+              _row(x, () => audioHandler.playTrackById(x.id)),
+          ],
+        );
+    }
   }
 }
