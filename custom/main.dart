@@ -32265,6 +32265,7 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
           if (page == null && snap.hasError) {
             return [
               ...header,
+              const PaneSplit(),
               _ytLoadError(snap.error, () {
                 setState(() => _future = _load());
               }),
@@ -32273,7 +32274,12 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
           if (page == null) {
             return [
               ...header,
-              Center(child: CircularProgressIndicator(color: pal.accent)),
+              const PaneSplit(),
+              Padding(
+                padding: const EdgeInsets.only(top: 60),
+                child: Center(
+                    child: CircularProgressIndicator(color: pal.accent)),
+              ),
             ];
           }
           final tracks = page.tracks;
@@ -32541,7 +32547,16 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
           final name = page?.name ?? widget.name;
           final banner = page?.banner ?? page?.thumbnail ?? widget.thumbnail;
           final screenW = MediaQuery.of(context).size.width;
-          if (isDesktop && page != null) return _deskArtist(context, pal, page);
+          // Computer: the new layout right away, even while it loads.
+          if (isDesktop && !(page == null && snap.hasError)) {
+            return _deskArtist(
+                context,
+                pal,
+                page ??
+                    YtArtistPage(widget.name, widget.thumbnail, -1,
+                        const [], const []),
+                loading: page == null);
+          }
 
           final slivers = <Widget>[
             SliverAppBar(
@@ -32688,7 +32703,8 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
     }
   }
 
-  Widget _deskArtist(BuildContext context, AppPalette pal, YtArtistPage page) {
+  Widget _deskArtist(BuildContext context, AppPalette pal, YtArtistPage page,
+      {bool loading = false}) {
     final accent = pal.accent;
     final songs = page.songs;
     final photo = page.thumbnail ?? page.banner ?? widget.thumbnail;
@@ -33011,6 +33027,12 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
     }
 
     final right = <Widget>[];
+    if (loading) {
+      right.add(Padding(
+        padding: const EdgeInsets.only(top: 80),
+        child: Center(child: CircularProgressIndicator(color: accent)),
+      ));
+    }
     if (songs.isNotEmpty) {
       right.add(Padding(
         padding: const EdgeInsets.only(bottom: 10),
