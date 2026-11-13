@@ -34375,8 +34375,9 @@ class _DeskSeekPainter extends CustomPainter {
       o.v != v || o.accent != accent || o.dragging != dragging;
 }
 
-/// Bottom player bar: song on the left, controls and seek in the middle,
-/// lyrics / queue / volume / full player on the right.
+/// Bottom player bar: a floating, rounded Material You bar (glass when
+/// Liquid Glass UI is on). Song on the left (click to open the player),
+/// controls and seek in the middle, lyrics / queue / volume on the right.
 class DesktopPlayerBar extends StatelessWidget {
   final Color? background;
   final Color? accent;
@@ -34384,231 +34385,296 @@ class DesktopPlayerBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge(
+          [audioHandler.currentIndex, audioHandler.libraryRevision, appState]),
+      builder: (context, _) => StreamBuilder<MediaItem?>(
+        stream: audioHandler.mediaItem,
+        initialData: audioHandler.mediaItem.valueOrNull,
+        builder: (context, snap) => _bar(context, snap.data),
+      ),
+    );
+  }
+
+  Widget _bar(BuildContext context, MediaItem? item) {
     final pal = appState.palette;
     final tint = accent ?? pal.accent;
-    return ValueListenableBuilder<int>(
-      valueListenable: audioHandler.currentIndex,
-      builder: (context, _, __) {
-        final t = audioHandler.currentTrack;
-        return Container(
-          height: 96,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: background ?? pal.surface,
-            border: const Border(top: BorderSide(color: Colors.white10)),
-          ),
-          child: Row(
-            children: [
-              // Song
-              Expanded(
-                flex: 3,
-                child: t == null
-                    ? const Text('Nothing playing',
-                        style: TextStyle(color: Colors.white54))
-                    : InkWell(
-                        borderRadius: BorderRadius.circular(14),
-                        onTap: () => openPlayer(context),
-                        child: Padding(
-                          padding: const EdgeInsets.all(6),
-                          child: Row(
-                            children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: SizedBox(
-                                    width: 60,
-                                    height: 60,
-                                    child: CustomAlbumArtwork(track: t)),
-                              ),
-                              const SizedBox(width: 14),
-                              Flexible(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(t.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w700)),
-                                    const SizedBox(height: 3),
-                                    Text(t.artist,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            color: Colors.white60, fontSize: 13)),
-                                  ],
-                                ),
-                              ),
-                              ListenableBuilder(
-                                listenable: appState,
-                                builder: (_, __) {
-                                  final liked = appState.isLiked(t.id);
-                                  return IconButton(
-                                    tooltip: liked ? 'Unlike' : 'Like',
-                                    onPressed: () => appState.toggleLike(t.id),
-                                    icon: Icon(
-                                        liked
-                                            ? Icons.favorite_rounded
-                                            : Icons.favorite_border_rounded,
-                                        color: liked ? tint : Colors.white70),
-                                  );
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-              ),
-              // Controls + seek
-              Expanded(
-                flex: 4,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+    final glass = appState.liquidGlass;
+    // The song that's playing: the library entry if there is one, otherwise
+    // what the player itself says (songs started from search, etc).
+    TrackItem? t = audioHandler.currentTrack;
+    if (item != null && (t == null || t.id != item.id)) {
+      t = audioHandler.trackById(item.id) ?? t;
+    }
+    final title = t?.title ?? item?.title;
+    final artist = t?.artist ?? item?.artist ?? '';
+    final has = title != null;
+
+    Widget songArt() {
+      if (t != null) return CustomAlbumArtwork(track: t);
+      final u = item?.artUri?.toString();
+      if (u != null && u.startsWith('http')) {
+        return Image.network(u, fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(color: pal.container));
+      }
+      return Container(
+          color: pal.container,
+          child: Icon(Icons.music_note_rounded, color: tint));
+    }
+
+    final song = has
+        ? Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () => openPlayer(context),
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Row(
                   children: [
-                    StreamBuilder<PlaybackState>(
-                      stream: audioHandler.playbackState,
-                      builder: (context, snap) {
-                        final st = snap.data;
-                        final playing = st?.playing ?? false;
-                        final shuffle =
-                            st?.shuffleMode == AudioServiceShuffleMode.all;
-                        final repeat = st?.repeatMode ?? AudioServiceRepeatMode.none;
-                        return Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            IconButton(
-                              tooltip: 'Shuffle',
-                              icon: Icon(Icons.shuffle_rounded,
-                                  color: shuffle ? tint : Colors.white60),
-                              onPressed: () => audioHandler.setShuffleMode(shuffle
-                                  ? AudioServiceShuffleMode.none
-                                  : AudioServiceShuffleMode.all),
-                            ),
-                            IconButton(
-                              tooltip: 'Previous',
-                              iconSize: 30,
-                              icon: const Icon(Icons.skip_previous_rounded,
-                                  color: Colors.white),
-                              onPressed: audioHandler.skipToPrevious,
-                            ),
-                            const SizedBox(width: 6),
-                            Tooltip(
-                              message: playing ? 'Pause (Space)' : 'Play (Space)',
-                              child: InkWell(
-                                customBorder: const CircleBorder(),
-                                onTap: () => playing
-                                    ? audioHandler.pause()
-                                    : audioHandler.play(),
-                                child: Container(
-                                  width: 48,
-                                  height: 48,
-                                  decoration: BoxDecoration(
-                                      color: tint, shape: BoxShape.circle),
-                                  child: Icon(
-                                      playing
-                                          ? Icons.pause_rounded
-                                          : Icons.play_arrow_rounded,
-                                      color: pal.onAccent,
-                                      size: 30),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            IconButton(
-                              tooltip: 'Next',
-                              iconSize: 30,
-                              icon: const Icon(Icons.skip_next_rounded,
-                                  color: Colors.white),
-                              onPressed: audioHandler.skipToNext,
-                            ),
-                            IconButton(
-                              tooltip: 'Repeat',
-                              icon: Icon(
-                                  repeat == AudioServiceRepeatMode.one
-                                      ? Icons.repeat_one_rounded
-                                      : Icons.repeat_rounded,
-                                  color: repeat == AudioServiceRepeatMode.none
-                                      ? Colors.white60
-                                      : tint),
-                              onPressed: () =>
-                                  audioHandler.setRepeatMode(_nextRepeat(repeat)),
-                            ),
-                          ],
-                        );
-                      },
+                    Hero(
+                      tag: 'desk_art',
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: SizedBox(width: 60, height: 60, child: songArt()),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Flexible(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 3),
+                          Text(artist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white60, fontSize: 13)),
+                        ],
+                      ),
                     ),
                     if (t != null)
-                      SizedBox(
-                        height: 26,
-                        child: PlayerSeek(
-                          fallbackSeconds: t.durationSeconds,
-                          height: 22,
-                          timeStyle: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 11.5,
-                              fontFeatures: [ui.FontFeature.tabularFigures()]),
-                          showTimes: false,
-                          track: (v, dragging) => CustomPaint(
-                              painter: _DeskSeekPainter(v, tint, dragging)),
-                        ),
+                      IconButton(
+                        tooltip: appState.isLiked(t.id) ? 'Unlike' : 'Like',
+                        onPressed: () => appState.toggleLike(t!.id),
+                        icon: Icon(
+                            appState.isLiked(t.id)
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            color: appState.isLiked(t.id)
+                                ? tint
+                                : Colors.white70),
                       ),
                   ],
                 ),
               ),
-              // Tools
-              Expanded(
-                flex: 3,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    IconButton(
-                      tooltip: 'Lyrics',
-                      icon: const Icon(Icons.lyrics_outlined, color: Colors.white70),
-                      onPressed: t == null ? null : () => openPlayer(context, panel: 0),
+            ),
+          )
+        : Row(
+            children: [
+              Container(
+                width: 60,
+                height: 60,
+                margin: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                    color: pal.container,
+                    borderRadius: BorderRadius.circular(16)),
+                child: Icon(Icons.music_note_rounded, color: tint),
+              ),
+              const SizedBox(width: 8),
+              const Text('Pick something to play',
+                  style: TextStyle(color: Colors.white54, fontSize: 14)),
+            ],
+          );
+
+    final controls = StreamBuilder<PlaybackState>(
+      stream: audioHandler.playbackState,
+      builder: (context, snap) {
+        final st = snap.data;
+        final playing = st?.playing ?? false;
+        final shuffle = st?.shuffleMode == AudioServiceShuffleMode.all;
+        final repeat = st?.repeatMode ?? AudioServiceRepeatMode.none;
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              tooltip: 'Shuffle',
+              isSelected: shuffle,
+              icon: Icon(Icons.shuffle_rounded,
+                  color: shuffle ? tint : Colors.white60),
+              onPressed: () => audioHandler.setShuffleMode(shuffle
+                  ? AudioServiceShuffleMode.none
+                  : AudioServiceShuffleMode.all),
+            ),
+            const SizedBox(width: 4),
+            IconButton.filledTonal(
+              tooltip: 'Previous',
+              style: IconButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.08),
+                  foregroundColor: Colors.white),
+              icon: const Icon(Icons.skip_previous_rounded),
+              onPressed: audioHandler.skipToPrevious,
+            ),
+            const SizedBox(width: 10),
+            Tooltip(
+              message: playing ? 'Pause (Space)' : 'Play (Space)',
+              child: Material(
+                color: tint,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(playing ? 18 : 28)),
+                child: InkWell(
+                  customBorder: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(playing ? 18 : 28)),
+                  onTap: () =>
+                      playing ? audioHandler.pause() : audioHandler.play(),
+                  child: SizedBox(
+                    width: 56,
+                    height: 56,
+                    child: Icon(
+                        playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                        color: pal.onAccent,
+                        size: 32),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            IconButton.filledTonal(
+              tooltip: 'Next',
+              style: IconButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.08),
+                  foregroundColor: Colors.white),
+              icon: const Icon(Icons.skip_next_rounded),
+              onPressed: audioHandler.skipToNext,
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: 'Repeat',
+              icon: Icon(
+                  repeat == AudioServiceRepeatMode.one
+                      ? Icons.repeat_one_rounded
+                      : Icons.repeat_rounded,
+                  color: repeat == AudioServiceRepeatMode.none
+                      ? Colors.white60
+                      : tint),
+              onPressed: () => audioHandler.setRepeatMode(_nextRepeat(repeat)),
+            ),
+          ],
+        );
+      },
+    );
+
+    final seek = has
+        ? SizedBox(
+            height: 26,
+            child: PlayerSeek(
+              fallbackSeconds: t?.durationSeconds ?? item?.duration?.inSeconds ?? 0,
+              height: 22,
+              timeStyle: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 11.5,
+                  fontFeatures: [ui.FontFeature.tabularFigures()]),
+              showTimes: false,
+              track: (v, dragging) =>
+                  CustomPaint(painter: _DeskSeekPainter(v, tint, dragging)),
+            ),
+          )
+        : const SizedBox(height: 26);
+
+    final tools = Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        IconButton(
+          tooltip: 'Lyrics',
+          icon: const Icon(Icons.lyrics_outlined, color: Colors.white70),
+          onPressed: has ? () => openPlayer(context, panel: 0) : null,
+        ),
+        IconButton(
+          tooltip: 'Up next',
+          icon: const Icon(Icons.queue_music_rounded, color: Colors.white70),
+          onPressed: has ? () => openPlayer(context, panel: 1) : null,
+        ),
+        const SizedBox(width: 4),
+        Container(
+          height: 40,
+          padding: const EdgeInsets.only(left: 10, right: 4),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.volume_up_rounded,
+                  color: Colors.white70, size: 20),
+              SizedBox(
+                width: 110,
+                child: StreamBuilder<double>(
+                  stream: audioHandler.player.volumeStream,
+                  initialData: audioHandler.player.volume,
+                  builder: (context, snap) => SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 4,
+                      thumbShape:
+                          const RoundSliderThumbShape(enabledThumbRadius: 7),
+                      overlayShape: SliderComponentShape.noOverlay,
                     ),
-                    IconButton(
-                      tooltip: 'Queue',
-                      icon: const Icon(Icons.queue_music_rounded,
-                          color: Colors.white70),
-                      onPressed: t == null ? null : () => openPlayer(context, panel: 1),
+                    child: Slider(
+                      value: (snap.data ?? 1).clamp(0.0, 1.0),
+                      activeColor: tint,
+                      inactiveColor: Colors.white24,
+                      onChanged: (v) => audioHandler.player.setVolume(v),
                     ),
-                    const Icon(Icons.volume_up_rounded, color: Colors.white70, size: 20),
-                    SizedBox(
-                      width: 120,
-                      child: StreamBuilder<double>(
-                        stream: audioHandler.player.volumeStream,
-                        initialData: audioHandler.player.volume,
-                        builder: (context, snap) => SliderTheme(
-                          data: SliderTheme.of(context).copyWith(
-                            trackHeight: 3,
-                            thumbShape:
-                                const RoundSliderThumbShape(enabledThumbRadius: 6),
-                            overlayShape: SliderComponentShape.noOverlay,
-                          ),
-                          child: Slider(
-                            value: (snap.data ?? 1).clamp(0.0, 1.0),
-                            activeColor: tint,
-                            inactiveColor: Colors.white24,
-                            onChanged: (v) => audioHandler.player.setVolume(v),
-                          ),
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Full player',
-                      icon: const Icon(Icons.open_in_full_rounded,
-                          color: Colors.white70),
-                      onPressed: t == null ? null : () => openPlayer(context),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ],
           ),
-        );
-      },
+        ),
+        const SizedBox(width: 4),
+        IconButton(
+          tooltip: 'Open player',
+          icon: const Icon(Icons.open_in_full_rounded, color: Colors.white70),
+          onPressed: has ? () => openPlayer(context) : null,
+        ),
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+      child: LiquidGlassBox(
+        realBlur: true,
+        borderRadius: BorderRadius.circular(28),
+        fallbackColor: background ?? pal.surface,
+        padding: const EdgeInsets.fromLTRB(8, 6, 14, 6),
+        boxShadow: const [
+          BoxShadow(
+              color: Color(0x66000000), blurRadius: 24, offset: Offset(0, 8)),
+        ],
+        child: SizedBox(
+          height: 84,
+          child: Row(
+            children: [
+              Expanded(flex: 3, child: song),
+              Expanded(
+                flex: 4,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [controls, seek],
+                ),
+              ),
+              Expanded(flex: 3, child: tools),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
