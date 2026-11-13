@@ -4197,6 +4197,30 @@ class AlexLmpApp extends StatelessWidget {
   }
 }
 
+/// The computer's middle area (between the sidebar and the player bar).
+final GlobalKey<NavigatorState> deskContentNav = GlobalKey<NavigatorState>();
+
+/// Where album, artist and playlist pages open. On the computer they open in
+/// the middle area (closing Now Playing if it's open) so the sidebar and the
+/// player bar stay visible.
+NavigatorState contentNav(BuildContext context) {
+  if (isDesktop) {
+    final n = deskContentNav.currentState;
+    if (n != null && n.mounted) {
+      Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
+      return n;
+    }
+  }
+  return Navigator.of(context);
+}
+
+/// Opens Now Playing after a song is started from a list. On the computer
+/// it stays closed (open it from the player bar).
+void openPlayerAfterPlay(BuildContext context) {
+  if (isDesktop) return;
+  openPlayer(context);
+}
+
 void openPlayer(BuildContext context, {int panel = 0}) {
   if (audioHandler.tracks.isEmpty) {
     showAddMusicSheet(context);
@@ -4256,7 +4280,7 @@ void openPlayer(BuildContext context, {int panel = 0}) {
 
 void playAndOpen(BuildContext context, int index) {
   audioHandler.playIndex(index);
-  openPlayer(context);
+  openPlayerAfterPlay(context);
 }
 
 class AlexLmpRoot extends StatefulWidget {
@@ -5668,7 +5692,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   // ═══════════════════════ Desktop layout ═══════════════════════
 
-  final GlobalKey<NavigatorState> _deskNav = GlobalKey<NavigatorState>();
+  final GlobalKey<NavigatorState> _deskNav = deskContentNav;
   final ValueNotifier<int> _deskTab = ValueNotifier<int>(0);
   String _deskQuery = '';
 
@@ -6847,7 +6871,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   void _amPlay(List<TrackItem> list, int i) {
     if (list.isEmpty) return;
     audioHandler.playYouTubeList(list, i < 0 ? 0 : i);
-    openPlayer(context);
+    openPlayerAfterPlay(context);
   }
 
   void _amShuffle(List<TrackItem> list) {
@@ -7893,7 +7917,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   void _ytPlay(List<TrackItem> list, int i) {
     if (list.isEmpty) return;
     audioHandler.playYouTubeList(list, i < 0 ? 0 : i);
-    openPlayer(context);
+    openPlayerAfterPlay(context);
   }
 
   void _ytShuffle(List<TrackItem> list) {
@@ -10206,7 +10230,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           trailing: _pillButton(pal, 'Play all', () {
             if (quick.isNotEmpty) {
               audioHandler.playYouTubeList(quick, 0);
-              openPlayer(context);
+              openPlayerAfterPlay(context);
             }
           }),
         ),
@@ -12047,7 +12071,7 @@ List<Mix> buildMixes(List<TrackItem> tracks) {
 }
 
 void openMix(BuildContext context, Mix mix) {
-  Navigator.of(context).push(MaterialPageRoute(
+  contentNav(context).push(MaterialPageRoute(
     builder: (_) => MixScreen(mix: mix),
   ));
 }
@@ -12235,7 +12259,7 @@ class FeaturedMixCard extends StatelessWidget {
                   SquishyGesture(
                     onTap: () {
                       audioHandler.playYouTubeList(mix.tracks, 0);
-                      openPlayer(context);
+                      openPlayerAfterPlay(context);
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -12318,7 +12342,7 @@ class MixScreen extends StatelessWidget {
             _ytPlayButton(pal, 'Play', () {
               audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
               audioHandler.playYouTubeList(tracks, 0);
-              openPlayer(context);
+              openPlayerAfterPlay(context);
             }),
             const SizedBox(width: 10),
             SquishyGesture(
@@ -12326,7 +12350,7 @@ class MixScreen extends StatelessWidget {
                 audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
                 audioHandler.playYouTubeList(
                     tracks, Random().nextInt(tracks.length));
-                openPlayer(context);
+                openPlayerAfterPlay(context);
               },
               child: Container(
                 width: 48,
@@ -12348,7 +12372,7 @@ class MixScreen extends StatelessWidget {
             active: audioHandler.currentTrack?.id == tracks[i].id,
             onTap: () {
               audioHandler.playYouTubeList(tracks, i);
-              openPlayer(context);
+              openPlayerAfterPlay(context);
             },
             onMore: () => tracks[i].isYouTube
                 ? showYtAddToPlaylist(context, tracks[i])
@@ -12730,7 +12754,7 @@ class PlaylistDetailScreen extends StatelessWidget {
 
         void playFrom(int i) {
           audioHandler.playYouTubeList(tracks, i);
-          openPlayer(context);
+          openPlayerAfterPlay(context);
         }
 
         Widget pill(String label, IconData icon, VoidCallback onTap,
@@ -18788,7 +18812,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _playYt(TrackItem t) {
     audioHandler.playYouTubeTrack(t);
-    openPlayer(context);
+    openPlayerAfterPlay(context);
   }
 
   @override
@@ -30599,7 +30623,7 @@ class DownloadsScreen extends StatelessWidget {
         void play(int i) {
           if (list.isEmpty) return;
           audioHandler.playYouTubeList(list, i);
-          openPlayer(context);
+          openPlayerAfterPlay(context);
         }
 
         return Scaffold(
@@ -30943,7 +30967,7 @@ void openYtShelfItem(BuildContext context, YtShelfItem it) {
       openYtAlbum(context, YtAlbum(it.id, it.title, it.subtitle, it.thumbnail, -1));
       break;
     case 'playlist':
-      Navigator.of(context).push(MaterialPageRoute(
+      contentNav(context).push(MaterialPageRoute(
         builder: (_) => YtAlbumScreen(
           playlistId: it.id,
           album: YtAlbum('', it.title, it.subtitle, it.thumbnail, -1),
@@ -30962,7 +30986,7 @@ void openYtShelfItem(BuildContext context, YtShelfItem it) {
     default: // video / song
       final t = YouTubeMusic.trackFromShelf(it, it.subtitle);
       audioHandler.playYouTubeTrack(t);
-      openPlayer(context);
+      openPlayerAfterPlay(context);
   }
 }
 
@@ -31072,7 +31096,7 @@ List<Widget> ytShelfWidgets(
                       pressedScale: 0.97,
                       onTap: () {
                         audioHandler.playYouTubeList(songs, i);
-                        openPlayer(context);
+                        openPlayerAfterPlay(context);
                       },
                       child: Row(
                         children: [
@@ -31355,7 +31379,7 @@ class _ArtistAllScreenState extends State<ArtistAllScreen> {
                           TextButton.icon(
                             onPressed: () {
                               audioHandler.playYouTubeList(list, 0);
-                              openPlayer(context);
+                              openPlayerAfterPlay(context);
                             },
                             icon: const Icon(Icons.play_arrow_rounded),
                             label: const Text('Play all'),
@@ -31368,7 +31392,7 @@ class _ArtistAllScreenState extends State<ArtistAllScreen> {
                         track: list[i],
                         onTap: () {
                           audioHandler.playYouTubeList(list, i);
-                          openPlayer(context);
+                          openPlayerAfterPlay(context);
                         },
                       ),
                   ],
@@ -31380,7 +31404,7 @@ class _ArtistAllScreenState extends State<ArtistAllScreen> {
 }
 
 void openArtistAll(BuildContext context, String artist, {required bool albums}) =>
-    Navigator.of(context).push(MaterialPageRoute(
+    contentNav(context).push(MaterialPageRoute(
         builder: (_) => ArtistAllScreen(artist: artist, albums: albums)));
 
 class YtNetworkImage extends StatelessWidget {
@@ -31427,19 +31451,19 @@ class YtNetworkImage extends StatelessWidget {
 
 void openYtArtist(BuildContext context, String url, String name,
     {String? thumbnail}) {
-  Navigator.of(context).push(MaterialPageRoute(
+  contentNav(context).push(MaterialPageRoute(
     builder: (_) => YtArtistScreen(url: url, name: name, thumbnail: thumbnail),
   ));
 }
 
 void openYtAlbum(BuildContext context, YtAlbum album) {
-  Navigator.of(context).push(MaterialPageRoute(
+  contentNav(context).push(MaterialPageRoute(
     builder: (_) => YtAlbumScreen(album: album),
   ));
 }
 
 void openYtAccountPlaylist(BuildContext context, YtPlaylistRef p) {
-  Navigator.of(context).push(MaterialPageRoute(
+  contentNav(context).push(MaterialPageRoute(
     builder: (_) => YtAlbumScreen(
       playlistId: p.playlistId,
       album: YtAlbum('', p.title, p.subtitle, p.thumbnail, -1),
@@ -31474,7 +31498,7 @@ YtAlbumPage _sharedLikesPage(List<TrackItem> yt) {
 }
 
 void openSharedLikes(BuildContext context) {
-  Navigator.of(context).push(MaterialPageRoute(
+  contentNav(context).push(MaterialPageRoute(
     builder: (_) => YtAlbumScreen(
       album: const YtAlbum('', 'Shared Likes', 'This phone + YouTube Music', null, -1),
       loader: () async {
@@ -31498,7 +31522,7 @@ void openSharedLikes(BuildContext context) {
 }
 
 void openYtLikedMusic(BuildContext context) {
-  Navigator.of(context).push(MaterialPageRoute(
+  contentNav(context).push(MaterialPageRoute(
     builder: (_) => YtAlbumScreen(
       album: const YtAlbum('', 'Liked on YouTube', 'YouTube Music', null, -1),
       loader: () async {
@@ -31828,7 +31852,7 @@ class YtArtistTile extends StatelessWidget {
 
 /// Opens a YouTube Music playlist found in search.
 void openYtPlaylistRef(BuildContext context, YtPlaylistRef p) {
-  Navigator.of(context).push(MaterialPageRoute(
+  contentNav(context).push(MaterialPageRoute(
     builder: (_) => YtAlbumScreen(
       playlistId: p.playlistId,
       album: YtAlbum('', p.title, p.subtitle, p.thumbnail, -1),
@@ -32239,7 +32263,7 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
                     audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
                     _played();
                     audioHandler.playYouTubeList(tracks, 0);
-                    openPlayer(context);
+                    openPlayerAfterPlay(context);
                   }),
                   const SizedBox(width: 10),
                   _circleAction(pal, Icons.shuffle_rounded, () {
@@ -32247,7 +32271,7 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
                     _played();
                     audioHandler.playYouTubeList(
                         tracks, Random().nextInt(tracks.length));
-                    openPlayer(context);
+                    openPlayerAfterPlay(context);
                   }),
                   const SizedBox(width: 10),
                   _circleAction(pal, Icons.queue_play_next_rounded, () {
@@ -32344,7 +32368,7 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
                       onPlay: () {
                         _played();
                     audioHandler.playYouTubeList(tracks, i);
-                        openPlayer(context);
+                        openPlayerAfterPlay(context);
                       },
                     ),
             for (final sh in page.shelves) ...[
@@ -32388,7 +32412,7 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
       onTap: () {
         _played();
                     audioHandler.playYouTubeList(tracks, i);
-        openPlayer(context);
+        openPlayerAfterPlay(context);
       },
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
@@ -32475,7 +32499,7 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
     audioHandler.setShuffleMode(
         shuffle ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none);
     audioHandler.playYouTubeList(songs, i);
-    openPlayer(context);
+    openPlayerAfterPlay(context);
   }
 
   @override
@@ -32816,7 +32840,7 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
                 onTap: () {
                   final t = YouTubeMusic.trackFromShelf(it, page.name);
                   audioHandler.playYouTubeTrack(t);
-                  openPlayer(context);
+                  openPlayerAfterPlay(context);
                 },
                 child: SizedBox(
                   width: 230,
@@ -32893,7 +32917,7 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
                   } else if (it.kind == 'video') {
                     final t = YouTubeMusic.trackFromShelf(it, page.name);
                     audioHandler.playYouTubeTrack(t);
-                    openPlayer(context);
+                    openPlayerAfterPlay(context);
                   } else {
                     openYtAlbum(
                       context,
@@ -34942,12 +34966,12 @@ Future<void> downloadAndInstallUpdate(BuildContext context, AppRelease rel) asyn
 // of a pop-up list).
 
 void openLocalAlbum(BuildContext context, String album, List<TrackItem> tracks) =>
-    Navigator.of(context).push(MaterialPageRoute(
+    contentNav(context).push(MaterialPageRoute(
         builder: (_) =>
             LocalCollectionScreen(name: album, tracks: tracks, artist: false)));
 
 void openLocalArtist(BuildContext context, String artist, List<TrackItem> tracks) =>
-    Navigator.of(context).push(MaterialPageRoute(
+    contentNav(context).push(MaterialPageRoute(
         builder: (_) =>
             LocalCollectionScreen(name: artist, tracks: tracks, artist: true)));
 
@@ -34969,7 +34993,7 @@ class LocalCollectionScreen extends StatelessWidget {
     audioHandler.setShuffleMode(
         shuffle ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none);
     audioHandler.playYouTubeList(tracks, i);
-    openPlayer(context);
+    openPlayerAfterPlay(context);
   }
 
   @override
