@@ -4912,6 +4912,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   final GlobalKey<NavigatorState> _deskNav = GlobalKey<NavigatorState>();
   final ValueNotifier<int> _deskTab = ValueNotifier<int>(0);
+  String _deskQuery = '';
 
   void _deskGo(int tab) {
     _deskNav.currentState?.popUntil((r) => r.isFirst);
@@ -5009,7 +5010,23 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       );
     }
 
-    Widget home() {
+    // Apple Music style: its own Home / Radio / Library pages.
+    Widget amPage(BuildContext context, int tab) {
+      final local = audioHandler.tracks.where((t) => !t.isYouTube).toList();
+      Widget pick(AmData d) => tab == 2
+          ? _amLibrary(context, pal, d)
+          : tab == 1
+              ? _amRadio(context, pal, d)
+              : _amHome(context, pal, d);
+      return yt
+          ? _ytData((d, err, loading) =>
+              pick(_amYtData(context, d, err, loading)))
+          : pick(_amLocalData(context, local));
+    }
+
+    Widget page(BuildContext context, int tab) {
+      if (apple) return amPage(context, tab);
+      if (tab != 0) return _tabBody(context, pal, audioHandler.tracks, tab: tab);
       switch (style) {
         case 'signal':
           return _signalHome(context, pal, audioHandler.tracks);
@@ -5019,13 +5036,6 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           return _prestigeHome(context, pal, audioHandler.tracks);
         case 'pocket':
           return const PocketLibrary();
-        case 'apple':
-          final local =
-              audioHandler.tracks.where((t) => !t.isYouTube).toList();
-          return yt
-              ? _ytData((d, err, loading) =>
-                  _amHome(context, pal, _amYtData(context, d, err, loading)))
-              : _amHome(context, pal, _amLocalData(context, local));
         default:
           return _tabBody(context, pal, audioHandler.tracks, tab: 0);
       }
@@ -5122,7 +5132,78 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       );
     }
 
-    final sidebar = Padding(
+    // Pocket and Community: a slim rail instead of the full sidebar.
+    final rail = style == 'pocket' || community;
+    Widget railItem(int i, IconData icon, String label) =>
+        ValueListenableBuilder<int>(
+          valueListenable: _deskTab,
+          builder: (context, tab, _) {
+            final on = tab == i;
+            return Tooltip(
+              message: label,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () => _deskGo(i),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 220),
+                        width: 56,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: on ? pal.container : Colors.transparent,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Icon(icon,
+                            color: on ? tint : Colors.white70, size: 22),
+                      ),
+                      if (community) ...[
+                        const SizedBox(height: 4),
+                        Text(label,
+                            style: TextStyle(
+                                color: on ? Colors.white : Colors.white70,
+                                fontSize: 12,
+                                fontWeight:
+                                    on ? FontWeight.w700 : FontWeight.w500)),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+    final railBar = Container(
+      width: community ? 96 : 80,
+      color: side,
+      child: Column(
+        children: [
+          const SizedBox(height: 18),
+          SignalBars(size: 28, color: tint),
+          const SizedBox(height: 22),
+          railItem(0, Icons.home_rounded, 'Home'),
+          railItem(3, Icons.search_rounded, 'Search'),
+          railItem(1, Icons.sensors_rounded, 'Mix'),
+          railItem(2, Icons.library_music_rounded, 'Library'),
+          railItem(4, Icons.settings_rounded, 'Settings'),
+          const Spacer(),
+          IconButton(
+            tooltip: yt ? 'Switch to this computer' : 'Switch to YouTube Music',
+            icon: Icon(yt ? Icons.play_circle_rounded : Icons.computer_rounded,
+                color: tint),
+            onPressed: () {
+              _setMode(yt ? 'local' : 'youtube');
+              _deskGo(_deskTab.value);
+            },
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+
+    final sidebar = rail ? railBar : Padding(
       padding: const EdgeInsets.fromLTRB(10, 10, 0, 0),
       child: Container(
         width: 256,
@@ -5160,11 +5241,57 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 ],
               ),
             ),
-            navItem(0, Icons.home_rounded, 'Home'),
-            navItem(3, Icons.search_rounded, 'Search'),
-            navItem(1, Icons.sensors_rounded, 'Mix'),
-            navItem(2, Icons.library_music_rounded, 'Library'),
-            navItem(4, Icons.settings_rounded, 'Settings'),
+            if (apple) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                child: TextField(
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: 'Search',
+                    isDense: true,
+                    prefixIcon: const Icon(Icons.search_rounded,
+                        color: Colors.white54, size: 20),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.08),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none),
+                  ),
+                  onSubmitted: (q) {
+                    _deskQuery = q.trim();
+                    _deskNav.currentState?.popUntil((r) => r.isFirst);
+                    _deskTab.value = -1;
+                    _deskTab.value = 3;
+                  },
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(26, 4, 16, 4),
+                child: Text('Apple Music',
+                    style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600)),
+              ),
+              navItem(0, Icons.home_rounded, 'Home'),
+              navItem(1, Icons.radio_rounded, 'Radio'),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(26, 12, 16, 4),
+                child: Text('Library',
+                    style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600)),
+              ),
+              navItem(2, Icons.library_music_rounded, 'Library'),
+              navItem(4, Icons.settings_rounded, 'Settings'),
+            ] else ...[
+              navItem(0, Icons.home_rounded, 'Home'),
+              navItem(3, Icons.search_rounded, 'Search'),
+              navItem(1, Icons.sensors_rounded, 'Mix'),
+              navItem(2, Icons.library_music_rounded, 'Library'),
+              navItem(4, Icons.settings_rounded, 'Settings'),
+            ],
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 16, 14, 4),
               child: sourceSwitch(),
@@ -5254,7 +5381,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             builder: (context, _) {
               switch (tab) {
                 case 3:
-                  return const SearchScreen();
+                  return SearchScreen(
+                      key: ValueKey('q$_deskQuery'),
+                      initialQuery: _deskQuery.isEmpty ? null : _deskQuery);
                 case 4:
                   return const SettingsScreen();
                 default:
@@ -5262,9 +5391,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     backgroundColor: bg,
                     body: SafeArea(
                       bottom: false,
-                      child: tab == 0
-                          ? home()
-                          : _tabBody(context, pal, audioHandler.tracks, tab: tab),
+                      child: page(context, tab),
                     ),
                   );
               }
@@ -5293,7 +5420,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 child: Row(
                   children: [
                     sidebar,
-                    const SizedBox(width: 10),
+                    SizedBox(width: rail ? 0 : 10),
                     Expanded(
                       child: ClipRRect(
                         borderRadius: const BorderRadius.only(
@@ -5318,6 +5445,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               DesktopPlayerBar(
                 background: signal ? kSigS2 : side,
                 accent: tint,
+                bars: signal || plus,
               ),
             ],
           ),
@@ -34465,11 +34593,12 @@ class _DeskSeekPainter extends CustomPainter {
   final double v;
   final Color accent;
   final bool dragging;
-  _DeskSeekPainter(this.v, this.accent, this.dragging);
+  final double thickness;
+  _DeskSeekPainter(this.v, this.accent, this.dragging, [this.thickness = 4]);
 
   @override
   void paint(Canvas canvas, Size s) {
-    final h = dragging ? 6.0 : 4.0;
+    final h = dragging ? thickness + 2 : thickness;
     final y = s.height / 2;
     final r = Radius.circular(h / 2);
     canvas.drawRRect(
@@ -34492,7 +34621,10 @@ class _DeskSeekPainter extends CustomPainter {
 class DesktopPlayerBar extends StatelessWidget {
   final Color? background;
   final Color? accent;
-  const DesktopPlayerBar({super.key, this.background, this.accent});
+  /// Signal / PLUS: the logo-bar scrubber.
+  final bool bars;
+  const DesktopPlayerBar(
+      {super.key, this.background, this.accent, this.bars = false});
 
   @override
   Widget build(BuildContext context) {
@@ -34696,8 +34828,11 @@ class DesktopPlayerBar extends StatelessWidget {
                   fontSize: 11.5,
                   fontFeatures: [ui.FontFeature.tabularFigures()]),
               showTimes: false,
-              track: (v, dragging) =>
-                  CustomPaint(painter: _DeskSeekPainter(v, tint, dragging)),
+              track: (v, dragging) => CustomPaint(
+                  painter: bars
+                      ? _PlusSeekPainter(v, dragging,
+                          _plusBars(t?.id ?? item?.id ?? 'x', 90), tint)
+                      : _DeskSeekPainter(v, tint, dragging)),
             ),
           )
         : const SizedBox(height: 26);
@@ -34805,6 +34940,21 @@ class DesktopNowPlaying extends StatefulWidget {
 
 class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
   late int _panel = widget.panel;
+
+  static double _playRadius(String ps, bool playing) {
+    switch (ps) {
+      case 'signal':
+        return playing ? 30 : 44;
+      case 'plus':
+        return 24;
+      case 'expressive':
+        return 44;
+      case 'apple':
+        return 44;
+      default:
+        return playing ? 28 : 44;
+    }
+  }
   static final Map<String, List<double>> _bars = {};
   double _lastVolume = 1.0;
 
@@ -34837,10 +34987,38 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
   }
 
   Widget _body(BuildContext context, TrackItem t, Color seed) {
-    final signal = appState.playerStyle == 'signal';
+    // Each player style gets its own wide look.
+    final ps = appState.playerStyle;
+    final signal = ps == 'signal';
+    final applePs = ps == 'apple';
     final cs = AppPalette.scheme(seed);
-    final accent = signal ? appState.palette.accent : cs.primary;
-    final onAccent = signal ? appState.palette.onAccent : cs.onPrimary;
+    final accent = signal
+        ? appState.palette.accent
+        : applePs
+            ? kAmTint
+            : cs.primary;
+    final onAccent = signal
+        ? appState.palette.onAccent
+        : applePs
+            ? Colors.white
+            : cs.onPrimary;
+    final artR = const {
+          'signal': 32.0,
+          'plus': 24.0,
+          'modern': 20.0,
+          'expressive': 48.0,
+          'apple': 12.0,
+          'simp': 18.0,
+          'jog': 999.0,
+        }[ps] ??
+        28.0;
+    final barsScrub = signal || ps == 'plus';
+    final thick = ps == 'expressive' || ps == 'modern' ? 8.0 : 4.0;
+    final centered = applePs || ps == 'modern' || ps == 'jog';
+    final blurBg = !(signal || ps == 'modern' || ps == 'jog');
+    final solidBg = signal || ps == 'jog'
+        ? kSigInk
+        : Color.lerp(Colors.black, seed, 0.38)!;
     final liked = appState.isLiked(t.id);
     final bars = _bars.putIfAbsent(t.id, () => _plusBars(t.id, 64));
     TextStyle head(double size) => signal
@@ -34882,8 +35060,9 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
         );
 
     final left = LayoutBuilder(builder: (context, c) {
-      final art = min(c.maxWidth - 80, c.maxHeight - 330).clamp(200.0, 560.0);
+      final art = min(c.maxWidth - 80, c.maxHeight - 480).clamp(160.0, 560.0);
       return Center(
+        child: SingleChildScrollView(
         child: SizedBox(
           width: max(art, 360.0),
           child: Column(
@@ -34895,7 +35074,7 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
                   width: art,
                   height: art,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(signal ? 32 : 28),
+                    borderRadius: BorderRadius.circular(min(artR, art / 2)),
                     boxShadow: [
                       BoxShadow(
                           color: seed.withOpacity(0.35),
@@ -34908,7 +35087,7 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
                     ],
                   ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(signal ? 32 : 28),
+                    borderRadius: BorderRadius.circular(min(artR, art / 2)),
                     child: CustomAlbumArtwork(track: t),
                   ),
                 ),
@@ -34919,7 +35098,9 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
                 children: [
                   Expanded(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: centered
+                          ? CrossAxisAlignment.center
+                          : CrossAxisAlignment.start,
                       children: [
                         MouseRegion(
                           cursor: SystemMouseCursors.click,
@@ -34948,7 +35129,7 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
                       ],
                     ),
                   ),
-                  IconButton.filledTonal(
+                  if (!centered) IconButton.filledTonal(
                     iconSize: 26,
                     tooltip: liked ? 'Unlike' : 'Like',
                     style: IconButton.styleFrom(
@@ -34967,16 +35148,16 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
               const SizedBox(height: 18),
               PlayerSeek(
                 fallbackSeconds: t.durationSeconds,
-                height: signal ? 32 : 26,
+                height: barsScrub ? 32 : 26,
                 timeStyle: const TextStyle(
                     color: Colors.white60,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                     fontFeatures: [ui.FontFeature.tabularFigures()]),
                 track: (v, dragging) => CustomPaint(
-                  painter: signal
+                  painter: barsScrub
                       ? _PlusSeekPainter(v, dragging, bars, accent)
-                      : _DeskSeekPainter(v, accent, dragging),
+                      : _DeskSeekPainter(v, accent, dragging, thick),
                 ),
               ),
               const SizedBox(height: 10),
@@ -35012,19 +35193,19 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
                       Tooltip(
                         message: playing ? 'Pause (Space)' : 'Play (Space)',
                         child: Material(
-                          color: accent,
+                          color: applePs ? Colors.transparent : accent,
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(
-                                  playing ? 28 : 44)),
+                                  _playRadius(ps, playing))),
                           child: InkWell(
                             customBorder: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(
-                                    playing ? 28 : 44)),
+                                    _playRadius(ps, playing))),
                             onTap: () => playing
                                 ? audioHandler.pause()
                                 : audioHandler.play(),
                             child: SizedBox(
-                              width: 88,
+                              width: ps == 'expressive' ? 132 : 88,
                               height: 88,
                               child: Icon(
                                   playing
@@ -35137,10 +35318,15 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
                           ? showYtAddToPlaylist(context, t)
                           : showAddToPlaylistSheet(context, t)),
                   pill(Icons.ios_share_rounded, 'Share', () => shareTrack(t)),
+                  if (centered)
+                    pill(liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                        liked ? 'Liked' : 'Like', () => appState.toggleLike(t.id),
+                        on: liked),
                 ],
               ),
             ],
           ),
+        ),
         ),
       );
     });
@@ -35166,8 +35352,11 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          PrestigeBackdrop(track: t, dim: 0.5, animate: false),
-          DecoratedBox(
+          if (blurBg)
+            PrestigeBackdrop(track: t, dim: applePs ? 0.35 : 0.5, animate: false)
+          else
+            ColoredBox(color: solidBg),
+          if (blurBg) DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.centerLeft,
