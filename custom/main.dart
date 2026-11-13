@@ -17321,7 +17321,9 @@ class _GlowPainter extends CustomPainter {
 }
 
 class QueueScreen extends StatefulWidget {
-  const QueueScreen({super.key});
+  /// Inside the desktop player: just the list.
+  final bool embedded;
+  const QueueScreen({super.key, this.embedded = false});
 
   @override
   State<QueueScreen> createState() => _QueueScreenState();
@@ -17402,6 +17404,7 @@ class _QueueScreenState extends State<QueueScreen> {
         ),
       ),
     );
+    if (widget.embedded) return _queueBody();
     return AnimatedContainer(
       duration: _drag == 0 ? const Duration(milliseconds: 220) : Duration.zero,
       curve: Curves.easeOutCubic,
@@ -20461,7 +20464,9 @@ void showLyricsSheet(BuildContext context, TrackItem t) {
 
 class LyricsScreen extends StatefulWidget {
   final TrackItem track;
-  const LyricsScreen({super.key, required this.track});
+  /// Inside the desktop player: no header, transparent background.
+  final bool embedded;
+  const LyricsScreen({super.key, required this.track, this.embedded = false});
 
   @override
   State<LyricsScreen> createState() => _LyricsScreenState();
@@ -20498,8 +20503,10 @@ class _LyricsScreenState extends State<LyricsScreen> {
           builder: (context, seedSnap) {
             final cs = AppPalette.scheme(seedSnap.data ?? t.artColors.first);
             return Scaffold(
-              backgroundColor: Color.lerp(cs.surface, cs.primary, 0.12),
-              appBar: AppBar(
+              backgroundColor: widget.embedded
+                  ? Colors.transparent
+                  : Color.lerp(cs.surface, cs.primary, 0.12),
+              appBar: widget.embedded ? null : AppBar(
                 backgroundColor: Colors.transparent,
                 foregroundColor: cs.onSurface,
                 actions: [
@@ -34785,8 +34792,9 @@ class DesktopPlayerBar extends StatelessWidget {
   }
 }
 
-/// Wide Now Playing: artwork and controls on the left, lyrics or the queue
-/// on the right.
+/// Wide Now Playing made for desktop: one screen, artwork and controls on
+/// the left, lyrics or Up next flowing on the right. Colours come from the
+/// song's artwork; the Signal player style keeps its own look.
 class DesktopNowPlaying extends StatefulWidget {
   final int panel;
   const DesktopNowPlaying({super.key, this.panel = 0});
@@ -34797,14 +34805,16 @@ class DesktopNowPlaying extends StatefulWidget {
 
 class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
   late int _panel = widget.panel;
+  static final Map<String, List<double>> _bars = {};
 
   @override
   Widget build(BuildContext context) {
-    final pal = appState.palette;
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): () =>
             Navigator.of(context).maybePop(),
+        const SingleActivator(LogicalKeyboardKey.space): () =>
+            audioHandler.player.playing ? audioHandler.pause() : audioHandler.play(),
       },
       child: Focus(
         autofocus: true,
@@ -34813,121 +34823,392 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
           builder: (context, _) {
             final t = audioHandler.currentTrack;
             if (t == null) return const Scaffold(backgroundColor: Colors.black);
-            return Scaffold(
-              backgroundColor: Colors.black,
-              body: Stack(
-                fit: StackFit.expand,
-                children: [
-                  PrestigeBackdrop(track: t, dim: 0.62, animate: false),
-                  SafeArea(
-                    child: Column(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                          child: Row(
-                            children: [
-                              IconButton(
-                                tooltip: 'Close (Esc)',
-                                icon: const Icon(Icons.keyboard_arrow_down_rounded,
-                                    color: Colors.white, size: 32),
-                                onPressed: () => Navigator.of(context).pop(),
-                              ),
-                              const Spacer(),
-                              SegmentedButton<int>(
-                                segments: const [
-                                  ButtonSegment(
-                                      value: 0,
-                                      icon: Icon(Icons.lyrics_outlined),
-                                      label: Text('Lyrics')),
-                                  ButtonSegment(
-                                      value: 1,
-                                      icon: Icon(Icons.queue_music_rounded),
-                                      label: Text('Up next')),
-                                ],
-                                selected: {_panel},
-                                onSelectionChanged: (s) =>
-                                    setState(() => _panel = s.first),
-                              ),
-                              const SizedBox(width: 8),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: Row(
-                            children: [
-                              // The player style you picked in Settings, as a
-                              // tall column (same controls and gestures).
-                              Expanded(
-                                flex: 5,
-                                child: LayoutBuilder(builder: (context, box) {
-                                  final w = min(box.maxWidth - 48, 470.0);
-                                  final h = box.maxHeight - 24;
-                                  final mq = MediaQuery.of(context);
-                                  return Center(
-                                    child: Container(
-                                      width: w,
-                                      height: h,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(30),
-                                        boxShadow: const [
-                                          BoxShadow(
-                                              color: Color(0x99000000),
-                                              blurRadius: 50,
-                                              offset: Offset(0, 24)),
-                                        ],
-                                      ),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(30),
-                                        child: MediaQuery(
-                                          data: mq.copyWith(
-                                            size: Size(w, h),
-                                            padding: EdgeInsets.zero,
-                                            viewPadding: EdgeInsets.zero,
-                                            viewInsets: EdgeInsets.zero,
-                                          ),
-                                          child: const NowPlayingScreen(),
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                }),
-                              ),
-                              // Lyrics / queue
-                              Expanded(
-                                flex: 4,
-                                child: Padding(
-                                  padding: const EdgeInsets.fromLTRB(0, 12, 24, 24),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(24),
-                                    child: Container(
-                                      color: Colors.black.withOpacity(0.35),
-                                      child: _panel == 0
-                                          ? LyricsScreen(
-                                              key: ValueKey('ly${t.id}'), track: t)
-                                          : const QueueScreen(),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+            return FutureBuilder<Color>(
+              future: artSeedFor(t),
+              initialData: artSeedNow(t),
+              builder: (context, snap) =>
+                  _body(context, t, snap.data ?? t.artColors.first),
             );
           },
         ),
       ),
     );
   }
+
+  Widget _body(BuildContext context, TrackItem t, Color seed) {
+    final signal = appState.playerStyle == 'signal';
+    final cs = AppPalette.scheme(seed);
+    final accent = signal ? appState.palette.accent : cs.primary;
+    final onAccent = signal ? appState.palette.onAccent : cs.onPrimary;
+    final liked = appState.isLiked(t.id);
+    final bars = _bars.putIfAbsent(t.id, () => _plusBars(t.id, 64));
+    TextStyle head(double size) => signal
+        ? sigHead(size)
+        : TextStyle(
+            color: Colors.white,
+            fontSize: size,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.02 * size,
+            height: 1.1);
+
+    Widget pill(IconData icon, String label, VoidCallback onTap,
+            {bool on = false}) =>
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: Material(
+            color: on ? accent.withOpacity(0.22) : Colors.white.withOpacity(0.07),
+            borderRadius: BorderRadius.circular(999),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: 18, color: on ? accent : Colors.white),
+                    const SizedBox(width: 7),
+                    Text(label,
+                        style: TextStyle(
+                            color: on ? accent : Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+
+    final left = LayoutBuilder(builder: (context, c) {
+      final art = min(c.maxWidth - 80, c.maxHeight - 330).clamp(200.0, 560.0);
+      return Center(
+        child: SizedBox(
+          width: max(art, 360.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: art,
+                  height: art,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(signal ? 32 : 28),
+                    boxShadow: [
+                      BoxShadow(
+                          color: seed.withOpacity(0.35),
+                          blurRadius: 60,
+                          offset: const Offset(0, 26)),
+                      const BoxShadow(
+                          color: Color(0x88000000),
+                          blurRadius: 30,
+                          offset: Offset(0, 12)),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(signal ? 32 : 28),
+                    child: CustomAlbumArtwork(track: t),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 28),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: GestureDetector(
+                            onTap: () => goToAlbum(context, t),
+                            child: Text(t.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: head(30)),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: GestureDetector(
+                            onTap: () => goToArtist(context, t),
+                            child: Text(t.artist,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: accent,
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w600)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton.filledTonal(
+                    iconSize: 26,
+                    tooltip: liked ? 'Unlike' : 'Like',
+                    style: IconButton.styleFrom(
+                      backgroundColor:
+                          liked ? accent : Colors.white.withOpacity(0.08),
+                      foregroundColor: liked ? onAccent : Colors.white,
+                      minimumSize: const Size(52, 52),
+                    ),
+                    onPressed: () => appState.toggleLike(t.id),
+                    icon: Icon(liked
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              PlayerSeek(
+                fallbackSeconds: t.durationSeconds,
+                height: signal ? 32 : 26,
+                timeStyle: const TextStyle(
+                    color: Colors.white60,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: [ui.FontFeature.tabularFigures()]),
+                track: (v, dragging) => CustomPaint(
+                  painter: signal
+                      ? _PlusSeekPainter(v, dragging, bars, accent)
+                      : _DeskSeekPainter(v, accent, dragging),
+                ),
+              ),
+              const SizedBox(height: 10),
+              StreamBuilder<PlaybackState>(
+                stream: audioHandler.playbackState,
+                builder: (context, snap) {
+                  final st = snap.data;
+                  final playing = st?.playing ?? false;
+                  final shuffle = st?.shuffleMode == AudioServiceShuffleMode.all;
+                  final repeat = st?.repeatMode ?? AudioServiceRepeatMode.none;
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        iconSize: 26,
+                        tooltip: 'Shuffle',
+                        icon: Icon(Icons.shuffle_rounded,
+                            color: shuffle ? accent : Colors.white60),
+                        onPressed: () => audioHandler.setShuffleMode(shuffle
+                            ? AudioServiceShuffleMode.none
+                            : AudioServiceShuffleMode.all),
+                      ),
+                      IconButton.filledTonal(
+                        iconSize: 34,
+                        tooltip: 'Previous',
+                        style: IconButton.styleFrom(
+                            backgroundColor: Colors.white.withOpacity(0.08),
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(64, 64)),
+                        icon: const Icon(Icons.skip_previous_rounded),
+                        onPressed: audioHandler.skipToPrevious,
+                      ),
+                      Tooltip(
+                        message: playing ? 'Pause (Space)' : 'Play (Space)',
+                        child: Material(
+                          color: accent,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(
+                                  playing ? 28 : 44)),
+                          child: InkWell(
+                            customBorder: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                    playing ? 28 : 44)),
+                            onTap: () => playing
+                                ? audioHandler.pause()
+                                : audioHandler.play(),
+                            child: SizedBox(
+                              width: 88,
+                              height: 88,
+                              child: Icon(
+                                  playing
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  color: onAccent,
+                                  size: 48),
+                            ),
+                          ),
+                        ),
+                      ),
+                      IconButton.filledTonal(
+                        iconSize: 34,
+                        tooltip: 'Next',
+                        style: IconButton.styleFrom(
+                            backgroundColor: Colors.white.withOpacity(0.08),
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(64, 64)),
+                        icon: const Icon(Icons.skip_next_rounded),
+                        onPressed: audioHandler.skipToNext,
+                      ),
+                      IconButton(
+                        iconSize: 26,
+                        tooltip: 'Repeat',
+                        icon: Icon(
+                            repeat == AudioServiceRepeatMode.one
+                                ? Icons.repeat_one_rounded
+                                : Icons.repeat_rounded,
+                            color: repeat == AudioServiceRepeatMode.none
+                                ? Colors.white60
+                                : accent),
+                        onPressed: () =>
+                            audioHandler.setRepeatMode(_nextRepeat(repeat)),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 18),
+              Wrap(
+                runSpacing: 8,
+                children: [
+                  pill(Icons.graphic_eq_rounded, 'Sound',
+                      () => showPlaybackSheet(context), on: soundModified),
+                  ValueListenableBuilder<String?>(
+                    valueListenable: audioHandler.sleepLabel,
+                    builder: (_, label, __) => pill(Icons.bedtime_outlined,
+                        label ?? 'Sleep', () => showSleepTimerSheet(context),
+                        on: label != null),
+                  ),
+                  pill(Icons.playlist_add_rounded, 'Add to playlist',
+                      () => t.isYouTube
+                          ? showYtAddToPlaylist(context, t)
+                          : showAddToPlaylistSheet(context, t)),
+                  pill(Icons.ios_share_rounded, 'Share', () => shareTrack(t)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+
+    final right = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(_panel == 0 ? 'Lyrics' : 'Up next', style: head(24)),
+        const SizedBox(height: 8),
+        Expanded(
+          child: Theme(
+            data: Theme.of(context).copyWith(colorScheme: cs),
+            child: _panel == 0
+                ? LyricsScreen(key: ValueKey('ly${t.id}'), track: t, embedded: true)
+                : const QueueScreen(embedded: true),
+          ),
+        ),
+      ],
+    );
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          PrestigeBackdrop(track: t, dim: 0.5, animate: false),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  Color.lerp(Colors.black, seed, 0.25)!.withOpacity(0.55),
+                  Colors.black.withOpacity(0.78),
+                ],
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Column(
+              children: [
+                // One bar across the top.
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 20, 0),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Close (Esc)',
+                        icon: const Icon(Icons.keyboard_arrow_down_rounded,
+                            color: Colors.white, size: 32),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SignalBars(size: 15, color: accent),
+                            const SizedBox(width: 8),
+                            Text(
+                                liked
+                                    ? 'Playing from Your likes'
+                                    : t.isYouTube
+                                        ? 'Playing from YouTube Music'
+                                        : 'Playing from this computer',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      const Spacer(),
+                      SegmentedButton<int>(
+                        style: SegmentedButton.styleFrom(
+                          selectedBackgroundColor: accent,
+                          selectedForegroundColor: onAccent,
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white24),
+                        ),
+                        showSelectedIcon: false,
+                        segments: const [
+                          ButtonSegment(
+                              value: 0,
+                              icon: Icon(Icons.lyrics_outlined),
+                              label: Text('Lyrics')),
+                          ButtonSegment(
+                              value: 1,
+                              icon: Icon(Icons.queue_music_rounded),
+                              label: Text('Up next')),
+                        ],
+                        selected: {_panel},
+                        onSelectionChanged: (v) =>
+                            setState(() => _panel = v.first),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(40, 12, 40, 28),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(flex: 5, child: left),
+                        const SizedBox(width: 48),
+                        Expanded(flex: 6, child: right),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-/// YouTube Music on a computer: the same YouTube Music bridge the phone app
-/// uses, running as a small Java helper next to AlexLMP. One request per
-/// line in, one reply per line out.
 class YtHelper {
   static Process? _proc;
   static int _next = 1;
