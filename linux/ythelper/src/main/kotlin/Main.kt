@@ -48,6 +48,17 @@ fun main() {
         val req = try { JSONObject(line) } catch (_: Exception) { return@forEachLine }
         val id = req.optLong("id")
         val call = MethodCall(req.optString("method"), fromJson(req.opt("args")))
+        // Desktop sign-in: the sign-in window hands its cookies over here.
+        if (call.method == "ytSaveCookies") {
+            val c = call.argument<String>("cookies") ?: ""
+            if (c.contains("SAPISID=")) {
+                Account.saveCookies(c)
+                send(JSONObject().put("id", id).put("ok", true))
+            } else {
+                send(JSONObject().put("id", id).put("ok", false))
+            }
+            return@forEachLine
+        }
         try {
             YtMusicBridge.handle(call, object : MethodChannel.Result {
                 override fun success(result: Any?) = send(JSONObject().put("id", id).put("ok", toJson(result)))

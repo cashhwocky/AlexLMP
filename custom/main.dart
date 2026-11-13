@@ -4916,32 +4916,82 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   Widget _desktopScaffold(
       BuildContext context, AppPalette pal, List<TrackItem> tracks) {
     final yt = appState.homeMode == 'youtube';
+    // Your app style (Settings > Appearance) shapes the desktop too.
+    final style = appState.appStyle;
+    final signal = style == 'signal';
+    final apple = style == 'apple';
+    final plus = style == 'plus';
+    final community = appState.community;
+    final bg = signal ? kSigInk : pal.bg;
+    final side = signal ? kSigS1 : (apple ? const Color(0xFF1C1C1E) : pal.surface);
+    final tint = apple ? kAmTint : pal.accent;
 
     Widget navItem(int i, IconData icon, String label) {
       return ValueListenableBuilder<int>(
         valueListenable: _deskTab,
         builder: (context, tab, _) {
           final on = tab == i;
+          final Color fill = !on
+              ? Colors.transparent
+              : plus
+                  ? pal.accent
+                  : (signal || apple)
+                      ? Colors.transparent
+                      : community
+                          ? pal.container
+                          : style == 'prestige'
+                              ? Colors.white10
+                              : pal.container;
+          final fg = !on
+              ? Colors.white70
+              : plus
+                  ? pal.onAccent
+                  : apple
+                      ? kAmTint
+                      : Colors.white;
+          final iconColor = !on
+              ? Colors.white70
+              : plus
+                  ? pal.onAccent
+                  : tint;
+          final radius = BorderRadius.circular(
+              community || plus ? 999 : (style == 'prestige' ? 10 : 14));
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
             child: Material(
-              color: on ? pal.container : Colors.transparent,
-              borderRadius: BorderRadius.circular(14),
+              color: fill,
+              borderRadius: radius,
               child: InkWell(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: radius,
                 onTap: () => _deskGo(i),
                 child: SizedBox(
                   height: 46,
                   child: Row(
                     children: [
-                      const SizedBox(width: 14),
-                      Icon(icon, color: on ? pal.accent : Colors.white70, size: 22),
+                      // Signal marks the open tab with the logo bars.
+                      SizedBox(
+                        width: 14,
+                        child: signal && on
+                            ? Container(
+                                width: 3,
+                                height: 22,
+                                margin: const EdgeInsets.only(right: 11),
+                                decoration: BoxDecoration(
+                                    color: pal.accent,
+                                    borderRadius: BorderRadius.circular(2)))
+                            : null,
+                      ),
+                      Icon(icon, color: iconColor, size: 22),
                       const SizedBox(width: 14),
                       Text(label,
-                          style: TextStyle(
-                              color: on ? Colors.white : Colors.white70,
-                              fontSize: 15,
-                              fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
+                          style: (signal
+                                  ? sigHead(16, color: fg, weight: on ? FontWeight.w700 : FontWeight.w500)
+                                  : TextStyle(
+                                      color: fg,
+                                      fontSize: 15,
+                                      fontWeight:
+                                          on ? FontWeight.w700 : FontWeight.w500))
+                              .copyWith(height: 1.1)),
                     ],
                   ),
                 ),
@@ -4950,6 +5000,28 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           );
         },
       );
+    }
+
+    Widget home() {
+      switch (style) {
+        case 'signal':
+          return _signalHome(context, pal, audioHandler.tracks);
+        case 'plus':
+          return _plusHome(context, pal, audioHandler.tracks);
+        case 'prestige':
+          return _prestigeHome(context, pal, audioHandler.tracks);
+        case 'pocket':
+          return const PocketLibrary();
+        case 'apple':
+          final local =
+              audioHandler.tracks.where((t) => !t.isYouTube).toList();
+          return yt
+              ? _ytData((d, err, loading) =>
+                  _amHome(context, pal, _amYtData(context, d, err, loading)))
+              : _amHome(context, pal, _amLocalData(context, local));
+        default:
+          return _tabBody(context, pal, audioHandler.tracks, tab: 0);
+      }
     }
 
     Widget sideRow(Widget cover, String title, String sub, VoidCallback onTap) {
@@ -4995,7 +5067,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
     final sidebar = Container(
       width: 264,
-      color: pal.surface,
+      color: side,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -5003,14 +5075,16 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             padding: const EdgeInsets.fromLTRB(24, 26, 20, 18),
             child: Row(
               children: [
-                SignalBars(size: 30, color: pal.accent),
+                SignalBars(size: 30, color: tint),
                 const SizedBox(width: 12),
-                const Text('AlexLMP',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4)),
+                Text('AlexLMP',
+                    style: signal
+                        ? sigHead(23)
+                        : const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.4)),
               ],
             ),
           ),
@@ -5102,10 +5176,12 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   return const SettingsScreen();
                 default:
                   return Scaffold(
-                    backgroundColor: pal.bg,
+                    backgroundColor: bg,
                     body: SafeArea(
                       bottom: false,
-                      child: _tabBody(context, pal, audioHandler.tracks, tab: tab),
+                      child: tab == 0
+                          ? home()
+                          : _tabBody(context, pal, audioHandler.tracks, tab: tab),
                     ),
                   );
               }
@@ -5127,7 +5203,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       child: Focus(
         autofocus: true,
         child: Scaffold(
-          backgroundColor: pal.bg,
+          backgroundColor: bg,
           body: Column(
             children: [
               Expanded(
@@ -5139,7 +5215,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   ],
                 ),
               ),
-              const DesktopPlayerBar(),
+              DesktopPlayerBar(
+                background: signal ? kSigS2 : side,
+                accent: tint,
+              ),
             ],
           ),
         ),
@@ -34163,6 +34242,7 @@ class _DesktopAwareChannel extends MethodChannel {
   Future<T?> invokeMethod<T>(String method, [dynamic arguments]) async {
     if (!isDesktop) return super.invokeMethod<T>(method, arguments);
     if (name == 'com.alexlmp.app/ytmusic') {
+      if (method == 'ytSignIn') return await _desktopSignIn() as T?;
       return await YtHelper.call(method, arguments) as T?;
     }
     switch (method) {
@@ -34189,6 +34269,29 @@ class _DesktopAwareChannel extends MethodChannel {
       return null;
     }
   }
+}
+
+/// Opens the Google sign-in window (linux/login.py). Pick any account; when
+/// YouTube Music is signed in, its cookies go to the YouTube Music helper.
+Future<bool> _desktopSignIn() async {
+  final script = p.join(p.dirname(Platform.resolvedExecutable), 'login.py');
+  if (!await File(script).exists()) {
+    throw PlatformException(
+        code: 'YT_SIGNIN', message: 'The sign-in window is missing ($script)');
+  }
+  final r = await Process.run('python3', [script]);
+  final cookies = (r.stdout as String).trim();
+  if (r.exitCode != 0 || !cookies.contains('SAPISID=')) {
+    final err = (r.stderr as String).trim();
+    if (err.contains('Namespace') || err.contains('No module named')) {
+      throw PlatformException(
+          code: 'YT_SIGNIN',
+          message:
+              'The sign-in window needs WebKitGTK: sudo apt install python3-gi gir1.2-webkit2-4.1 ($err)');
+    }
+    return false; // window closed without signing in
+  }
+  return await YtHelper.call('ytSaveCookies', {'cookies': cookies}) == true;
 }
 
 const _kAudioExt = {
@@ -34275,11 +34378,14 @@ class _DeskSeekPainter extends CustomPainter {
 /// Bottom player bar: song on the left, controls and seek in the middle,
 /// lyrics / queue / volume / full player on the right.
 class DesktopPlayerBar extends StatelessWidget {
-  const DesktopPlayerBar({super.key});
+  final Color? background;
+  final Color? accent;
+  const DesktopPlayerBar({super.key, this.background, this.accent});
 
   @override
   Widget build(BuildContext context) {
     final pal = appState.palette;
+    final tint = accent ?? pal.accent;
     return ValueListenableBuilder<int>(
       valueListenable: audioHandler.currentIndex,
       builder: (context, _, __) {
@@ -34288,7 +34394,7 @@ class DesktopPlayerBar extends StatelessWidget {
           height: 96,
           padding: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
-            color: pal.surface,
+            color: background ?? pal.surface,
             border: const Border(top: BorderSide(color: Colors.white10)),
           ),
           child: Row(
@@ -34346,7 +34452,7 @@ class DesktopPlayerBar extends StatelessWidget {
                                         liked
                                             ? Icons.favorite_rounded
                                             : Icons.favorite_border_rounded,
-                                        color: liked ? pal.accent : Colors.white70),
+                                        color: liked ? tint : Colors.white70),
                                   );
                                 },
                               ),
@@ -34375,7 +34481,7 @@ class DesktopPlayerBar extends StatelessWidget {
                             IconButton(
                               tooltip: 'Shuffle',
                               icon: Icon(Icons.shuffle_rounded,
-                                  color: shuffle ? pal.accent : Colors.white60),
+                                  color: shuffle ? tint : Colors.white60),
                               onPressed: () => audioHandler.setShuffleMode(shuffle
                                   ? AudioServiceShuffleMode.none
                                   : AudioServiceShuffleMode.all),
@@ -34399,7 +34505,7 @@ class DesktopPlayerBar extends StatelessWidget {
                                   width: 48,
                                   height: 48,
                                   decoration: BoxDecoration(
-                                      color: pal.accent, shape: BoxShape.circle),
+                                      color: tint, shape: BoxShape.circle),
                                   child: Icon(
                                       playing
                                           ? Icons.pause_rounded
@@ -34425,7 +34531,7 @@ class DesktopPlayerBar extends StatelessWidget {
                                       : Icons.repeat_rounded,
                                   color: repeat == AudioServiceRepeatMode.none
                                       ? Colors.white60
-                                      : pal.accent),
+                                      : tint),
                               onPressed: () =>
                                   audioHandler.setRepeatMode(_nextRepeat(repeat)),
                             ),
@@ -34445,7 +34551,7 @@ class DesktopPlayerBar extends StatelessWidget {
                               fontFeatures: [ui.FontFeature.tabularFigures()]),
                           showTimes: false,
                           track: (v, dragging) => CustomPaint(
-                              painter: _DeskSeekPainter(v, pal.accent, dragging)),
+                              painter: _DeskSeekPainter(v, tint, dragging)),
                         ),
                       ),
                   ],
@@ -34483,7 +34589,7 @@ class DesktopPlayerBar extends StatelessWidget {
                           ),
                           child: Slider(
                             value: (snap.data ?? 1).clamp(0.0, 1.0),
-                            activeColor: pal.accent,
+                            activeColor: tint,
                             inactiveColor: Colors.white24,
                             onChanged: (v) => audioHandler.player.setVolume(v),
                           ),
@@ -34577,151 +34683,38 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
                         Expanded(
                           child: Row(
                             children: [
-                              // Artwork + controls
+                              // The player style you picked in Settings, as a
+                              // tall column (same controls and gestures).
                               Expanded(
                                 flex: 5,
-                                child: LayoutBuilder(builder: (context, c) {
-                                  final art = min(c.maxWidth * 0.72, c.maxHeight - 240)
-                                      .clamp(180.0, 560.0);
+                                child: LayoutBuilder(builder: (context, box) {
+                                  final w = min(box.maxWidth - 48, 470.0);
+                                  final h = box.maxHeight - 24;
+                                  final mq = MediaQuery.of(context);
                                   return Center(
-                                    child: SizedBox(
-                                      width: art,
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Container(
-                                            width: art,
-                                            height: art,
-                                            decoration: BoxDecoration(
-                                              borderRadius: BorderRadius.circular(26),
-                                              boxShadow: const [
-                                                BoxShadow(
-                                                    color: Color(0x99000000),
-                                                    blurRadius: 50,
-                                                    offset: Offset(0, 24)),
-                                              ],
-                                            ),
-                                            child: ClipRRect(
-                                              borderRadius: BorderRadius.circular(26),
-                                              child: CustomAlbumArtwork(track: t),
-                                            ),
-                                          ),
-                                          const SizedBox(height: 24),
-                                          Row(
-                                            children: [
-                                              Expanded(
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    GestureDetector(
-                                                      onTap: () => goToAlbum(context, t),
-                                                      child: Text(t.title,
-                                                          maxLines: 2,
-                                                          overflow: TextOverflow.ellipsis,
-                                                          style: const TextStyle(
-                                                              color: Colors.white,
-                                                              fontSize: 28,
-                                                              fontWeight: FontWeight.w800,
-                                                              letterSpacing: -0.4)),
-                                                    ),
-                                                    const SizedBox(height: 4),
-                                                    GestureDetector(
-                                                      onTap: () => goToArtist(context, t),
-                                                      child: Text(t.artist,
-                                                          style: TextStyle(
-                                                              color: pal.accent,
-                                                              fontSize: 17,
-                                                              fontWeight:
-                                                                  FontWeight.w600)),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                              IconButton(
-                                                iconSize: 30,
-                                                tooltip: appState.isLiked(t.id)
-                                                    ? 'Unlike'
-                                                    : 'Like',
-                                                onPressed: () =>
-                                                    appState.toggleLike(t.id),
-                                                icon: Icon(
-                                                    appState.isLiked(t.id)
-                                                        ? Icons.favorite_rounded
-                                                        : Icons.favorite_border_rounded,
-                                                    color: appState.isLiked(t.id)
-                                                        ? pal.accent
-                                                        : Colors.white),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 14),
-                                          PlayerSeek(
-                                            fallbackSeconds: t.durationSeconds,
-                                            height: 26,
-                                            timeStyle: const TextStyle(
-                                                color: Colors.white60,
-                                                fontSize: 12.5,
-                                                fontFeatures: [
-                                                  ui.FontFeature.tabularFigures()
-                                                ]),
-                                            track: (v, dragging) => CustomPaint(
-                                                painter: _DeskSeekPainter(
-                                                    v, pal.accent, dragging)),
-                                          ),
-                                          const SizedBox(height: 6),
-                                          StreamBuilder<PlaybackState>(
-                                            stream: audioHandler.playbackState,
-                                            builder: (context, snap) {
-                                              final playing = snap.data?.playing ?? false;
-                                              return Row(
-                                                mainAxisAlignment:
-                                                    MainAxisAlignment.center,
-                                                children: [
-                                                  IconButton(
-                                                    iconSize: 40,
-                                                    tooltip: 'Previous',
-                                                    icon: const Icon(
-                                                        Icons.skip_previous_rounded,
-                                                        color: Colors.white),
-                                                    onPressed:
-                                                        audioHandler.skipToPrevious,
-                                                  ),
-                                                  const SizedBox(width: 18),
-                                                  InkWell(
-                                                    customBorder: const CircleBorder(),
-                                                    onTap: () => playing
-                                                        ? audioHandler.pause()
-                                                        : audioHandler.play(),
-                                                    child: Container(
-                                                      width: 76,
-                                                      height: 76,
-                                                      decoration: BoxDecoration(
-                                                          color: pal.accent,
-                                                          shape: BoxShape.circle),
-                                                      child: Icon(
-                                                          playing
-                                                              ? Icons.pause_rounded
-                                                              : Icons.play_arrow_rounded,
-                                                          color: pal.onAccent,
-                                                          size: 44),
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 18),
-                                                  IconButton(
-                                                    iconSize: 40,
-                                                    tooltip: 'Next',
-                                                    icon: const Icon(
-                                                        Icons.skip_next_rounded,
-                                                        color: Colors.white),
-                                                    onPressed: audioHandler.skipToNext,
-                                                  ),
-                                                ],
-                                              );
-                                            },
-                                          ),
+                                    child: Container(
+                                      width: w,
+                                      height: h,
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(30),
+                                        boxShadow: const [
+                                          BoxShadow(
+                                              color: Color(0x99000000),
+                                              blurRadius: 50,
+                                              offset: Offset(0, 24)),
                                         ],
+                                      ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(30),
+                                        child: MediaQuery(
+                                          data: mq.copyWith(
+                                            size: Size(w, h),
+                                            padding: EdgeInsets.zero,
+                                            viewPadding: EdgeInsets.zero,
+                                            viewInsets: EdgeInsets.zero,
+                                          ),
+                                          child: const NowPlayingScreen(),
+                                        ),
                                       ),
                                     ),
                                   );
