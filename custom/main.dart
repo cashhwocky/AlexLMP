@@ -35713,6 +35713,7 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
   }
   static final Map<String, List<double>> _bars = {};
   double _lastVolume = 1.0;
+  bool _hasLyrics = false;
 
   @override
   Widget build(BuildContext context) {
@@ -35753,79 +35754,76 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
         : ps == 'apple'
             ? kAmTint
             : cs.primary;
-    final artR = const {
-          'signal': 32.0,
-          'plus': 24.0,
-          'modern': 20.0,
-          'expressive': 48.0,
-          'apple': 12.0,
-          'simp': 14.0,
-          'jog': 999.0,
-          'alex': 30.0,
-        }[ps] ??
-        28.0;
-    return LayoutBuilder(builder: (context, c) {
-      final w = c.maxWidth, h = c.maxHeight;
-      final rightW = (w * 0.4).clamp(420.0, 560.0);
-      final leftW = w - rightW;
-      final band = min(h, 780.0);
-      final padV = max(0.0, (h - band) / 2) + 12;
-      final art = min(leftW - 120, h - 200).clamp(200.0, 620.0);
-      final mq = MediaQuery.of(context);
-      final pad = EdgeInsets.fromLTRB(leftW - 8, padV, 28, padV);
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          MediaQuery(
-            data: mq.copyWith(padding: pad, viewPadding: pad),
-            child: const DeskWide(child: NowPlayingScreen()),
-          ),
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: leftW,
-            child: Material(
-              type: MaterialType.transparency,
-              child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+    return FutureBuilder<LyricsResult?>(
+      key: ValueKey('lyr${t.id}'),
+      future: fetchLyrics(t),
+      builder: (context, snap) {
+        // While a song's lyrics load, keep the last layout so it doesn't jump.
+        if (snap.connectionState == ConnectionState.done) {
+          _hasLyrics = !snap.hasError && snap.data != null && !snap.data!.isEmpty;
+        }
+        final lyrics = _hasLyrics;
+        return LayoutBuilder(builder: (context, c) {
+          final w = c.maxWidth, h = c.maxHeight;
+          // The real player, a bit narrower so the art shrinks and every
+          // control fits; lyrics take the right half when the song has them.
+          final colW = min(min(480.0, h - 430), lyrics ? w / 2 - 60 : w - 80)
+              .clamp(320.0, 480.0);
+          final contentH = min(h - 32, colW + 400);
+          final top = max(16.0, (h - contentH) / 2);
+          return TweenAnimationBuilder<double>(
+            tween: Tween(end: lyrics ? 0.25 : 0.5),
+            duration: const Duration(milliseconds: 420),
+            curve: Curves.easeOutCubic,
+            builder: (context, f, _) {
+              final cx = w * f;
+              final left = cx - colW / 2;
+              final pad = EdgeInsets.fromLTRB(
+                  left, top, max(0.0, w - left - colW), top + 52);
+              final mq = MediaQuery.of(context);
+              return Stack(
+                fit: StackFit.expand,
                 children: [
-                  MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: () => goToAlbum(context, t),
-                      child: Container(
-                        width: art,
-                        height: art,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(min(artR, art / 2)),
-                          boxShadow: [
-                            BoxShadow(
-                                color: seed.withOpacity(0.4),
-                                blurRadius: 60,
-                                spreadRadius: -8,
-                                offset: const Offset(0, 20)),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius:
-                              BorderRadius.circular(min(artR, art / 2)),
-                          child: CustomAlbumArtwork(track: t),
-                        ),
+                  MediaQuery(
+                    data: mq.copyWith(padding: pad, viewPadding: pad),
+                    child: const DeskWide(child: NowPlayingScreen()),
+                  ),
+                  Positioned(
+                    left: left + 14,
+                    width: colW - 28,
+                    bottom: top,
+                    height: 44,
+                    child: Material(
+                      type: MaterialType.transparency,
+                      child: _volumeRow(context, accent),
+                    ),
+                  ),
+                  Positioned(
+                    left: w / 2 + 12,
+                    right: 24,
+                    top: 24,
+                    bottom: 24,
+                    child: IgnorePointer(
+                      ignoring: !lyrics,
+                      child: AnimatedOpacity(
+                        opacity: lyrics && f < 0.3 ? 1 : 0,
+                        duration: const Duration(milliseconds: 260),
+                        child: lyrics
+                            ? LyricsScreen(
+                                key: ValueKey('dly${t.id}'),
+                                track: t,
+                                embedded: true)
+                            : const SizedBox.shrink(),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 22),
-                  SizedBox(width: art, child: _volumeRow(context, accent)),
                 ],
-              ),
-            ),
-            ),
-          ),
-        ],
-      );
-    });
+              );
+            },
+          );
+        });
+      },
+    );
   }
 
   Widget _volumeRow(BuildContext context, Color accent) =>
@@ -36902,8 +36900,8 @@ class _DesktopNowPanelState extends State<DesktopNowPanel> {
 }
 
 
-/// Marks the desktop player: the phone player styles skip their own artwork
-/// (the desktop shows it on the left) but keep every button and colour.
+/// Marks the desktop player (the phone player styles skip the full-width
+/// immersive artwork there).
 class DeskWide extends InheritedWidget {
   const DeskWide({super.key, required super.child});
   static bool of(BuildContext context) =>
@@ -36918,7 +36916,6 @@ class DeskArtRatio extends StatelessWidget {
   final Widget child;
   const DeskArtRatio({super.key, required this.aspectRatio, required this.child});
   @override
-  Widget build(BuildContext context) => DeskWide.of(context)
-      ? const SizedBox.shrink()
-      : AspectRatio(aspectRatio: aspectRatio, child: child);
+  Widget build(BuildContext context) =>
+      AspectRatio(aspectRatio: aspectRatio, child: child);
 }
