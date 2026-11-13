@@ -4962,10 +4962,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               : plus
                   ? pal.onAccent
                   : tint;
-          final radius = BorderRadius.circular(
-              community || plus ? 999 : (style == 'prestige' ? 10 : 14));
+          final radius = BorderRadius.circular(style == 'prestige' ? 12 : 999);
           return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
             child: Material(
               color: fill,
               borderRadius: radius,
@@ -4973,12 +4972,12 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 borderRadius: radius,
                 onTap: () => _deskGo(i),
                 child: SizedBox(
-                  height: 46,
+                  height: 44,
                   child: Row(
                     children: [
-                      // Signal marks the open tab with the logo bars.
+                      // Signal marks the open tab with an accent bar.
                       SizedBox(
-                        width: 14,
+                        width: 16,
                         child: signal && on
                             ? Container(
                                 width: 3,
@@ -5073,98 +5072,174 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       _deskNav.currentState?.push(MaterialPageRoute(builder: (_) => page));
     }
 
-    final sidebar = Container(
-      width: 264,
-      color: side,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 26, 20, 18),
-            child: Row(
-              children: [
-                SignalBars(size: 30, color: tint),
-                const SizedBox(width: 12),
-                Text('AlexLMP',
-                    style: signal
-                        ? sigHead(23)
-                        : const TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.4)),
-              ],
-            ),
-          ),
-          navItem(0, Icons.home_rounded, 'Home'),
-          navItem(3, Icons.search_rounded, 'Search'),
-          navItem(1, Icons.sensors_rounded, 'Mix'),
-          navItem(2, Icons.library_music_rounded, 'Library'),
-          navItem(4, Icons.settings_rounded, 'Settings'),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
-            child: SegmentedButton<String>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(value: 'youtube', label: Text('YouTube Music')),
-                ButtonSegment(value: 'local', label: Text('This computer')),
-              ],
-              selected: {yt ? 'youtube' : 'local'},
-              onSelectionChanged: (v) {
-                _setMode(v.first);
+    Widget sourceSwitch() {
+      Widget half(String value, IconData icon, String label) {
+        final on = (yt ? 'youtube' : 'local') == value;
+        return Expanded(
+          child: Material(
+            color: on ? tint : Colors.transparent,
+            borderRadius: BorderRadius.circular(999),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: () {
+                if (on) return;
+                _setMode(value);
                 _deskGo(_deskTab.value);
               },
-            ),
-          ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(24, 18, 16, 6),
-            child: Text('YOUR PLAYLISTS',
-                style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 11.5,
-                    letterSpacing: 0.9,
-                    fontWeight: FontWeight.w700)),
-          ),
-          Expanded(
-            child: ValueListenableBuilder<int>(
-              valueListenable: LibraryStore.revision,
-              builder: (context, _, __) => ListView(
-                padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
-                children: [
-                  sideRow(
-                    Container(
-                        color: pal.accent,
-                        child: Icon(Icons.favorite_rounded, color: pal.onAccent)),
-                    'Liked songs',
-                    yt ? 'YouTube Music' : 'This computer',
-                    () => yt
-                        ? openYtLikedMusic(_deskNav.currentContext ?? context)
-                        : openInContent(const LikedSongsScreen()),
-                  ),
-                  for (final i in LibraryStore.pins)
-                    sideRow(
-                      i.kind == 'local'
-                          ? (appState.playlistById(i.id) == null
-                              ? const ColoredBox(color: Colors.white10)
-                              : PlaylistCoverThumbnail(
-                                  playlist: appState.playlistById(i.id)!, size: 40))
-                          : YtNetworkImage(url: i.thumbnail, size: 40),
-                      i.title,
-                      'Pinned',
-                      () => LibraryStore.open(_deskNav.currentContext ?? context, i),
-                    ),
-                  for (final pl in appState.playlists)
-                    sideRow(
-                      PlaylistCoverThumbnail(playlist: pl, size: 40),
-                      pl.name,
-                      '${pl.trackIds.length} songs',
-                      () => openInContent(PlaylistDetailScreen(playlistId: pl.id)),
-                    ),
-                ],
+              child: SizedBox(
+                height: 36,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(icon,
+                        size: 16, color: on ? pal.onAccent : Colors.white70),
+                    const SizedBox(width: 6),
+                    Text(label,
+                        style: TextStyle(
+                            color: on ? pal.onAccent : Colors.white70,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700)),
+                  ],
+                ),
               ),
             ),
           ),
-        ],
+        );
+      }
+
+      return Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          children: [
+            half('youtube', Icons.play_circle_rounded, 'YouTube'),
+            half('local', Icons.computer_rounded, 'Computer'),
+          ],
+        ),
+      );
+    }
+
+    final sidebar = Padding(
+      padding: const EdgeInsets.fromLTRB(10, 10, 0, 0),
+      child: Container(
+        width: 256,
+        decoration: BoxDecoration(
+          color: side,
+          borderRadius: BorderRadius.circular(26),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 22, 18, 18),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: tint.withOpacity(0.16),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    alignment: Alignment.center,
+                    child: SignalBars(size: 24, color: tint),
+                  ),
+                  const SizedBox(width: 12),
+                  Text('AlexLMP',
+                      style: signal
+                          ? sigHead(22)
+                          : const TextStyle(
+                              color: Colors.white,
+                              fontSize: 21,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.4)),
+                ],
+              ),
+            ),
+            navItem(0, Icons.home_rounded, 'Home'),
+            navItem(3, Icons.search_rounded, 'Search'),
+            navItem(1, Icons.sensors_rounded, 'Mix'),
+            navItem(2, Icons.library_music_rounded, 'Library'),
+            navItem(4, Icons.settings_rounded, 'Settings'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 16, 14, 4),
+              child: sourceSwitch(),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(14, 14, 14, 0),
+              child: Divider(height: 1, color: Colors.white10),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 12, 8, 4),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text('Your playlists',
+                        style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                  IconButton(
+                    tooltip: 'New playlist',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.add_rounded,
+                        color: Colors.white70, size: 20),
+                    onPressed: () => showCreateOrEditPlaylistDialog(
+                        _deskNav.currentContext ?? context),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ValueListenableBuilder<int>(
+                valueListenable: LibraryStore.revision,
+                builder: (context, _, __) => ListView(
+                  padding: const EdgeInsets.fromLTRB(6, 0, 6, 16),
+                  children: [
+                    sideRow(
+                      Container(
+                          color: tint,
+                          child: Icon(Icons.favorite_rounded,
+                              color: pal.onAccent, size: 20)),
+                      'Liked songs',
+                      yt ? 'YouTube Music' : 'This computer',
+                      () => yt
+                          ? openYtLikedMusic(_deskNav.currentContext ?? context)
+                          : openInContent(const LikedSongsScreen()),
+                    ),
+                    for (final i in LibraryStore.pins)
+                      sideRow(
+                        i.kind == 'local'
+                            ? (appState.playlistById(i.id) == null
+                                ? const ColoredBox(color: Colors.white10)
+                                : PlaylistCoverThumbnail(
+                                    playlist: appState.playlistById(i.id)!,
+                                    size: 40))
+                            : YtNetworkImage(url: i.thumbnail, size: 40),
+                        i.title,
+                        'Pinned',
+                        () => LibraryStore.open(
+                            _deskNav.currentContext ?? context, i),
+                      ),
+                    for (final pl in appState.playlists)
+                      sideRow(
+                        PlaylistCoverThumbnail(playlist: pl, size: 40),
+                        pl.name,
+                        '${pl.trackIds.length} songs',
+                        () => openInContent(
+                            PlaylistDetailScreen(playlistId: pl.id)),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
 
@@ -5218,8 +5293,25 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 child: Row(
                   children: [
                     sidebar,
-                    const VerticalDivider(width: 1, color: Colors.white10),
-                    Expanded(child: ClipRect(child: content)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(26)),
+                        child: LayoutBuilder(builder: (context, box) {
+                          // The phone screens size cards from the screen
+                          // width; on a wide window that made them huge.
+                          final mq = MediaQuery.of(context);
+                          final w = box.maxWidth.clamp(360.0, 620.0);
+                          return MediaQuery(
+                            data: mq.copyWith(
+                                size: Size(w, box.maxHeight),
+                                padding: EdgeInsets.zero),
+                            child: content,
+                          );
+                        }),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -34423,8 +34515,10 @@ class DesktopPlayerBar extends StatelessWidget {
     final has = title != null;
 
     Widget songArt() {
-      if (t != null) return CustomAlbumArtwork(track: t);
       final u = item?.artUri?.toString();
+      if (t != null && !(t.isYouTube && u != null && u.startsWith('http'))) {
+        return CustomAlbumArtwork(track: t);
+      }
       if (u != null && u.startsWith('http')) {
         return Image.network(u, fit: BoxFit.cover,
             errorBuilder: (_, __, ___) => Container(color: pal.container));
