@@ -543,6 +543,13 @@ class AppState extends ChangeNotifier {
       await prefs.setBool('animated_bg', false);
       await prefs.setBool('amoled_defaults_v2', true);
     }
+    // Computer installs use the Adaptive color theme (from album art) by
+    // default, once; it can still be changed in Settings.
+    if (isDesktop && prefs.getBool('desktop_adaptive_v1') != true) {
+      await prefs.setString('theme_name', AppPalette.adaptiveName);
+      await prefs.setBool('use_wallpaper_colors', false);
+      await prefs.setBool('desktop_adaptive_v1', true);
+    }
     recent
       ..clear()
       ..addAll(prefs.getStringList('recent_ids') ?? const []);
