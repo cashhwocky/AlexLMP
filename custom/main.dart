@@ -31605,7 +31605,7 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
             SliverAppBar(
               pinned: true,
               stretch: true,
-              expandedHeight: screenW * 0.92,
+              expandedHeight: isDesktop ? min(screenW * 0.92, 300.0) : screenW * 0.92,
               backgroundColor: pal.bg,
               surfaceTintColor: Colors.transparent,
               leading: Padding(
