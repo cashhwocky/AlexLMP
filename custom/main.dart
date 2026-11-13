@@ -693,9 +693,11 @@ class AppState extends ChangeNotifier {
   }
 
   void unmarkDeleted(String id, [String? path]) {
-    deletedIds.remove(id);
-    if (path != null) deletedIds.remove(path);
-    _prefs?.setStringList('deleted_ids', deletedIds.toList());
+    // Only save when something actually changed: playing a big list used to
+    // rewrite the settings file once per song and freeze the app.
+    var changed = deletedIds.remove(id);
+    if (path != null && deletedIds.remove(path)) changed = true;
+    if (changed) _prefs?.setStringList('deleted_ids', deletedIds.toList());
   }
 
   void setTheme(String name) {
@@ -1267,7 +1269,10 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   void _publishQueue() {
-    queue.add(tracks.map((t) => t.toMediaItem()).toList());
+    // On a computer the system media controls only need the start of the
+    // list; sending thousands of songs every time made the app stall.
+    final list = isDesktop && tracks.length > 200 ? tracks.take(200) : tracks;
+    queue.add(list.map((t) => t.toMediaItem()).toList());
     libraryRevision.value++;
   }
 
@@ -1616,10 +1621,11 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     if (list.isEmpty) return;
     final merged = <TrackItem>[];
     final ids = <String>{};
+    final byId = {for (final t in tracks) t.id: t};
     for (final t in list) {
       if (!ids.add(t.id)) continue;
       appState.unmarkDeleted(t.id, t.source);
-      merged.add(trackById(t.id) ?? t);
+      merged.add(byId[t.id] ?? t);
     }
     final rest = tracks.where((t) => !ids.contains(t.id)).toList();
     tracks = [...merged, ...rest];
