@@ -427,7 +427,7 @@ class AppState extends ChangeNotifier {
   bool get community => appStyle == 'community';
 
   /// 'local' (files on your phone) or 'youtube' (your YouTube Music).
-  String get homeMode => str('home_mode', 'local');
+  String get homeMode => str('home_mode', isDesktop ? 'youtube' : 'local');
 
   /// Material You tonal colours (on by default; always on in Community style).
   bool get m3Colors => community || b('m3_colors', true);
@@ -566,6 +566,14 @@ class AppState extends ChangeNotifier {
     // AlexLMP Signal becomes everyone's look once (other styles stay in
     // Settings).
     // AlexLMP Classic is the default player (Signal stays in Settings).
+    // Computer installs start on YouTube Music with the AlexLMP Classic
+    // player (both can be changed in Settings).
+    if (isDesktop && prefs.getBool('desktop_defaults_v1') != true) {
+      await prefs.setString('player_style', 'alex');
+      await prefs.setString('home_mode', 'youtube');
+      await prefs.setBool('classic_player_default_v3', true);
+      await prefs.setBool('desktop_defaults_v1', true);
+    }
     if (prefs.getBool('classic_player_default_v3') != true) {
       await prefs.setString('player_style', 'alex');
       await prefs.setBool('signal_default_v1', true);
