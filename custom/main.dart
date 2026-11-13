@@ -2784,14 +2784,14 @@ class YouTubeMusic {
 
   /// Searches YouTube Music songs. Throws on network/extraction errors.
   static Future<List<TrackItem>> search(String query) async {
-    if (!Platform.isAndroid) return const [];
+    if (!(Platform.isAndroid || isDesktop)) return const [];
     final raw = await _ytChannel.invokeMethod('ytSearch', {'query': query});
     return _tracks(raw);
   }
 
   /// YouTube video search. Each result plays as a song (audio only).
   static Future<List<YtVideoResult>> searchVideos(String query) async {
-    if (!Platform.isAndroid) return const [];
+    if (!(Platform.isAndroid || isDesktop)) return const [];
     final raw = await _ytChannel.invokeMethod('ytSearchVideos', {'query': query})
             as List? ??
         const [];
@@ -2811,7 +2811,7 @@ class YouTubeMusic {
   }
 
   static Future<List<YtArtist>> searchArtists(String query) async {
-    if (!Platform.isAndroid) return const [];
+    if (!(Platform.isAndroid || isDesktop)) return const [];
     final raw = await _ytChannel.invokeMethod('ytSearchArtists', {'query': query})
             as List? ??
         const [];
@@ -2844,7 +2844,7 @@ class YouTubeMusic {
 
   /// YouTube Music playlists for a search like "90s rock".
   static Future<List<YtPlaylistRef>> searchPlaylists(String query) async {
-    if (!Platform.isAndroid) return const [];
+    if (!(Platform.isAndroid || isDesktop)) return const [];
     final raw = await _ytChannel
             .invokeMethod('ytSearchPlaylists', {'query': query}) as List? ??
         const [];
@@ -2866,7 +2866,7 @@ class YouTubeMusic {
   }
 
   static Future<List<YtAlbum>> searchAlbums(String query) async {
-    if (!Platform.isAndroid) return const [];
+    if (!(Platform.isAndroid || isDesktop)) return const [];
     final raw = await _ytChannel.invokeMethod('ytSearchAlbums', {'query': query})
             as List? ??
         const [];
@@ -2983,7 +2983,7 @@ class YouTubeMusic {
   // ── Account (read-only) ────────────────────────────────────────────────
 
   static Future<void> refreshAccount() async {
-    if (!Platform.isAndroid) return;
+    if (!(Platform.isAndroid || isDesktop)) return;
     try {
       final m = _map(await _ytChannel.invokeMethod('ytAccount'));
       ytAccount.value = YtAccount(
@@ -17696,7 +17696,7 @@ class _SearchScreenState extends State<SearchScreen> {
       _ytVideos = null;
       _ytPlaylists = null;
       // No local matches? Show YouTube Music.
-      if (_localSongs(q).isEmpty && Platform.isAndroid) _source = 1;
+      if (_localSongs(q).isEmpty && (Platform.isAndroid || isDesktop)) _source = 1;
     });
   }
 
@@ -17882,7 +17882,7 @@ class _SearchScreenState extends State<SearchScreen> {
       children: [
         _suggestRow(pal, Icons.search_rounded, 'Search for "$q"',
             'Your library and YouTube Music', () => _submit(q)),
-        if (Platform.isAndroid)
+        if ((Platform.isAndroid || isDesktop))
           _suggestRow(pal, Icons.play_circle_fill_rounded, 'YouTube Music',
               'Songs, albums and artists for "$q"', () {
             _source = 1;
@@ -17947,7 +17947,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   icon: Icon(Icons.library_music_rounded),
                   label: Text('Local'),
                 ),
-                if (Platform.isAndroid)
+                if ((Platform.isAndroid || isDesktop))
                   const ButtonSegment(
                     value: 1,
                     icon: Icon(Icons.play_circle_fill_rounded),
@@ -18660,7 +18660,7 @@ class _SearchSheetState extends State<SearchSheet> {
   @override
   Widget build(BuildContext context) {
     final pal = appState.palette;
-    final ytAvailable = Platform.isAndroid;
+    final ytAvailable = (Platform.isAndroid || isDesktop);
     final children = (_tab == 1 && ytAvailable)
         ? _ytResults(pal)
         : _libraryResults(pal);
@@ -20179,7 +20179,7 @@ Future<LyricsResult?> _fetchLyrics(TrackItem t) async {
   // 3: YouTube Music.
   try {
     var videoId = t.ytVideoId;
-    if (videoId == null && Platform.isAndroid) {
+    if (videoId == null && (Platform.isAndroid || isDesktop)) {
       final hits =
           await YouTubeMusic.search(hasArtist ? '$title $artist' : title);
       if (hits.isNotEmpty) videoId = hits.first.ytVideoId;
@@ -34155,6 +34155,9 @@ class _DesktopAwareChannel extends MethodChannel {
   @override
   Future<T?> invokeMethod<T>(String method, [dynamic arguments]) async {
     if (!isDesktop) return super.invokeMethod<T>(method, arguments);
+    if (name == 'com.alexlmp.app/ytmusic') {
+      return await YtHelper.call(method, arguments) as T?;
+    }
     switch (method) {
       case 'openUrl':
         final url = (arguments is Map ? arguments['url'] : arguments)?.toString() ?? '';
@@ -34747,5 +34750,119 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
         ),
       ),
     );
+  }
+}
+
+/// YouTube Music on a computer: the same YouTube Music bridge the phone app
+/// uses, running as a small Java helper next to AlexLMP. One request per
+/// line in, one reply per line out.
+class YtHelper {
+  static Process? _proc;
+  static int _next = 1;
+  static final Map<int, Completer<dynamic>> _waiting = {};
+  static Completer<void>? _ready;
+
+  static Future<void> _start() {
+    final existing = _ready;
+    if (existing != null) return existing.future;
+    final ready = Completer<void>();
+    _ready = ready;
+    () async {
+      final jar = p.join(p.dirname(Platform.resolvedExecutable), 'ythelper.jar');
+      try {
+        if (!await File(jar).exists()) {
+          throw Exception('ythelper.jar is missing next to the app ($jar)');
+        }
+        final proc = await Process.start('java', ['-Xss4m', '-jar', jar]);
+        _proc = proc;
+        proc.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .listen(_onLine, onDone: () => _died('stopped'));
+        proc.stderr.drain<void>();
+        proc.exitCode.then((code) => _died('exited with code $code'));
+      } catch (e) {
+        _ready = null;
+        if (!ready.isCompleted) {
+          ready.completeError(PlatformException(
+              code: 'YT_HELPER',
+              message:
+                  'Couldn\'t start YouTube Music. AlexLMP needs Java for it: sudo apt install default-jre-headless ($e)'));
+        }
+      }
+    }();
+    return ready.future.timeout(const Duration(seconds: 40), onTimeout: () {
+      _ready = null;
+      throw PlatformException(
+          code: 'YT_HELPER', message: 'YouTube Music took too long to start.');
+    });
+  }
+
+  static void _onLine(String line) {
+    Map<String, dynamic> m;
+    try {
+      m = Map<String, dynamic>.from(jsonDecode(line) as Map);
+    } catch (_) {
+      return;
+    }
+    if (m['ready'] == true) {
+      final r = _ready;
+      if (r != null && !r.isCompleted) r.complete();
+      return;
+    }
+    final c = _waiting.remove((m['id'] as num?)?.toInt());
+    if (c == null) return;
+    final err = m['error'];
+    if (err is Map) {
+      c.completeError(PlatformException(
+          code: '${err['code'] ?? 'YT'}', message: '${err['message'] ?? ''}'));
+    } else {
+      c.complete(_decode(m['ok']));
+    }
+  }
+
+  static void _died(String why) {
+    _proc = null;
+    final r = _ready;
+    _ready = null;
+    final e = PlatformException(
+        code: 'YT_HELPER', message: 'YouTube Music helper $why.');
+    if (r != null && !r.isCompleted) r.completeError(e);
+    for (final c in _waiting.values) {
+      if (!c.isCompleted) c.completeError(e);
+    }
+    _waiting.clear();
+  }
+
+  static dynamic _decode(dynamic v) {
+    if (v is Map) {
+      if (v.length == 1 && v['__bytes'] is String) {
+        return base64Decode(v['__bytes'] as String);
+      }
+      return v.map((k, x) => MapEntry(k, _decode(x)));
+    }
+    if (v is List) return v.map(_decode).toList();
+    return v;
+  }
+
+  static dynamic _encode(dynamic v) {
+    if (v is Uint8List) return {'__bytes': base64Encode(v)};
+    if (v is Map) return v.map((k, x) => MapEntry('$k', _encode(x)));
+    if (v is Iterable) return v.map(_encode).toList();
+    return v;
+  }
+
+  static Future<dynamic> call(String method, dynamic args) async {
+    await _start();
+    final proc = _proc;
+    if (proc == null) {
+      throw PlatformException(
+          code: 'YT_HELPER', message: 'YouTube Music helper isn\'t running.');
+    }
+    final id = _next++;
+    final c = Completer<dynamic>();
+    _waiting[id] = c;
+    proc.stdin.writeln(jsonEncode({'id': id, 'method': method, 'args': _encode(args)}));
+    return c.future;
   }
 }
