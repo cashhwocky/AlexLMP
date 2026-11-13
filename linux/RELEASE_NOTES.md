@@ -1,4 +1,4 @@
-All your music, one player. Now on Linux.
+All your music, one player. Now on Linux and Windows.
 
 This is the first version of AlexLMP for computers.
 
@@ -14,5 +14,7 @@ This is the first version of AlexLMP for computers.
 For Ubuntu, Debian, Mint and Pop!_OS: download the .deb and open it, or run `sudo apt install ./AlexLMP-linux-v0.1.0-amd64.deb`.
 
 For Arch, Manjaro and EndeavourOS: download the .pkg.tar.zst and run `sudo pacman -U AlexLMP-linux-v0.1.0-x86_64.pkg.tar.zst`.
+
+For Windows 10 and 11: download AlexLMP-windows-v0.1.0-setup.exe and run it. No admin rights needed. If Windows SmartScreen warns you, click More info, then Run anyway.
 
 <3

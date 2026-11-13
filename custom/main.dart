@@ -35753,6 +35753,25 @@ class _DesktopAwareChannel extends MethodChannel {
 /// Opens the Google sign-in window (linux/login.py). Pick any account; when
 /// YouTube Music is signed in, its cookies go to the YouTube Music helper.
 Future<bool> _desktopSignIn() async {
+  if (Platform.isWindows) {
+    // windows/signin: a WebView2 (Edge) sign-in window.
+    final exe = p.join(
+        p.dirname(Platform.resolvedExecutable), 'signin', 'AlexLMPSignIn.exe');
+    if (!await File(exe).exists()) {
+      throw PlatformException(
+          code: 'YT_SIGNIN', message: 'The sign-in window is missing ($exe)');
+    }
+    final r = await Process.run(exe, const []);
+    final cookies = (r.stdout as String).trim();
+    if (r.exitCode != 0 || !cookies.contains('SAPISID=')) {
+      final err = (r.stderr as String).trim();
+      if (err.isNotEmpty) {
+        throw PlatformException(code: 'YT_SIGNIN', message: err);
+      }
+      return false; // window closed without signing in
+    }
+    return await YtHelper.call('ytSaveCookies', {'cookies': cookies}) == true;
+  }
   final script = p.join(p.dirname(Platform.resolvedExecutable), 'login.py');
   if (!await File(script).exists()) {
     throw PlatformException(
@@ -36879,7 +36898,11 @@ class YtHelper {
         if (!await File(jar).exists()) {
           throw Exception('ythelper.jar is missing next to the app ($jar)');
         }
-        final proc = await Process.start('java', ['-Xss4m', '-jar', jar]);
+        // Windows ships its own Java (runtime/) next to the app.
+        final bundled = p.join(p.dirname(Platform.resolvedExecutable), 'runtime',
+            'bin', Platform.isWindows ? 'javaw.exe' : 'java');
+        final java = await File(bundled).exists() ? bundled : 'java';
+        final proc = await Process.start(java, ['-Xss4m', '-jar', jar]);
         _proc = proc;
         proc.stdout
             .transform(utf8.decoder)
@@ -36893,7 +36916,9 @@ class YtHelper {
           ready.completeError(PlatformException(
               code: 'YT_HELPER',
               message:
-                  'Couldn\'t start YouTube Music. AlexLMP needs Java for it: sudo apt install default-jre-headless ($e)'));
+                  Platform.isWindows
+                      ? 'Couldn\'t start YouTube Music ($e)'
+                      : 'Couldn\'t start YouTube Music. AlexLMP needs Java for it: sudo apt install default-jre-headless ($e)'));
         }
       }
     }();

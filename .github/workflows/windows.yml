@@ -1,0 +1,145 @@
+name: Build AlexLMP for Windows (.exe)
+
+# Same triggers as the Linux build: the linux branch and linux-v* release tags.
+# The phone version (main branch, v* tags) is never touched by this.
+on:
+  push:
+    branches: [linux]
+    tags: ['linux-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  exe:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read the version
+        run: |
+          V=$(tr -d ' \r\n' < linux/VERSION)
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          echo "Building AlexLMP for Windows $V"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build the YouTube Music helper (same bridge as the phone app)
+        run: |
+          python - <<'PY'
+          src = open("custom/YtMusicBridge.kt", encoding="utf-8").read()
+          cut = src.find("/** Google sign-in page in a WebView")
+          if cut > 0:
+              src = src[:cut]
+          open("linux/ythelper/src/main/kotlin/YtMusicBridge.kt", "w", encoding="utf-8").write(src)
+          PY
+          gradle -p linux/ythelper shadowJar --no-daemon --stacktrace
+          ls -la linux/ythelper/build/libs/
+
+      - name: Bundle a small Java runtime for the helper
+        run: |
+          JAR=linux/ythelper/build/libs/ythelper.jar
+          MODS=$(jdeps --print-module-deps --ignore-missing-deps --multi-release 17 "$JAR" | tr -d "\r" || true)
+          MODS=${MODS:-java.base,java.net.http,java.logging,java.xml,java.sql}
+          echo "Modules: $MODS"
+          mkdir -p stage
+          jlink --add-modules "$MODS,jdk.crypto.ec,jdk.charsets,jdk.zipfs" \
+            --strip-debug --no-man-pages --no-header-files --compress=2 \
+            --output stage/runtime
+          cp "$JAR" stage/ythelper.jar
+          stage/runtime/bin/java -version
+
+      - name: Build the sign-in window
+        run: |
+          dotnet build windows/signin/AlexLMPSignIn.csproj -c Release -o stage/signin
+          ls -la stage/signin
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.3'
+          channel: 'stable'
+
+      - name: Create clean Flutter desktop scaffold
+        run: flutter create --platforms=windows --org com.alexlmp.app --project-name alex_lmp app_win
+
+      - name: Copy project files into scaffold
+        run: |
+          cp custom/pubspec.yaml app_win/pubspec.yaml
+          cp custom/main.dart app_win/lib/main.dart
+
+      - name: Window title, size and icon
+        run: |
+          F=app_win/windows/runner/main.cpp
+          sed -i 's/L"alex_lmp"/L"AlexLMP"/' "$F"
+          sed -i 's/Win32Window::Size size(1280, 720);/Win32Window::Size size(1360, 860);/' "$F"
+          grep -n "AlexLMP\|Size size" "$F"
+          pip install pillow
+          python - <<'PY'
+          from PIL import Image, ImageDraw
+          S = 512
+          img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+          d = ImageDraw.Draw(img)
+          d.rounded_rectangle((16, 16, S - 16, S - 16), radius=120, fill=(255, 255, 255, 255))
+          heights = [8, 24, 40, 12, 4]
+          k = S / 108 * 1.35
+          w = 5.5 * k
+          for i, h in enumerate(heights):
+              cx = S / 2 + (i - 2) * 8 * k
+              top = S / 2 - (h * k) / 2 - w / 2
+              bot = S / 2 + (h * k) / 2 + w / 2
+              d.rounded_rectangle((cx - w / 2, top, cx + w / 2, bot), radius=w / 2, fill=(17, 19, 24, 255))
+          img.save("app_win/windows/runner/resources/app_icon.ico",
+                   sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+          PY
+
+      - name: Build
+        working-directory: app_win
+        run: |
+          flutter pub get
+          flutter build windows --release
+          ls -la build/windows/x64/runner/Release
+
+      - name: Make the installer
+        run: |
+          choco install innosetup -y --no-progress
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" windows/alexlmp.iss
+          ls -la out
+
+      - name: Upload the installer (every build)
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlexLMP-windows-v${{ env.VERSION }}-setup
+          path: out/AlexLMP-windows-v${{ env.VERSION }}-setup.exe
+
+      - name: Find a published release for this version
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "linux-v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "REL_TAG=linux-v$VERSION" >> "$GITHUB_ENV"
+          fi
+
+      - name: Add the installer to the release
+        if: startsWith(github.ref, 'refs/tags/linux-v') || env.REL_TAG != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.REL_TAG != '' && env.REL_TAG || github.ref_name }}
+          files: out/AlexLMP-windows-v${{ env.VERSION }}-setup.exe
+          make_latest: false

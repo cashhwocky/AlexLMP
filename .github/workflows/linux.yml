@@ -206,7 +206,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.REL_TAG != '' && env.REL_TAG || github.ref_name }}
-          name: AlexLMP for Linux v${{ env.VERSION }}
+          name: AlexLMP for Linux and Windows v${{ env.VERSION }}
           body_path: linux/RELEASE_NOTES.md
           files: |
             AlexLMP-linux-v${{ env.VERSION }}-amd64.deb
