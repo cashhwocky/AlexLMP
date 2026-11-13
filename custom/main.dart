@@ -36175,7 +36175,7 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
   }
   static final Map<String, List<double>> _bars = {};
   double _lastVolume = 1.0;
-  bool _hasLyrics = false;
+  bool? _hasLyrics;
 
   @override
   Widget build(BuildContext context) {
@@ -36224,7 +36224,8 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
         if (snap.connectionState == ConnectionState.done) {
           _hasLyrics = !snap.hasError && snap.data != null && !snap.data!.isEmpty;
         }
-        final lyrics = _hasLyrics;
+        final lyrics = _hasLyrics == true;
+        final known = _hasLyrics != null;
         return LayoutBuilder(builder: (context, c) {
           final w = c.maxWidth, h = c.maxHeight;
           // The real player, a bit narrower so the art shrinks and every
@@ -36267,33 +36268,38 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
                     // Lyrics when the song has them, otherwise what's up next.
                     child: AnimatedSwitcher(
                       duration: const Duration(milliseconds: 260),
-                      child: lyrics
+                      child: !known
+                          ? const SizedBox.shrink(key: ValueKey('dwait'))
+                          : lyrics
                           ? LyricsScreen(
                               key: ValueKey('dly${t.id}'),
                               track: t,
                               embedded: true)
-                          : Column(
+                          : Material(
                               key: const ValueKey('dq'),
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Padding(
-                                  padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
-                                  child: Text('Up next',
-                                      style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 28,
-                                          letterSpacing: -0.6,
-                                          fontWeight: FontWeight.w800)),
-                                ),
-                                const Padding(
-                                  padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
-                                  child: Text('No lyrics for this song',
-                                      style: TextStyle(
-                                          color: Colors.white54, fontSize: 13.5)),
-                                ),
-                                const Expanded(
-                                    child: QueueScreen(embedded: true)),
-                              ],
+                              type: MaterialType.transparency,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Padding(
+                                    padding: EdgeInsets.fromLTRB(12, 20, 12, 4),
+                                    child: Text('Up next',
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 30,
+                                            letterSpacing: -0.6,
+                                            fontWeight: FontWeight.w800)),
+                                  ),
+                                  const Padding(
+                                    padding: EdgeInsets.fromLTRB(12, 0, 12, 14),
+                                    child: Text('No lyrics for this song',
+                                        style: TextStyle(
+                                            color: Colors.white54,
+                                            fontSize: 13.5)),
+                                  ),
+                                  Expanded(child: DeskUpNextList(accent: accent)),
+                                ],
+                              ),
                             ),
                     ),
                   ),
@@ -37606,4 +37612,119 @@ Widget deskPlaylistPane(BuildContext context, Playlist pl, List<TrackItem> track
       ],
     ),
   );
+}
+
+
+/// What plays next, in order: songs you queued, then the rest of the list
+/// you're playing from.
+class DeskUpNextList extends StatelessWidget {
+  final Color accent;
+  const DeskUpNextList({super.key, required this.accent});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        audioHandler.currentIndex,
+        audioHandler.upNextRevision,
+        audioHandler.libraryRevision,
+      ]),
+      builder: (context, _) {
+        final tracks = audioHandler.tracks;
+        final cur = audioHandler.currentTrack;
+        final idx = cur == null ? -1 : tracks.indexWhere((x) => x.id == cur.id);
+        final queued = audioHandler.upNext;
+        final shuffle = audioHandler.playbackState.value.shuffleMode ==
+            AudioServiceShuffleMode.all;
+        final rest = <int>[];
+        if (idx >= 0 && !shuffle) {
+          for (var k = 1; k < tracks.length && rest.length < 80; k++) {
+            rest.add((idx + k) % tracks.length);
+          }
+        }
+        final peek = shuffle ? audioHandler.peekNext : null;
+
+        Widget row(TrackItem x, VoidCallback onTap, {String? tag}) => InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: SizedBox(
+                          width: 52,
+                          height: 52,
+                          child: CustomAlbumArtwork(track: x)),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(x.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 2),
+                          Text(x.artist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white60, fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                    if (tag != null)
+                      Container(
+                        margin: const EdgeInsets.only(right: 10),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: accent.withOpacity(0.18),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(tag,
+                            style: TextStyle(
+                                color: accent,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                    Text(_fmtLen(x.durationSeconds),
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 12.5)),
+                  ],
+                ),
+              ),
+            );
+
+        final items = <Widget>[
+          for (final q in queued)
+            row(q, () => audioHandler.playTrackById(q.id), tag: 'Queued'),
+          if (peek != null && queued.isEmpty)
+            row(peek, () => audioHandler.skipToNext(), tag: 'Shuffle'),
+          for (final i in rest)
+            row(tracks[i], () => audioHandler.playIndex(i)),
+        ];
+        if (items.isEmpty) {
+          return const Center(
+              child: Text('Nothing up next.',
+                  style: TextStyle(color: Colors.white54)));
+        }
+        return ListView(padding: const EdgeInsets.only(bottom: 20), children: [
+          ...items,
+          if (shuffle)
+            const Padding(
+              padding: EdgeInsets.all(14),
+              child: Text('Shuffle is on, so the rest plays in random order.',
+                  style: TextStyle(color: Colors.white38, fontSize: 12.5)),
+            ),
+        ]);
+      },
+    );
+  }
 }
