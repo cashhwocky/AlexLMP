@@ -545,6 +545,12 @@ class AppState extends ChangeNotifier {
     }
     // Computer installs use the Adaptive color theme (from album art) by
     // default, once; it can still be changed in Settings.
+    // Breathing artwork and word-by-word lyrics start off on the computer.
+    if (isDesktop && prefs.getBool('desktop_calm_v1') != true) {
+      await prefs.setBool('breathing_art', false);
+      await prefs.setBool('word_lyrics', false);
+      await prefs.setBool('desktop_calm_v1', true);
+    }
     if (isDesktop && prefs.getBool('desktop_adaptive_v1') != true) {
       await prefs.setString('theme_name', AppPalette.adaptiveName);
       await prefs.setBool('use_wallpaper_colors', false);
@@ -13441,7 +13447,10 @@ class _SwipeArtCarouselState extends State<SwipeArtCarousel>
     final x = _dx.value;
     final commit = x.abs() > _width * 0.22 || v.abs() > 650;
     if (!commit || x == 0) {
-      _springTo(0, v);
+      // Spring back, then snap exactly to 0 so no neighbour stays drawn.
+      _springTo(0, v).whenComplete(() {
+        if (mounted && !_busy) _dx.value = 0;
+      });
       return;
     }
     final dir = x > 0 ? 1.0 : -1.0; // +1 = finger moved right
@@ -13490,7 +13499,7 @@ class _SwipeArtCarouselState extends State<SwipeArtCarousel>
             )
           : art3d,
     );
-    if (!widget.plain && appState.b('breathing_art', true)) {
+    if (!widget.plain && appState.b('breathing_art', !isDesktop)) {
       art = BreathingArt(playing: widget.playing, child: art);
     }
     return art;
@@ -13504,7 +13513,9 @@ class _SwipeArtCarouselState extends State<SwipeArtCarousel>
         behavior: HitTestBehavior.opaque,
         onHorizontalDragUpdate: _onUpdate,
         onHorizontalDragEnd: _onEnd,
-        onHorizontalDragCancel: () => _springTo(0),
+        onHorizontalDragCancel: () => _springTo(0).whenComplete(() {
+              if (mounted && !_busy) _dx.value = 0;
+            }),
         child: AnimatedBuilder(
           animation: _dx,
           builder: (context, _) {
@@ -13516,7 +13527,7 @@ class _SwipeArtCarouselState extends State<SwipeArtCarousel>
             if (_outgoing != null) {
               neighbour = _outgoing;
               neighbourSide = _outgoingSide;
-            } else if (x != 0 && !_busy) {
+            } else if (x.abs() > 0.5 && !_busy) {
               final fingerRight = x > 0;
               final wantsNext = appState.swipeRightForNext ? fingerRight : !fingerRight;
               neighbour = wantsNext
@@ -17417,13 +17428,13 @@ class SettingsScreen extends StatelessWidget {
             'Double-tap art to like', 'Instead of switching to big artwork'),
         _flag(pal, Icons.air_rounded, 'breathing_art', 'Breathing artwork',
             'Art gently breathes while playing and shrinks when paused',
-            def: true),
+            def: !isDesktop),
         _flag(pal, Icons.lyrics_rounded, 'player_lyrics', 'Lyrics in the player',
             'Shows the current synced line over the artwork'),
         _flag(pal, Icons.text_rotation_none_rounded, 'word_lyrics',
             'Word-by-word lyrics',
             'Lights up each word as it\'s sung in the lyrics screen',
-            def: true),
+            def: !isDesktop),
         _flag(pal, Icons.light_mode_rounded, 'keep_screen_on', 'Keep screen on',
             'Screen stays on while AlexLMP is open',
             after: (_) => applyNativeSettings()),
@@ -21558,7 +21569,7 @@ class _LyricsScreenState extends State<LyricsScreen> {
                                     fontWeight: FontWeight.w800,
                                   ),
                                   child: i == idx &&
-                                          appState.b('word_lyrics', true) &&
+                                          appState.b('word_lyrics', !isDesktop) &&
                                           r.synced[i].$2.trim().isNotEmpty
                                       ? KaraokeLine(
                                           line: r.synced[i].$2,
@@ -31334,7 +31345,13 @@ class _ArtistAllScreenState extends State<ArtistAllScreen> {
                       child: Text('No albums found.',
                           style: TextStyle(color: Colors.white54)));
                 }
-                final w = (MediaQuery.of(context).size.width - 32 - 14) / 2;
+                return LayoutBuilder(builder: (context, box) {
+                final avail = box.maxWidth - 32;
+                // Phone: two per row. Computer: as many ~180px cards as fit.
+                final cols = isDesktop
+                    ? max(2, ((avail + 14) / (180 + 14)).floor())
+                    : 2;
+                final w = (avail - 14 * (cols - 1)) / cols;
                 return ListView(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
                   children: [
@@ -31354,6 +31371,7 @@ class _ArtistAllScreenState extends State<ArtistAllScreen> {
                     ),
                   ],
                 );
+                });
               },
             )
           : FutureBuilder<List<TrackItem>>(
@@ -32514,6 +32532,7 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
           final name = page?.name ?? widget.name;
           final banner = page?.banner ?? page?.thumbnail ?? widget.thumbnail;
           final screenW = MediaQuery.of(context).size.width;
+          if (isDesktop && page != null) return _deskArtist(context, pal, page);
 
           final slivers = <Widget>[
             SliverAppBar(
@@ -32635,6 +32654,416 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
             body: CustomScrollView(slivers: slivers),
           );
         },
+      ),
+    );
+  }
+
+  // ── Computer layout: photo and name on the left, music on the right ──────
+  void _openShelfItem(YtShelfItem it, YtArtistPage page) {
+    if (it.kind == 'playlist') {
+      contentNav(context).push(MaterialPageRoute(
+        builder: (_) => YtAlbumScreen(
+          playlistId: it.id,
+          album: YtAlbum('', it.title, it.subtitle, it.thumbnail, -1),
+          loader: () => YouTubeMusic.publicPlaylistPage(it.id,
+              title: it.title, thumbnail: it.thumbnail),
+          playLabel: 'Play',
+        ),
+      ));
+    } else if (it.kind == 'video' || it.kind == 'song') {
+      audioHandler.playYouTubeTrack(YouTubeMusic.trackFromShelf(it, page.name));
+    } else if (it.kind == 'artist') {
+      openYtArtist(context, it.id, it.title, thumbnail: it.thumbnail);
+    } else {
+      openYtAlbum(context, YtAlbum(it.id, it.title, page.name, it.thumbnail, -1));
+    }
+  }
+
+  Widget _deskArtist(BuildContext context, AppPalette pal, YtArtistPage page) {
+    final accent = pal.accent;
+    final songs = page.songs;
+    final photo = page.thumbnail ?? page.banner ?? widget.thumbnail;
+    final stats = [
+      if (page.subscribersText != null) '${page.subscribersText} subscribers'
+      else if (page.subscribers >= 0)
+        '${formatCompactCount(page.subscribers)} subscribers',
+      if (page.audience != null) page.audience!,
+    ].join(' · ');
+
+    Widget pill(String label, IconData icon, VoidCallback onTap,
+            {bool primary = false}) =>
+        Material(
+          color: primary ? accent : Colors.white.withOpacity(0.07),
+          shape: StadiumBorder(
+              side: primary
+                  ? BorderSide.none
+                  : const BorderSide(color: Color(0xFF2A2A34))),
+          child: InkWell(
+            customBorder: const StadiumBorder(),
+            onTap: onTap,
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: primary ? 22 : 18),
+              child: SizedBox(
+                height: 46,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon,
+                        size: 19, color: primary ? pal.onAccent : Colors.white),
+                    const SizedBox(width: 8),
+                    Text(label,
+                        style: TextStyle(
+                            color: primary ? pal.onAccent : Colors.white,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+
+    final left = Container(
+      width: 380,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [accent.withOpacity(0.32), const Color(0xFF15151B)],
+          stops: const [0.0, 0.7],
+        ),
+      ),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(28, 26, 28, 26),
+        children: [
+          if (appState.appStyle != 'alex')
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+                onPressed: () => Navigator.maybePop(context),
+              ),
+            ),
+          Container(
+            height: 324,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(
+                    color: accent.withOpacity(0.3),
+                    blurRadius: 60,
+                    spreadRadius: -20,
+                    offset: const Offset(0, 30)),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: photo == null
+                  ? Container(
+                      color: pal.container,
+                      child: const Icon(Icons.person_rounded,
+                          size: 120, color: Colors.white38))
+                  : Image.network(photo,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) =>
+                          Container(color: pal.container)),
+            ),
+          ),
+          const SizedBox(height: 22),
+          Text('ARTIST',
+              style: TextStyle(
+                  color: accent,
+                  fontSize: 12,
+                  letterSpacing: 1.4,
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text(page.name,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 44,
+                  height: 1.05,
+                  letterSpacing: -1.5,
+                  fontWeight: FontWeight.w800)),
+          if (stats.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(stats,
+                style: const TextStyle(color: kSigT2, fontSize: 14)),
+          ],
+          if (songs.isNotEmpty) ...[
+            const SizedBox(height: 22),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                pill('Play', Icons.play_arrow_rounded, () => _play(songs, 0),
+                    primary: true),
+                pill('Shuffle', Icons.shuffle_rounded,
+                    () => _play(songs, Random().nextInt(songs.length),
+                        shuffle: true)),
+                pill('Play next', Icons.queue_play_next_rounded, () {
+                  audioHandler.addToQueue(songs, next: true);
+                  appNotice.value = 'Playing ${page.name} next';
+                }),
+              ],
+            ),
+          ],
+          if (page.description != null && page.description!.isNotEmpty) ...[
+            const SizedBox(height: 26),
+            const Text('About',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            Text(page.description!,
+                maxLines: _aboutOpen ? 80 : 5,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: kSigT2, fontSize: 13.5, height: 1.55)),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                style: TextButton.styleFrom(
+                    foregroundColor: accent, padding: EdgeInsets.zero),
+                onPressed: () => setState(() => _aboutOpen = !_aboutOpen),
+                child: Text(_aboutOpen ? 'Less' : 'More'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+
+    Widget header(String title, {VoidCallback? onAll}) => Padding(
+          padding: const EdgeInsets.fromLTRB(0, 30, 0, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(title,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        letterSpacing: -0.4,
+                        fontWeight: FontWeight.w800)),
+              ),
+              if (onAll != null)
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: kSigT2),
+                  onPressed: onAll,
+                  child: const Text('Show all',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+            ],
+          ),
+        );
+
+    Widget songRow(int i) {
+      final t = songs[i];
+      final active = audioHandler.currentTrack?.id == t.id;
+      final liked = appState.isLiked(t.id);
+      return Material(
+        color: active ? accent.withOpacity(0.10) : Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _play(songs, i),
+          onSecondaryTap: () => showYtAddToPlaylist(context, t),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 26,
+                  child: active
+                      ? EqBars(color: accent)
+                      : Text('${i + 1}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              color: kSigT3,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600)),
+                ),
+                const SizedBox(width: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                      width: 48, height: 48, child: CustomAlbumArtwork(track: t)),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(t.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: active ? accent : Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600)),
+                      Text(t.artist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: kSigT2, fontSize: 13)),
+                    ],
+                  ),
+                ),
+                SizedBox(
+                  width: 120,
+                  child: Text(page.plays[t.id] ?? '',
+                      maxLines: 1,
+                      style: const TextStyle(color: kSigT3, fontSize: 13)),
+                ),
+                IconButton(
+                  tooltip: liked ? 'Unlike' : 'Like',
+                  onPressed: () => appState.toggleLike(t.id),
+                  icon: Icon(
+                      liked
+                          ? Icons.favorite_rounded
+                          : Icons.favorite_border_rounded,
+                      size: 19,
+                      color: liked ? accent : kSigT3),
+                ),
+                SizedBox(
+                  width: 44,
+                  child: Text(_fmtLen(t.durationSeconds),
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(color: kSigT3, fontSize: 13)),
+                ),
+                IconButton(
+                  tooltip: 'More',
+                  onPressed: () => showYtAddToPlaylist(context, t),
+                  icon: const Icon(Icons.more_vert_rounded,
+                      size: 19, color: kSigT3),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget row(List<YtShelfItem> items, YtShelf sh) {
+      final round = sh.kind == 'artist';
+      final video = sh.kind == 'video';
+      final w = round ? 140.0 : (video ? 260.0 : 168.0);
+      final h = video ? w * 9 / 16 : w;
+      return SizedBox(
+        height: h + 58,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: items.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 16),
+          itemBuilder: (_, i) {
+            final it = items[i];
+            return InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: () => _openShelfItem(it, page),
+              child: SizedBox(
+                width: w,
+                child: Column(
+                  crossAxisAlignment: round
+                      ? CrossAxisAlignment.center
+                      : CrossAxisAlignment.start,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(round ? w : 16),
+                      child: SizedBox(
+                        width: w,
+                        height: h,
+                        child: it.thumbnail == null
+                            ? Container(color: pal.container)
+                            : Image.network(it.thumbnail!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    Container(color: pal.container)),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(it.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600)),
+                    Text(round ? 'Artist' : it.subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: kSigT2, fontSize: 12.5)),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    final right = <Widget>[];
+    if (songs.isNotEmpty) {
+      right.add(Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Row(
+          children: [
+            const Expanded(
+              child: Text('Top songs',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      letterSpacing: -0.4,
+                      fontWeight: FontWeight.w800)),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: kSigT2),
+              onPressed: () => openArtistAll(context, page.name, albums: false),
+              child: const Text('Show all',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      ));
+      for (var i = 0; i < min(5, songs.length); i++) {
+        right.add(songRow(i));
+      }
+    }
+    for (final sh in page.shelves) {
+      if (sh.items.isEmpty) continue;
+      final lower = sh.title.toLowerCase();
+      final albumShelf = sh.kind == 'album' &&
+          (lower.contains('album') || lower.contains('single'));
+      right
+        ..add(header(sh.title.isEmpty ? 'More' : sh.title,
+            onAll: albumShelf
+                ? () => openArtistAll(context, page.name, albums: true)
+                : null))
+        ..add(row(sh.items, sh));
+    }
+    if (page.shelves.isEmpty && page.albums.isNotEmpty) {
+      right
+        ..add(header('Albums',
+            onAll: () => openArtistAll(context, page.name, albums: true)))
+        ..add(row([
+          for (final a in page.albums)
+            YtShelfItem('album', a.url, a.title, a.artist, a.thumbnail)
+        ], const YtShelf('Albums', 'album', [])));
+    }
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B0B0F),
+      body: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          left,
+          const SizedBox(width: 28),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(4, 6, 8, 40),
+              children: right,
+            ),
+          ),
+        ],
       ),
     );
   }
