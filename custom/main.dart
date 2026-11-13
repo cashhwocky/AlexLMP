@@ -6303,7 +6303,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 onTap: () => _setMode('youtube')),
             const SizedBox(width: 8),
             SignalChip(
-                label: 'On this phone',
+                label: (isDesktop ? 'On this computer' : 'On this phone'),
                 on: !yt,
                 onTap: () => _setMode('local')),
           ],
@@ -10790,7 +10790,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     fg: pal.onAccent,
                     icon: Icons.favorite_rounded,
                     title: 'Liked songs',
-                    subtitle: yt ? 'YouTube Music' : 'On this phone',
+                    subtitle: yt ? 'YouTube Music' : (isDesktop ? 'On this computer' : 'On this phone'),
                     onTap: () => yt
                         ? openYtLikedMusic(context)
                         : Navigator.of(context).push(MaterialPageRoute(
@@ -15367,7 +15367,7 @@ class NowPlayingScreen extends StatelessWidget {
                                   vertical: 16,
                                 ),
                                 child: Center(
-                                  child: AspectRatio(
+                                  child: DeskArtRatio(
                                     aspectRatio: 1.0,
                                     child: AnimatedScale(
                                       scale: 1.0,
@@ -20637,7 +20637,7 @@ class AmPlayerView extends StatelessWidget {
                   ),
                   Expanded(
                     child: Center(
-                      child: AspectRatio(
+                      child: DeskArtRatio(
                         aspectRatio: 1,
                         child: AnimatedScale(
                           scale: playing ? 1.0 : 0.84,
@@ -20714,7 +20714,7 @@ class AmPlayerView extends StatelessWidget {
                   const SizedBox(height: 26),
                   AmSeekBar(
                     fallbackSeconds: track.durationSeconds,
-                    label: track.isYouTube ? 'YouTube Music' : 'On this phone',
+                    label: track.isYouTube ? 'YouTube Music' : (isDesktop ? 'On this computer' : 'On this phone'),
                     labelIcon: track.isYouTube
                         ? Icons.play_circle_outline_rounded
                         : Icons.phone_android_rounded,
@@ -21753,7 +21753,8 @@ class AlexPlayerView extends StatelessWidget {
 
   Widget _body(BuildContext context, ColorScheme cs, Color seed) {
     final glass = appState.liquidGlass;
-    final immersive = appState.b('immersive_art');
+    final immersive =
+        appState.b('immersive_art') && !DeskWide.of(context);
     final accent = Color.lerp(cs.primary, Colors.white, 0.35)!;
 
     Widget pane(Widget child, {double r = 22, EdgeInsets? padding}) => glass
@@ -21814,7 +21815,7 @@ class AlexPlayerView extends StatelessWidget {
         ? 'Your likes'
         : track.isYouTube
             ? 'Streaming'
-            : 'On this phone';
+            : (isDesktop ? 'On this computer' : 'On this phone');
 
     final content = SafeArea(
       child: Padding(
@@ -21857,7 +21858,7 @@ class AlexPlayerView extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(8, 18, 8, 18),
                 child: Center(
-                  child: AspectRatio(
+                  child: DeskArtRatio(
                     aspectRatio: 1,
                     child: AnimatedScale(
                       scale: playing ? 1.0 : 0.92,
@@ -22250,7 +22251,7 @@ class ModernPlayerView extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 6),
                   child: Center(
-                    child: AspectRatio(
+                    child: DeskArtRatio(
                       aspectRatio: 1,
                       child: AnimatedScale(
                         scale: playing ? 1.0 : 0.94,
@@ -22639,7 +22640,7 @@ class ExpressivePlayerView extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
                   child: Center(
-                    child: AspectRatio(
+                    child: DeskArtRatio(
                       aspectRatio: 1,
                       child: Hero(
                         tag: 'now_playing_art',
@@ -24235,12 +24236,13 @@ class SimpPlayerView extends StatelessWidget {
 
   Widget _body(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final immersive = appState.b('immersive_art');
+    final immersive =
+        appState.b('immersive_art') && !DeskWide.of(context);
     final source = liked
         ? 'Your likes'
         : track.isYouTube
             ? 'Streaming'
-            : 'On this phone';
+            : (isDesktop ? 'On this computer' : 'On this phone');
 
     Widget tonal(IconData icon, VoidCallback onTap, {bool on = false}) =>
         SquishyGesture(
@@ -24308,7 +24310,7 @@ class SimpPlayerView extends StatelessWidget {
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 22),
                       child: Center(
-                        child: AspectRatio(
+                        child: DeskArtRatio(
                           aspectRatio: 1,
                           child: Hero(
                             tag: 'now_playing_art',
@@ -25315,13 +25317,14 @@ class PlusPlayerView extends StatelessWidget {
   }
 
   Widget _body(BuildContext context, Color accent) {
-    final immersive = appState.b('immersive_art');
+    final immersive =
+        appState.b('immersive_art') && !DeskWide.of(context);
     final bars = _barCache.putIfAbsent(track.id, () => _plusBars(track.id, 48));
     final source = liked
         ? 'Your likes'
         : track.isYouTube
             ? 'Streaming'
-            : 'On this phone';
+            : (isDesktop ? 'On this computer' : 'On this phone');
 
     Widget side(IconData icon, VoidCallback onTap, {bool on = false}) =>
         SquishyGesture(
@@ -25461,7 +25464,7 @@ class PlusPlayerView extends StatelessWidget {
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 20),
                         child: Center(
-                          child: AspectRatio(
+                          child: DeskArtRatio(
                             aspectRatio: 1,
                             child: Container(
                               decoration: BoxDecoration(
@@ -34126,13 +34129,14 @@ class SignalPlayerView extends StatelessWidget {
     final pal = appState.palette;
     final accent = pal.accent;
     final onAccent = pal.onAccent;
-    final immersive = appState.b('immersive_art');
+    final immersive =
+        appState.b('immersive_art') && !DeskWide.of(context);
     final bars = _barCache.putIfAbsent(track.id, () => _plusBars(track.id, 52));
     final source = liked
         ? 'Your likes'
         : track.isYouTube
             ? 'YouTube Music'
-            : 'On this phone';
+            : (isDesktop ? 'On this computer' : 'On this phone');
 
     Widget side(IconData icon, VoidCallback onTap, String label,
             {bool on = false}) =>
@@ -34275,7 +34279,7 @@ class SignalPlayerView extends StatelessWidget {
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(12, 14, 12, 18),
                         child: Center(
-                          child: AspectRatio(
+                          child: DeskArtRatio(
                             aspectRatio: 1,
                             child: Container(
                               decoration: BoxDecoration(
@@ -35729,7 +35733,7 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
               future: artSeedFor(t),
               initialData: artSeedNow(t),
               builder: (context, snap) =>
-                  _body(context, t, snap.data ?? t.artColors.first),
+                  _wide(context, t, snap.data ?? t.artColors.first),
             );
           },
         ),
@@ -35738,6 +35742,150 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
     );
   }
 
+  /// The real player style (same buttons and look as the phone), laid out
+  /// for a wide window: artwork and volume on the left, the style's own
+  /// controls on the right.
+  Widget _wide(BuildContext context, TrackItem t, Color seed) {
+    final ps = appState.playerStyle;
+    final cs = AppPalette.scheme(seed);
+    final accent = ps == 'signal'
+        ? appState.palette.accent
+        : ps == 'apple'
+            ? kAmTint
+            : cs.primary;
+    final artR = const {
+          'signal': 32.0,
+          'plus': 24.0,
+          'modern': 20.0,
+          'expressive': 48.0,
+          'apple': 12.0,
+          'simp': 14.0,
+          'jog': 999.0,
+          'alex': 30.0,
+        }[ps] ??
+        28.0;
+    return LayoutBuilder(builder: (context, c) {
+      final w = c.maxWidth, h = c.maxHeight;
+      final rightW = (w * 0.4).clamp(420.0, 560.0);
+      final leftW = w - rightW;
+      final band = min(h, 780.0);
+      final padV = max(0.0, (h - band) / 2) + 12;
+      final art = min(leftW - 120, h - 200).clamp(200.0, 620.0);
+      final mq = MediaQuery.of(context);
+      final pad = EdgeInsets.fromLTRB(leftW - 8, padV, 28, padV);
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          MediaQuery(
+            data: mq.copyWith(padding: pad, viewPadding: pad),
+            child: const DeskWide(child: NowPlayingScreen()),
+          ),
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: leftW,
+            child: Material(
+              type: MaterialType.transparency,
+              child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () => goToAlbum(context, t),
+                      child: Container(
+                        width: art,
+                        height: art,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(min(artR, art / 2)),
+                          boxShadow: [
+                            BoxShadow(
+                                color: seed.withOpacity(0.4),
+                                blurRadius: 60,
+                                spreadRadius: -8,
+                                offset: const Offset(0, 20)),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius:
+                              BorderRadius.circular(min(artR, art / 2)),
+                          child: CustomAlbumArtwork(track: t),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  SizedBox(width: art, child: _volumeRow(context, accent)),
+                ],
+              ),
+            ),
+            ),
+          ),
+        ],
+      );
+    });
+  }
+
+  Widget _volumeRow(BuildContext context, Color accent) =>
+      StreamBuilder<double>(
+        stream: audioHandler.player.volumeStream,
+        initialData: audioHandler.player.volume,
+        builder: (context, snap) {
+          final v = (snap.data ?? 1).clamp(0.0, 1.0).toDouble();
+          return Row(
+            children: [
+              IconButton(
+                tooltip: v == 0 ? 'Unmute' : 'Mute',
+                icon: Icon(
+                    v == 0
+                        ? Icons.volume_off_rounded
+                        : v < 0.5
+                            ? Icons.volume_down_rounded
+                            : Icons.volume_up_rounded,
+                    color: Colors.white70),
+                onPressed: () {
+                  if (v == 0) {
+                    audioHandler.player.setVolume(_lastVolume);
+                  } else {
+                    _lastVolume = v;
+                    audioHandler.player.setVolume(0);
+                  }
+                },
+              ),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 6,
+                    thumbShape:
+                        const RoundSliderThumbShape(enabledThumbRadius: 8),
+                    overlayShape: SliderComponentShape.noOverlay,
+                  ),
+                  child: Slider(
+                    value: v,
+                    activeColor: accent,
+                    inactiveColor: Colors.white24,
+                    onChanged: (x) => audioHandler.player.setVolume(x),
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 44,
+                child: Text('${(v * 100).round()}%',
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: [ui.FontFeature.tabularFigures()])),
+              ),
+            ],
+          );
+        },
+      );
+
+  // ignore: unused_element
   Widget _body(BuildContext context, TrackItem t, Color seed) {
     // Each player style gets its own wide look.
     final ps = appState.playerStyle;
@@ -36751,4 +36899,26 @@ class _DesktopNowPanelState extends State<DesktopNowPanel> {
         );
     }
   }
+}
+
+
+/// Marks the desktop player: the phone player styles skip their own artwork
+/// (the desktop shows it on the left) but keep every button and colour.
+class DeskWide extends InheritedWidget {
+  const DeskWide({super.key, required super.child});
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<DeskWide>() != null;
+  @override
+  bool updateShouldNotify(DeskWide oldWidget) => false;
+}
+
+/// AspectRatio for the player artwork; empty inside [DeskWide].
+class DeskArtRatio extends StatelessWidget {
+  final double aspectRatio;
+  final Widget child;
+  const DeskArtRatio({super.key, required this.aspectRatio, required this.child});
+  @override
+  Widget build(BuildContext context) => DeskWide.of(context)
+      ? const SizedBox.shrink()
+      : AspectRatio(aspectRatio: aspectRatio, child: child);
 }
