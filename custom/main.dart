@@ -22002,7 +22002,8 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _battery = false;
   AppLifecycleListener? _life;
 
-  static const _pageCount = 5;
+  // No permissions page on a computer (those are Android-only).
+  int get _pageCount => isDesktop ? 4 : 5;
 
   @override
   void initState() {
@@ -22673,7 +22674,13 @@ class _SetupScreenState extends State<SetupScreen> {
       listenable: appState,
       builder: (context, _) {
         final accent = Color.lerp(appState.palette.accent, Colors.white, 0.1)!;
-        final pages = [_welcome, _permissions, _account, _look, _done];
+        final pages = [
+          _welcome,
+          if (!isDesktop) _permissions,
+          _account,
+          _look,
+          _done,
+        ];
         final last = _page == _pageCount - 1;
         final bottom = MediaQuery.of(context).padding.bottom;
         return Theme(
