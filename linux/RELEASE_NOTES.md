@@ -13,4 +13,6 @@ This is the first version of AlexLMP for computers.
 ## Installing
 For Ubuntu, Debian, Mint and Pop!_OS: download the .deb and open it, or run `sudo apt install ./AlexLMP-linux-v0.1.0-amd64.deb`.
 
+For Arch, Manjaro and EndeavourOS: download the .pkg.tar.zst and run `sudo pacman -U AlexLMP-linux-v0.1.0-x86_64.pkg.tar.zst`.
+
 <3

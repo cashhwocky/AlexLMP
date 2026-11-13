@@ -148,11 +148,49 @@ jobs:
           dpkg-deb --info "AlexLMP-linux-v${VERSION}-amd64.deb"
           ls -la *.deb
 
+      - name: Package for Arch Linux (.pkg.tar.zst)
+        run: |
+          # Same files as the .deb, packed with makepkg in an Arch container.
+          SRC="alexlmp_${VERSION}_amd64"
+          rm -rf arch && mkdir -p arch/root
+          cp -a "$SRC/opt" "$SRC/usr" arch/root/
+          cat > arch/PKGBUILD <<PKG
+          pkgname=alexlmp
+          pkgver=${VERSION}
+          pkgrel=1
+          pkgdesc="All your music, one player."
+          arch=('x86_64')
+          url="https://github.com/cashhwocky/AlexLMP"
+          license=('GPL-3.0-only')
+          depends=('gtk3' 'mpv' 'zenity' 'java-runtime-headless>=17' 'python-gobject' 'webkit2gtk-4.1')
+          options=('!strip' '!debug')
+          package() {
+            cp -a "\$startdir/root/." "\$pkgdir/"
+          }
+          PKG
+          sed -i 's/^          //' arch/PKGBUILD
+          cat arch/PKGBUILD
+          docker run --rm -v "$PWD/arch:/w" archlinux:base-devel bash -c '
+            set -e
+            useradd -m builder
+            cp -a /w /b && chown -R builder /b
+            su builder -c "cd /b && makepkg --nodeps --noconfirm"
+            cp /b/*.pkg.tar.zst /w/
+          '
+          mv arch/alexlmp-*.pkg.tar.zst "AlexLMP-linux-v${VERSION}-x86_64.pkg.tar.zst"
+          ls -la *.pkg.tar.zst
+
       - name: Upload the .deb (every build)
         uses: actions/upload-artifact@v4
         with:
           name: AlexLMP-linux-v${{ env.VERSION }}-amd64
           path: AlexLMP-linux-v${{ env.VERSION }}-amd64.deb
+
+      - name: Upload the Arch package (every build)
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlexLMP-linux-v${{ env.VERSION }}-x86_64-arch
+          path: AlexLMP-linux-v${{ env.VERSION }}-x86_64.pkg.tar.zst
 
       - name: Find a published Linux release for this version
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
@@ -170,5 +208,7 @@ jobs:
           tag_name: ${{ env.REL_TAG != '' && env.REL_TAG || github.ref_name }}
           name: AlexLMP for Linux v${{ env.VERSION }}
           body_path: linux/RELEASE_NOTES.md
-          files: AlexLMP-linux-v${{ env.VERSION }}-amd64.deb
+          files: |
+            AlexLMP-linux-v${{ env.VERSION }}-amd64.deb
+            AlexLMP-linux-v${{ env.VERSION }}-x86_64.pkg.tar.zst
           make_latest: false
