@@ -12,6 +12,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart' show timeDilation, Ticker;
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -26,8 +27,8 @@ late final MyAudioHandler audioHandler;
 final AppState appState = AppState();
 final ValueNotifier<String?> appNotice = ValueNotifier<String?>(null);
 final ValueNotifier<bool> scanning = ValueNotifier<bool>(false);
-const MethodChannel _mediaChannel = MethodChannel('com.alexlmp.app/media');
-const MethodChannel _ytChannel = MethodChannel('com.alexlmp.app/ytmusic');
+const MethodChannel _mediaChannel = _DesktopAwareChannel('com.alexlmp.app/media');
+const MethodChannel _ytChannel = _DesktopAwareChannel('com.alexlmp.app/ytmusic');
 
 const List<String> kArtStyles = [
   'vinyl_record',
@@ -61,6 +62,13 @@ Future<void> main() async {
       systemNavigationBarIconBrightness: Brightness.light,
     ),
   );
+
+  // On a computer, songs play through mpv.
+  if (isDesktop) {
+    JustAudioMediaKit.title = 'AlexLMP';
+    JustAudioMediaKit.ensureInitialized(
+        linux: true, windows: true, android: false, iOS: false, macOS: false);
+  }
 
   await appState.load();
   timeDilation = appState.d('animation_speed', 1.0);
@@ -2425,12 +2433,14 @@ Future<bool> ensureMediaPermissions() async {
 }
 
 Future<void> scanDeviceAudio() async {
-  if (!Platform.isAndroid || scanning.value) return;
+  if (!(Platform.isAndroid || isDesktop) || scanning.value) return;
   scanning.value = true;
   try {
-    final granted = await ensureMediaPermissions();
-    if (!granted) {
-      return;
+    if (Platform.isAndroid) {
+      final granted = await ensureMediaPermissions();
+      if (!granted) {
+        return;
+      }
     }
     final raw =
         await _mediaChannel.invokeMethod('scanDeviceAudio') as List? ??
@@ -4166,9 +4176,34 @@ class AlexLmpApp extends StatelessWidget {
   }
 }
 
-void openPlayer(BuildContext context) {
+void openPlayer(BuildContext context, {int panel = 0}) {
   if (audioHandler.tracks.isEmpty) {
     showAddMusicSheet(context);
+    return;
+  }
+  if (isDesktop) {
+    if (glassPaused.value) return;
+    glassPaused.value = true;
+    Navigator.of(context, rootNavigator: true)
+        .push(PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 420),
+          reverseTransitionDuration: const Duration(milliseconds: 320),
+          pageBuilder: (_, __, ___) => DesktopNowPlaying(panel: panel),
+          transitionsBuilder: (_, anim, __, child) {
+            final c = CurvedAnimation(
+                parent: anim, curve: kEmphasizedDecel, reverseCurve: kEmphasizedAccel);
+            return FadeTransition(
+              opacity: c,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                        begin: const Offset(0, 0.04), end: Offset.zero)
+                    .animate(c),
+                child: child,
+              ),
+            );
+          },
+        ))
+        .whenComplete(() => glassPaused.value = false);
     return;
   }
   if (glassPaused.value) return; // already open
@@ -4354,6 +4389,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         final tracks = audioHandler.tracks;
         final bottomInset = MediaQuery.of(context).padding.bottom;
 
+        if (isDesktop) return _desktopScaffold(context, pal, tracks);
         if (appState.appStyle == 'signal') {
           return _signalScaffold(context, pal, tracks);
         }
@@ -4863,6 +4899,253 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   }
 
   // ═══════════════════════ AlexLMP Signal app style ═══════════════════════
+
+  // ═══════════════════════ Desktop layout ═══════════════════════
+
+  final GlobalKey<NavigatorState> _deskNav = GlobalKey<NavigatorState>();
+  final ValueNotifier<int> _deskTab = ValueNotifier<int>(0);
+
+  void _deskGo(int tab) {
+    _deskNav.currentState?.popUntil((r) => r.isFirst);
+    if (tab != _deskTab.value) {
+      setState(() => _tab = tab < 3 ? tab : _tab);
+      _deskTab.value = tab;
+    }
+  }
+
+  Widget _desktopScaffold(
+      BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+    final yt = appState.homeMode == 'youtube';
+
+    Widget navItem(int i, IconData icon, String label) {
+      return ValueListenableBuilder<int>(
+        valueListenable: _deskTab,
+        builder: (context, tab, _) {
+          final on = tab == i;
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            child: Material(
+              color: on ? pal.container : Colors.transparent,
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => _deskGo(i),
+                child: SizedBox(
+                  height: 46,
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 14),
+                      Icon(icon, color: on ? pal.accent : Colors.white70, size: 22),
+                      const SizedBox(width: 14),
+                      Text(label,
+                          style: TextStyle(
+                              color: on ? Colors.white : Colors.white70,
+                              fontSize: 15,
+                              fontWeight: on ? FontWeight.w700 : FontWeight.w500)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    Widget sideRow(Widget cover, String title, String sub, VoidCallback onTap) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(width: 40, height: 40, child: cover),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600)),
+                    Text(sub,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    void openInContent(Widget page) {
+      _deskNav.currentState?.push(MaterialPageRoute(builder: (_) => page));
+    }
+
+    final sidebar = Container(
+      width: 264,
+      color: pal.surface,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 26, 20, 18),
+            child: Row(
+              children: [
+                SignalBars(size: 30, color: pal.accent),
+                const SizedBox(width: 12),
+                const Text('AlexLMP',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4)),
+              ],
+            ),
+          ),
+          navItem(0, Icons.home_rounded, 'Home'),
+          navItem(3, Icons.search_rounded, 'Search'),
+          navItem(1, Icons.sensors_rounded, 'Mix'),
+          navItem(2, Icons.library_music_rounded, 'Library'),
+          navItem(4, Icons.settings_rounded, 'Settings'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
+            child: SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: 'youtube', label: Text('YouTube Music')),
+                ButtonSegment(value: 'local', label: Text('This computer')),
+              ],
+              selected: {yt ? 'youtube' : 'local'},
+              onSelectionChanged: (v) {
+                _setMode(v.first);
+                _deskGo(_deskTab.value);
+              },
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(24, 18, 16, 6),
+            child: Text('YOUR PLAYLISTS',
+                style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11.5,
+                    letterSpacing: 0.9,
+                    fontWeight: FontWeight.w700)),
+          ),
+          Expanded(
+            child: ValueListenableBuilder<int>(
+              valueListenable: LibraryStore.revision,
+              builder: (context, _, __) => ListView(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+                children: [
+                  sideRow(
+                    Container(
+                        color: pal.accent,
+                        child: Icon(Icons.favorite_rounded, color: pal.onAccent)),
+                    'Liked songs',
+                    yt ? 'YouTube Music' : 'This computer',
+                    () => yt
+                        ? openYtLikedMusic(_deskNav.currentContext ?? context)
+                        : openInContent(const LikedSongsScreen()),
+                  ),
+                  for (final i in LibraryStore.pins)
+                    sideRow(
+                      i.kind == 'local'
+                          ? (appState.playlistById(i.id) == null
+                              ? const ColoredBox(color: Colors.white10)
+                              : PlaylistCoverThumbnail(
+                                  playlist: appState.playlistById(i.id)!, size: 40))
+                          : YtNetworkImage(url: i.thumbnail, size: 40),
+                      i.title,
+                      'Pinned',
+                      () => LibraryStore.open(_deskNav.currentContext ?? context, i),
+                    ),
+                  for (final pl in appState.playlists)
+                    sideRow(
+                      PlaylistCoverThumbnail(playlist: pl, size: 40),
+                      pl.name,
+                      '${pl.trackIds.length} songs',
+                      () => openInContent(PlaylistDetailScreen(playlistId: pl.id)),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final content = Navigator(
+      key: _deskNav,
+      onGenerateRoute: (_) => MaterialPageRoute(
+        builder: (_) => ValueListenableBuilder<int>(
+          valueListenable: _deskTab,
+          builder: (context, tab, __) => ListenableBuilder(
+            listenable: Listenable.merge(
+                [appState, audioHandler.libraryRevision, audioHandler.currentIndex]),
+            builder: (context, _) {
+              switch (tab) {
+                case 3:
+                  return const SearchScreen();
+                case 4:
+                  return const SettingsScreen();
+                default:
+                  return Scaffold(
+                    backgroundColor: pal.bg,
+                    body: SafeArea(
+                      bottom: false,
+                      child: _tabBody(context, pal, audioHandler.tracks, tab: tab),
+                    ),
+                  );
+              }
+            },
+          ),
+        ),
+      ),
+    );
+
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.space): () =>
+            audioHandler.player.playing ? audioHandler.pause() : audioHandler.play(),
+        const SingleActivator(LogicalKeyboardKey.arrowRight, control: true):
+            audioHandler.skipToNext,
+        const SingleActivator(LogicalKeyboardKey.arrowLeft, control: true):
+            audioHandler.skipToPrevious,
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          backgroundColor: pal.bg,
+          body: Column(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    sidebar,
+                    const VerticalDivider(width: 1, color: Colors.white10),
+                    Expanded(child: ClipRect(child: content)),
+                  ],
+                ),
+              ),
+              const DesktopPlayerBar(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _signalScaffold(
       BuildContext context, AppPalette pal, List<TrackItem> tracks) {
@@ -16191,6 +16474,17 @@ class SettingsScreen extends StatelessWidget {
         _tile(pal, Icons.refresh_rounded, 'Rescan music library',
             'Pick up newly added songs', () => scanDeviceAudio(),
             trailing: const SizedBox.shrink()),
+        if (isDesktop)
+          _tile(pal, Icons.folder_open_rounded, 'Music folders',
+              desktopMusicDirs().join(', '), () async {
+            final dir = await FilePicker.platform
+                .getDirectoryPath(dialogTitle: 'Add a music folder');
+            if (dir == null) return;
+            final dirs = {...desktopMusicDirs(), dir}.toList();
+            await YouTubeMusic.prefs?.setStringList('desktop_music_dirs', dirs);
+            appNotice.value = 'Added $dir. Scanning it now…';
+            await scanDeviceAudio();
+          }),
       ]),
     ];
   }
@@ -28852,6 +29146,8 @@ String _plainNotes(String md) => md
 /// Checks for a newer release. [manual] = the user tapped "Check for updates"
 /// (always checks, and also reports "you're up to date" / errors).
 Future<void> checkForUpdates(BuildContext context, {bool manual = false}) async {
+  // Phone updates are APKs; the Linux version gets .deb updates.
+  if (isDesktop) return;
   final prefs = YouTubeMusic.prefs;
   if (!manual) {
     if (!appState.b('update_check', true)) return;
@@ -33838,6 +34134,617 @@ class LocalCollectionScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════ Desktop (Linux) ═══════════════════════
+// Same AlexLMP design, laid out for a computer: sidebar on the left, the
+// phone screens in the middle, a player bar at the bottom and a wide
+// Now Playing. Pages open inside the middle area so the sidebar and the
+// player bar always stay put.
+
+bool get isDesktop => Platform.isLinux || Platform.isWindows || Platform.isMacOS;
+
+/// Bridge to the native side. On a computer there is no Android code behind
+/// it: links open in the browser, other calls quietly return nothing.
+class _DesktopAwareChannel extends MethodChannel {
+  const _DesktopAwareChannel(super.name);
+
+  @override
+  Future<T?> invokeMethod<T>(String method, [dynamic arguments]) async {
+    if (!isDesktop) return super.invokeMethod<T>(method, arguments);
+    switch (method) {
+      case 'openUrl':
+        final url = (arguments is Map ? arguments['url'] : arguments)?.toString() ?? '';
+        if (url.isNotEmpty) {
+          await Process.run(Platform.isWindows ? 'explorer' : 'xdg-open', [url]);
+        }
+        return null;
+      case 'deviceInfo':
+        return <String, dynamic>{
+          'manufacturer': Platform.operatingSystem,
+          'model': Platform.localHostname,
+          'android': Platform.operatingSystemVersion,
+          'sdk': 0,
+          'build': 'desktop',
+        } as T;
+      case 'scanDeviceAudio':
+        return await _desktopScan() as T;
+    }
+    try {
+      return await super.invokeMethod<T>(method, arguments);
+    } on MissingPluginException {
+      return null;
+    }
+  }
+}
+
+const _kAudioExt = {
+  '.mp3', '.m4a', '.flac', '.ogg', '.opus', '.wav', '.aac', '.wma', '.alac',
+  '.aiff', '.aif', '.ape', '.wv', '.mka', '.webm',
+};
+
+/// Music folders scanned on a computer (Settings > Music folders).
+List<String> desktopMusicDirs() {
+  final saved =
+      YouTubeMusic.prefs?.getStringList('desktop_music_dirs') ?? const <String>[];
+  if (saved.isNotEmpty) return saved;
+  final home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '';
+  return [if (home.isNotEmpty) p.join(home, 'Music')];
+}
+
+/// Finds music files in the music folders, in the same shape Android sends.
+/// Artist / album come from "Artist - Title" names and Artist/Album folders.
+Future<List<Map<String, dynamic>>> _desktopScan() async {
+  final out = <Map<String, dynamic>>[];
+  for (final dir in desktopMusicDirs()) {
+    final d = Directory(dir);
+    if (!await d.exists()) continue;
+    try {
+      await for (final e in d.list(recursive: true, followLinks: false)) {
+        if (e is! File) continue;
+        final ext = p.extension(e.path).toLowerCase();
+        if (!_kAudioExt.contains(ext)) continue;
+        final name = p.basenameWithoutExtension(e.path);
+        final parent = p.basename(p.dirname(e.path));
+        final grand = p.basename(p.dirname(p.dirname(e.path)));
+        var title = name.replaceFirst(RegExp(r'^\d{1,3}[\s._-]+'), '').trim();
+        var artist = '';
+        final dash = title.indexOf(' - ');
+        if (dash > 0) {
+          artist = title.substring(0, dash).trim();
+          title = title.substring(dash + 3).trim();
+        }
+        final musicRoot = p.basename(dir);
+        final inAlbumFolder = parent != musicRoot;
+        if (artist.isEmpty && inAlbumFolder && grand != musicRoot && grand.isNotEmpty) {
+          artist = grand;
+        }
+        out.add({
+          'id': e.path.hashCode.toUnsigned(32),
+          'uri': '',
+          'filePath': e.path,
+          'title': title.isEmpty ? name : title,
+          'artist': artist,
+          'album': inAlbumFolder ? parent : '',
+          'durationSeconds': 0,
+        });
+      }
+    } catch (_) {}
+  }
+  return out;
+}
+
+class _DeskSeekPainter extends CustomPainter {
+  final double v;
+  final Color accent;
+  final bool dragging;
+  _DeskSeekPainter(this.v, this.accent, this.dragging);
+
+  @override
+  void paint(Canvas canvas, Size s) {
+    final h = dragging ? 6.0 : 4.0;
+    final y = s.height / 2;
+    final r = Radius.circular(h / 2);
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(Rect.fromLTWH(0, y - h / 2, s.width, h), r),
+        Paint()..color = Colors.white24);
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(Rect.fromLTWH(0, y - h / 2, s.width * v, h), r),
+        Paint()..color = accent);
+    canvas.drawCircle(Offset(s.width * v, y), dragging ? 8 : 6, Paint()..color = Colors.white);
+  }
+
+  @override
+  bool shouldRepaint(_DeskSeekPainter o) =>
+      o.v != v || o.accent != accent || o.dragging != dragging;
+}
+
+/// Bottom player bar: song on the left, controls and seek in the middle,
+/// lyrics / queue / volume / full player on the right.
+class DesktopPlayerBar extends StatelessWidget {
+  const DesktopPlayerBar({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    return ValueListenableBuilder<int>(
+      valueListenable: audioHandler.currentIndex,
+      builder: (context, _, __) {
+        final t = audioHandler.currentTrack;
+        return Container(
+          height: 96,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: pal.surface,
+            border: const Border(top: BorderSide(color: Colors.white10)),
+          ),
+          child: Row(
+            children: [
+              // Song
+              Expanded(
+                flex: 3,
+                child: t == null
+                    ? const Text('Nothing playing',
+                        style: TextStyle(color: Colors.white54))
+                    : InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => openPlayer(context),
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: Row(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: SizedBox(
+                                    width: 60,
+                                    height: 60,
+                                    child: CustomAlbumArtwork(track: t)),
+                              ),
+                              const SizedBox(width: 14),
+                              Flexible(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(t.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w700)),
+                                    const SizedBox(height: 3),
+                                    Text(t.artist,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            color: Colors.white60, fontSize: 13)),
+                                  ],
+                                ),
+                              ),
+                              ListenableBuilder(
+                                listenable: appState,
+                                builder: (_, __) {
+                                  final liked = appState.isLiked(t.id);
+                                  return IconButton(
+                                    tooltip: liked ? 'Unlike' : 'Like',
+                                    onPressed: () => appState.toggleLike(t.id),
+                                    icon: Icon(
+                                        liked
+                                            ? Icons.favorite_rounded
+                                            : Icons.favorite_border_rounded,
+                                        color: liked ? pal.accent : Colors.white70),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+              ),
+              // Controls + seek
+              Expanded(
+                flex: 4,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    StreamBuilder<PlaybackState>(
+                      stream: audioHandler.playbackState,
+                      builder: (context, snap) {
+                        final st = snap.data;
+                        final playing = st?.playing ?? false;
+                        final shuffle =
+                            st?.shuffleMode == AudioServiceShuffleMode.all;
+                        final repeat = st?.repeatMode ?? AudioServiceRepeatMode.none;
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            IconButton(
+                              tooltip: 'Shuffle',
+                              icon: Icon(Icons.shuffle_rounded,
+                                  color: shuffle ? pal.accent : Colors.white60),
+                              onPressed: () => audioHandler.setShuffleMode(shuffle
+                                  ? AudioServiceShuffleMode.none
+                                  : AudioServiceShuffleMode.all),
+                            ),
+                            IconButton(
+                              tooltip: 'Previous',
+                              iconSize: 30,
+                              icon: const Icon(Icons.skip_previous_rounded,
+                                  color: Colors.white),
+                              onPressed: audioHandler.skipToPrevious,
+                            ),
+                            const SizedBox(width: 6),
+                            Tooltip(
+                              message: playing ? 'Pause (Space)' : 'Play (Space)',
+                              child: InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: () => playing
+                                    ? audioHandler.pause()
+                                    : audioHandler.play(),
+                                child: Container(
+                                  width: 48,
+                                  height: 48,
+                                  decoration: BoxDecoration(
+                                      color: pal.accent, shape: BoxShape.circle),
+                                  child: Icon(
+                                      playing
+                                          ? Icons.pause_rounded
+                                          : Icons.play_arrow_rounded,
+                                      color: pal.onAccent,
+                                      size: 30),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            IconButton(
+                              tooltip: 'Next',
+                              iconSize: 30,
+                              icon: const Icon(Icons.skip_next_rounded,
+                                  color: Colors.white),
+                              onPressed: audioHandler.skipToNext,
+                            ),
+                            IconButton(
+                              tooltip: 'Repeat',
+                              icon: Icon(
+                                  repeat == AudioServiceRepeatMode.one
+                                      ? Icons.repeat_one_rounded
+                                      : Icons.repeat_rounded,
+                                  color: repeat == AudioServiceRepeatMode.none
+                                      ? Colors.white60
+                                      : pal.accent),
+                              onPressed: () =>
+                                  audioHandler.setRepeatMode(_nextRepeat(repeat)),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    if (t != null)
+                      SizedBox(
+                        height: 26,
+                        child: PlayerSeek(
+                          fallbackSeconds: t.durationSeconds,
+                          height: 22,
+                          timeStyle: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11.5,
+                              fontFeatures: [ui.FontFeature.tabularFigures()]),
+                          showTimes: false,
+                          track: (v, dragging) => CustomPaint(
+                              painter: _DeskSeekPainter(v, pal.accent, dragging)),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              // Tools
+              Expanded(
+                flex: 3,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      tooltip: 'Lyrics',
+                      icon: const Icon(Icons.lyrics_outlined, color: Colors.white70),
+                      onPressed: t == null ? null : () => openPlayer(context, panel: 0),
+                    ),
+                    IconButton(
+                      tooltip: 'Queue',
+                      icon: const Icon(Icons.queue_music_rounded,
+                          color: Colors.white70),
+                      onPressed: t == null ? null : () => openPlayer(context, panel: 1),
+                    ),
+                    const Icon(Icons.volume_up_rounded, color: Colors.white70, size: 20),
+                    SizedBox(
+                      width: 120,
+                      child: StreamBuilder<double>(
+                        stream: audioHandler.player.volumeStream,
+                        initialData: audioHandler.player.volume,
+                        builder: (context, snap) => SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 3,
+                            thumbShape:
+                                const RoundSliderThumbShape(enabledThumbRadius: 6),
+                            overlayShape: SliderComponentShape.noOverlay,
+                          ),
+                          child: Slider(
+                            value: (snap.data ?? 1).clamp(0.0, 1.0),
+                            activeColor: pal.accent,
+                            inactiveColor: Colors.white24,
+                            onChanged: (v) => audioHandler.player.setVolume(v),
+                          ),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Full player',
+                      icon: const Icon(Icons.open_in_full_rounded,
+                          color: Colors.white70),
+                      onPressed: t == null ? null : () => openPlayer(context),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Wide Now Playing: artwork and controls on the left, lyrics or the queue
+/// on the right.
+class DesktopNowPlaying extends StatefulWidget {
+  final int panel;
+  const DesktopNowPlaying({super.key, this.panel = 0});
+
+  @override
+  State<DesktopNowPlaying> createState() => _DesktopNowPlayingState();
+}
+
+class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
+  late int _panel = widget.panel;
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = appState.palette;
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.escape): () =>
+            Navigator.of(context).maybePop(),
+      },
+      child: Focus(
+        autofocus: true,
+        child: ListenableBuilder(
+          listenable: Listenable.merge([audioHandler.currentIndex, appState]),
+          builder: (context, _) {
+            final t = audioHandler.currentTrack;
+            if (t == null) return const Scaffold(backgroundColor: Colors.black);
+            return Scaffold(
+              backgroundColor: Colors.black,
+              body: Stack(
+                fit: StackFit.expand,
+                children: [
+                  PrestigeBackdrop(track: t, dim: 0.62, animate: false),
+                  SafeArea(
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                          child: Row(
+                            children: [
+                              IconButton(
+                                tooltip: 'Close (Esc)',
+                                icon: const Icon(Icons.keyboard_arrow_down_rounded,
+                                    color: Colors.white, size: 32),
+                                onPressed: () => Navigator.of(context).pop(),
+                              ),
+                              const Spacer(),
+                              SegmentedButton<int>(
+                                segments: const [
+                                  ButtonSegment(
+                                      value: 0,
+                                      icon: Icon(Icons.lyrics_outlined),
+                                      label: Text('Lyrics')),
+                                  ButtonSegment(
+                                      value: 1,
+                                      icon: Icon(Icons.queue_music_rounded),
+                                      label: Text('Up next')),
+                                ],
+                                selected: {_panel},
+                                onSelectionChanged: (s) =>
+                                    setState(() => _panel = s.first),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: Row(
+                            children: [
+                              // Artwork + controls
+                              Expanded(
+                                flex: 5,
+                                child: LayoutBuilder(builder: (context, c) {
+                                  final art = min(c.maxWidth * 0.72, c.maxHeight - 240)
+                                      .clamp(180.0, 560.0);
+                                  return Center(
+                                    child: SizedBox(
+                                      width: art,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Container(
+                                            width: art,
+                                            height: art,
+                                            decoration: BoxDecoration(
+                                              borderRadius: BorderRadius.circular(26),
+                                              boxShadow: const [
+                                                BoxShadow(
+                                                    color: Color(0x99000000),
+                                                    blurRadius: 50,
+                                                    offset: Offset(0, 24)),
+                                              ],
+                                            ),
+                                            child: ClipRRect(
+                                              borderRadius: BorderRadius.circular(26),
+                                              child: CustomAlbumArtwork(track: t),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 24),
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    GestureDetector(
+                                                      onTap: () => goToAlbum(context, t),
+                                                      child: Text(t.title,
+                                                          maxLines: 2,
+                                                          overflow: TextOverflow.ellipsis,
+                                                          style: const TextStyle(
+                                                              color: Colors.white,
+                                                              fontSize: 28,
+                                                              fontWeight: FontWeight.w800,
+                                                              letterSpacing: -0.4)),
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    GestureDetector(
+                                                      onTap: () => goToArtist(context, t),
+                                                      child: Text(t.artist,
+                                                          style: TextStyle(
+                                                              color: pal.accent,
+                                                              fontSize: 17,
+                                                              fontWeight:
+                                                                  FontWeight.w600)),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              IconButton(
+                                                iconSize: 30,
+                                                tooltip: appState.isLiked(t.id)
+                                                    ? 'Unlike'
+                                                    : 'Like',
+                                                onPressed: () =>
+                                                    appState.toggleLike(t.id),
+                                                icon: Icon(
+                                                    appState.isLiked(t.id)
+                                                        ? Icons.favorite_rounded
+                                                        : Icons.favorite_border_rounded,
+                                                    color: appState.isLiked(t.id)
+                                                        ? pal.accent
+                                                        : Colors.white),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 14),
+                                          PlayerSeek(
+                                            fallbackSeconds: t.durationSeconds,
+                                            height: 26,
+                                            timeStyle: const TextStyle(
+                                                color: Colors.white60,
+                                                fontSize: 12.5,
+                                                fontFeatures: [
+                                                  ui.FontFeature.tabularFigures()
+                                                ]),
+                                            track: (v, dragging) => CustomPaint(
+                                                painter: _DeskSeekPainter(
+                                                    v, pal.accent, dragging)),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          StreamBuilder<PlaybackState>(
+                                            stream: audioHandler.playbackState,
+                                            builder: (context, snap) {
+                                              final playing = snap.data?.playing ?? false;
+                                              return Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  IconButton(
+                                                    iconSize: 40,
+                                                    tooltip: 'Previous',
+                                                    icon: const Icon(
+                                                        Icons.skip_previous_rounded,
+                                                        color: Colors.white),
+                                                    onPressed:
+                                                        audioHandler.skipToPrevious,
+                                                  ),
+                                                  const SizedBox(width: 18),
+                                                  InkWell(
+                                                    customBorder: const CircleBorder(),
+                                                    onTap: () => playing
+                                                        ? audioHandler.pause()
+                                                        : audioHandler.play(),
+                                                    child: Container(
+                                                      width: 76,
+                                                      height: 76,
+                                                      decoration: BoxDecoration(
+                                                          color: pal.accent,
+                                                          shape: BoxShape.circle),
+                                                      child: Icon(
+                                                          playing
+                                                              ? Icons.pause_rounded
+                                                              : Icons.play_arrow_rounded,
+                                                          color: pal.onAccent,
+                                                          size: 44),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 18),
+                                                  IconButton(
+                                                    iconSize: 40,
+                                                    tooltip: 'Next',
+                                                    icon: const Icon(
+                                                        Icons.skip_next_rounded,
+                                                        color: Colors.white),
+                                                    onPressed: audioHandler.skipToNext,
+                                                  ),
+                                                ],
+                                              );
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ),
+                              // Lyrics / queue
+                              Expanded(
+                                flex: 4,
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(0, 12, 24, 24),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(24),
+                                    child: Container(
+                                      color: Colors.black.withOpacity(0.35),
+                                      child: _panel == 0
+                                          ? LyricsScreen(
+                                              key: ValueKey('ly${t.id}'), track: t)
+                                          : const QueueScreen(),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
