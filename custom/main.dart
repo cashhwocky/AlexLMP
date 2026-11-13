@@ -13160,7 +13160,7 @@ class PlaylistDetailScreen extends StatelessWidget {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -18033,7 +18033,7 @@ Widget _queueBody() => ListenableBuilder(
               child: Text(
                 'Nothing queued. Use "Play next" or "Add to queue" in a song\'s ⋮ menu.',
                 style: TextStyle(color: Colors.white38, fontSize: 13),
-              )),
+              ),
             ),
           for (var q = 0; q < upNext.length; q++)
             ListTile(
