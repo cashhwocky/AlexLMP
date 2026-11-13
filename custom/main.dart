@@ -226,6 +226,20 @@ class AppPalette {
     playerAccent: Color(0xFFF09CE2),
     playerOnAccent: Color(0xFF3C0036),
   );
+  /// Default theme (AlexLMP Bloom): soft lilac on a dark purple-grey.
+  static const lilac = AppPalette(
+    name: 'Lilac',
+    accent: Color(0xFFCBBAFF),
+    onAccent: Color(0xFF271D40),
+    container: Color(0xFF383150),
+    bg: Color(0xFF1C1828),
+    surface: Color(0xFF2C2740),
+    playerBg: Color(0xFF1F1A2C),
+    playerSurface: Color(0xFF443C5E),
+    playerButton: Color(0xFF443C5E),
+    playerAccent: Color(0xFFCBBAFF),
+    playerOnAccent: Color(0xFF271D40),
+  );
   static const amoled = AppPalette(
     name: 'AMOLED',
     accent: Color(0xFFD0BCFF),
@@ -278,6 +292,7 @@ class AppPalette {
   ];
 
   static final List<AppPalette> all = [
+    lilac,
     classicBlue,
     emerald,
     sunsetPeach,
@@ -351,13 +366,13 @@ class Playlist {
 
 class AppState extends ChangeNotifier {
   SharedPreferences? _prefs;
-  String themeName = 'AMOLED';
+  String themeName = 'Lilac';
   bool liquidGlass = false;
   final bool vinylSpinMode = false; // removed feature, always off
   bool stopOnTaskClear = true;
   bool linkSpeedAndPitch = false;
   bool swipeRightForNext = false; // default: swipe left = next (like a carousel)
-  String playerStyle = 'alex'; // alex = "AlexLMP Classic" (default), simp = "AlexLMP"
+  String playerStyle = 'bloom'; // bloom = "AlexLMP Bloom" (default)
   bool animatedBackground = false;
   bool artBackdrop = false;
   AppPalette? _adaptivePalette;
@@ -415,7 +430,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// 'alex' (default look) or 'community' (Google / Material 3 look).
-  String get appStyle => str('app_style', 'alex');
+  String get appStyle => str('app_style', 'bloom');
   bool get community => appStyle == 'community';
 
   /// 'local' (files on your phone) or 'youtube' (your YouTube Music).
@@ -452,6 +467,8 @@ class AppState extends ChangeNotifier {
 
   AppPalette get palette {
     final base = _basePalette;
+    // Lilac is used exactly as designed (no AMOLED, no Material recolour).
+    if (base.name == 'Lilac' && !b('pure_black')) return base;
     if (community || b('m3_colors', true)) {
       return AppPalette.m3(base.accent, pureBlack: b('pure_black'));
     }
@@ -568,7 +585,19 @@ class AppState extends ChangeNotifier {
       await prefs.setString('app_style', 'alex');
       await prefs.setBool('alex_app_default_v2', true);
     }
-    playerStyle = prefs.getString('player_style') ?? 'alex';
+    // AlexLMP Bloom (3.0): the Bloom look, Bloom player and the Lilac
+    // theme become everyone's defaults once. Everything can be changed in
+    // Settings.
+    if (prefs.getBool('bloom_default_v1') != true) {
+      await prefs.setString('app_style', 'bloom');
+      await prefs.setString('player_style', 'bloom');
+      await prefs.setString('theme_name', 'Lilac');
+      await prefs.setBool('pure_black', false);
+      await prefs.setBool('use_wallpaper_colors', false);
+      await prefs.setBool('bloom_default_v1', true);
+      themeName = 'Lilac';
+    }
+    playerStyle = prefs.getString('player_style') ?? 'bloom';
     // The Prestige player was removed.
     if (playerStyle == 'prestige') playerStyle = 'alex';
     animatedBackground = prefs.getBool('animated_bg') ?? false;
@@ -4354,6 +4383,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         final tracks = audioHandler.tracks;
         final bottomInset = MediaQuery.of(context).padding.bottom;
 
+        if (appState.appStyle == 'bloom') {
+          return _bloomScaffold(context, pal, tracks);
+        }
         if (appState.appStyle == 'signal') {
           return _signalScaffold(context, pal, tracks);
         }
@@ -5120,6 +5152,503 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       child: ListView(
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.only(bottom: 24),
+        children: out,
+      ),
+    );
+  }
+
+  // ═══════════════════════ AlexLMP Bloom app style ═══════════════════════
+
+  Widget _bloomScaffold(
+      BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+    final tab = _tab > 2 ? 0 : _tab;
+    Widget page;
+    switch (tab) {
+      case 1:
+        page = const BloomSearchPage();
+        break;
+      case 2:
+        page = BloomLibraryPage(
+            onSearch: () => setState(() {
+                  _dir = -1;
+                  _tab = 1;
+                }));
+        break;
+      default:
+        page = _bloomHome(context, pal, tracks);
+    }
+    return Scaffold(
+      backgroundColor: bc.bg,
+      resizeToAvoidBottomInset: false,
+      body: Stack(
+        children: [
+          const Positioned.fill(child: BloomBackdrop()),
+          Positioned.fill(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              switchInCurve: kEmphasizedDecel,
+              switchOutCurve: kEmphasizedAccel,
+              transitionBuilder: (child, anim) => FadeTransition(
+                opacity: anim,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                          begin: Offset(0.04 * _dir, 0), end: Offset.zero)
+                      .animate(anim),
+                  child: child,
+                ),
+              ),
+              child: KeyedSubtree(key: ValueKey('bloom$tab'), child: page),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ValueListenableBuilder<int>(
+                  valueListenable: audioHandler.currentIndex,
+                  builder: (context, _, __) {
+                    final t = audioHandler.currentTrack;
+                    if (t == null) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: MiniPlayer(track: t, palette: pal, bloom: true),
+                    );
+                  },
+                ),
+                BloomNavBar(
+                  tab: tab,
+                  onTab: (i) => setState(() {
+                    _dir = i >= _tab ? 1 : -1;
+                    _tab = i;
+                  }),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bloomHome(BuildContext context, AppPalette pal, List<TrackItem> all) {
+    final c = bc;
+    final yt = appState.homeMode == 'youtube';
+    final top = MediaQuery.of(context).padding.top;
+    final h = DateTime.now().hour;
+    final greet = h < 5
+        ? 'Good night'
+        : h < 12
+            ? 'Good morning'
+            : h < 17
+                ? 'Good afternoon'
+                : 'Good evening';
+    final acct = ytAccount.value;
+    final first = (acct.signedIn ? (acct.name ?? '') : '').trim().split(' ').first;
+    final local = all.where((t) => !t.isYouTube).toList();
+
+    Widget header = Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(greet,
+                  style: bloomText(14, color: c.t2, weight: FontWeight.w500)),
+              const SizedBox(height: 2),
+              Text(first.isEmpty ? 'Welcome back' : 'Welcome back, $first',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: bloomText(26, weight: FontWeight.w700)),
+            ],
+          ),
+        ),
+        SquishyGesture(
+          pressedScale: 0.9,
+          onTap: () => showYtAccountSheet(context),
+          child: BloomShape(
+            kind: BloomKind.cookie,
+            size: 48,
+            color: c.lc,
+            child: acct.signedIn && acct.photo != null
+                ? Image.network(acct.photo!,
+                    width: 48,
+                    height: 48,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) =>
+                        Icon(Icons.person_rounded, color: c.onLc))
+                : Text(
+                    first.isEmpty ? 'A' : first.characters.first.toUpperCase(),
+                    style: bloomText(19,
+                        color: c.onLc, weight: FontWeight.w800)),
+          ),
+        ),
+      ],
+    );
+
+    Widget modeChips = Padding(
+      padding: const EdgeInsets.only(top: 14, bottom: 14),
+      child: Row(
+        children: [
+          BloomChip(
+              label: 'YouTube Music',
+              on: yt,
+              onTap: () => _setMode('youtube')),
+          const SizedBox(width: 8),
+          BloomChip(
+              label: 'On this phone',
+              on: !yt,
+              onTap: () => _setMode('local')),
+        ],
+      ),
+    );
+
+    // The widget grid at the top (big card + Liked + Discover).
+    Widget grid({
+      required Widget art,
+      required String kicker,
+      required String title,
+      required String sub,
+      required VoidCallback onOpen,
+      required VoidCallback onPlay,
+      required int likedCount,
+      required VoidCallback onLiked,
+      required VoidCallback onDiscover,
+    }) {
+      return SizedBox(
+        height: 206,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              flex: 115,
+              child: SquishyGesture(
+                pressedScale: 0.97,
+                onTap: onOpen,
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                      color: c.s2, borderRadius: BorderRadius.circular(32)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          BloomShape(
+                              kind: BloomKind.scallop, size: 82, child: art),
+                          const Spacer(),
+                          BloomButton(
+                            kind: null,
+                            radius: 16,
+                            size: 42,
+                            bg: c.lc,
+                            icon: Icons.play_arrow_rounded,
+                            iconColor: c.onLc,
+                            iconSize: 24,
+                            tooltip: 'Play',
+                            onTap: onPlay,
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+                      Text(kicker,
+                          style: bloomText(10.5,
+                              color: c.pri,
+                              weight: FontWeight.w700,
+                              spacing: 1)),
+                      const SizedBox(height: 3),
+                      Text(title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: bloomText(19, weight: FontWeight.w700)),
+                      const SizedBox(height: 2),
+                      Text(sub,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: bloomText(12,
+                              color: c.t2, weight: FontWeight.w500)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 100,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: SquishyGesture(
+                      pressedScale: 0.96,
+                      onTap: onLiked,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                            color: c.lc,
+                            borderRadius: BorderRadius.circular(30)),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                BloomShape(
+                                  kind: BloomKind.flower,
+                                  size: 34,
+                                  color: c.onLc,
+                                  child: Icon(Icons.favorite_rounded,
+                                      color: c.lc, size: 16),
+                                ),
+                                const Spacer(),
+                                if (likedCount > 0)
+                                  Text('$likedCount',
+                                      style: bloomText(22,
+                                          color: c.onLc,
+                                          weight: FontWeight.w800)),
+                              ],
+                            ),
+                            const Spacer(),
+                            Text('Liked songs',
+                                style: bloomText(15,
+                                    color: c.onLc, weight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: SquishyGesture(
+                      pressedScale: 0.96,
+                      onTap: onDiscover,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                            color: c.pink,
+                            borderRadius: BorderRadius.circular(30)),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Discover',
+                                style: bloomText(15,
+                                    color: c.onPink, weight: FontWeight.w700)),
+                            const Spacer(),
+                            Row(
+                              children: [
+                                Text('Shuffle',
+                                    style: bloomText(12,
+                                        color: c.onPink,
+                                        weight: FontWeight.w600)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: SizedBox(
+                                    height: 18,
+                                    child: CustomPaint(
+                                      painter: BloomWavePainter(
+                                        value: 1,
+                                        phase: 0,
+                                        active: c.onPink,
+                                        track: Colors.transparent,
+                                        amp: 2.6,
+                                        period: 12,
+                                        stroke: 3,
+                                        thumb: true,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget songs(List<TrackItem> list, int n) => bloomGroup([
+          for (var i = 0; i < min(n, list.length); i++)
+            BloomSongRow(track: list[i], onTap: () => _ytPlay(list, i)),
+        ]);
+
+    Widget shelfCards(List<YtShelfItem> items, {bool shapes = true}) =>
+        bloomRow([
+          for (var i = 0; i < items.length; i++)
+            BloomCard(
+              art: YtNetworkImage(url: items[i].thumbnail, size: 128),
+              title: items[i].title,
+              subtitle: items[i].subtitle,
+              size: 128,
+              kind: shapes && items[i].kind != 'album'
+                  ? kBloomCycle[i % kBloomCycle.length]
+                  : (items[i].kind == 'artist' ? BloomKind.cookie : null),
+              radius: 28,
+              center: items[i].kind == 'artist',
+              onTap: () => openYtShelfItem(context, items[i]),
+            ),
+        ], 178);
+
+    final out = <Widget>[header, modeChips];
+
+    if (yt) {
+      out.add(_ytData((d, err, loading) {
+        final col = <Widget>[];
+        if (d.shelves.isEmpty) col.add(_ytHomeStatus(pal, err, loading));
+        final mix = d.mixes.isNotEmpty ? d.mixes.first : null;
+        final pool = d.quick.isNotEmpty ? d.quick : d.liked;
+        col.add(grid(
+          art: mix != null
+              ? YtNetworkImage(url: mix.thumbnail, size: 82)
+              : (pool.isNotEmpty
+                  ? CustomAlbumArtwork(track: pool.first)
+                  : ColoredBox(color: c.s3)),
+          kicker: 'JUMP BACK IN',
+          title: mix?.title ?? 'Quick picks',
+          sub: mix?.subtitle ?? 'Made from what you play',
+          onOpen: () => mix != null
+              ? openYtShelfItem(context, mix)
+              : (pool.isNotEmpty ? _ytPlay(pool, 0) : null),
+          onPlay: () {
+            if (mix != null) {
+              openYtShelfItem(context, mix);
+            } else if (pool.isNotEmpty) {
+              _ytPlay(pool, 0);
+            }
+          },
+          likedCount: d.liked.length,
+          onLiked: () => openYtLikedMusic(context),
+          onDiscover: () {
+            final p = [...d.quick, ...d.liked];
+            if (p.isNotEmpty) _ytShuffle(p);
+          },
+        ));
+        if (d.quick.isNotEmpty) {
+          col
+            ..add(BloomSection('Quick picks',
+                action: 'Play all', onAction: () => _ytPlay(d.quick, 0)))
+            ..add(songs(d.quick, 5));
+        }
+        if (d.allMixes.isNotEmpty || d.mixes.isNotEmpty) {
+          col
+            ..add(const BloomSection('Mixed for you'))
+            ..add(shelfCards(d.allMixes.isNotEmpty ? d.allMixes : d.mixes));
+        }
+        if (d.again.isNotEmpty) {
+          col
+            ..add(const BloomSection('Listen again'))
+            ..add(shelfCards(d.again, shapes: false));
+        }
+        if (d.liked.isNotEmpty) {
+          col
+            ..add(BloomSection('From your likes',
+                action: 'Play all', onAction: () => _ytPlay(d.liked, 0)))
+            ..add(songs(d.liked, 4));
+        }
+        for (final sh in d.rest) {
+          final title = sh.title.isEmpty ? 'For you' : sh.title;
+          if (sh.kind == 'song') {
+            final list = [
+              for (final it in sh.items)
+                YouTubeMusic.trackFromShelf(it, it.subtitle)
+            ];
+            col
+              ..add(BloomSection(title,
+                  action: 'Play all', onAction: () => _ytPlay(list, 0)))
+              ..add(songs(list, 4));
+          } else {
+            col
+              ..add(BloomSection(title))
+              ..add(shelfCards(sh.items, shapes: sh.kind != 'album'));
+          }
+        }
+        return Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: col);
+      }));
+    } else if (local.isEmpty) {
+      out.add(Padding(
+        padding: const EdgeInsets.only(top: 30),
+        child: _emptyState(context, pal),
+      ));
+    } else {
+      final quick = _quickPicks(local, 6);
+      final recent = _recentFrom(local);
+      final liked = audioHandler.likedTracks.where((t) => !t.isYouTube).toList();
+      out.add(grid(
+        art: CustomAlbumArtwork(track: recent.isNotEmpty ? recent.first : local.first),
+        kicker: 'JUMP BACK IN',
+        title: recent.isNotEmpty ? recent.first.title : 'Your music',
+        sub: recent.isNotEmpty
+            ? recent.first.artist
+            : '${local.length} ${local.length == 1 ? 'song' : 'songs'}',
+        onOpen: () => recent.isNotEmpty ? _ytPlay(recent, 0) : _ytPlay(local, 0),
+        onPlay: () => recent.isNotEmpty ? _ytPlay(recent, 0) : _ytPlay(local, 0),
+        likedCount: liked.length,
+        onLiked: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const LikedSongsScreen())),
+        onDiscover: () => _ytShuffle(local),
+      ));
+      out
+        ..add(BloomSection('Quick picks',
+            action: 'Play all', onAction: () => _ytPlay(quick, 0)))
+        ..add(songs(quick, 6));
+      if (recent.length > 1) {
+        out
+          ..add(const BloomSection('Listen again'))
+          ..add(bloomRow([
+            for (var i = 0; i < min(12, recent.length); i++)
+              BloomCard(
+                art: CustomAlbumArtwork(track: recent[i]),
+                title: recent[i].title,
+                subtitle: recent[i].artist,
+                size: 128,
+                kind: kBloomCycle[i % kBloomCycle.length],
+                onTap: () => _ytPlay(recent, i),
+              ),
+          ], 178));
+      }
+      if (appState.playlists.isNotEmpty) {
+        out
+          ..add(const BloomSection('Your playlists'))
+          ..add(bloomRow([
+            for (final pl in appState.playlists)
+              BloomCard(
+                art: PlaylistCoverThumbnail(playlist: pl, size: 128),
+                title: pl.name,
+                subtitle: '${pl.trackIds.length} songs',
+                size: 128,
+                kind: null,
+                radius: 28,
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => PlaylistDetailScreen(playlistId: pl.id))),
+              ),
+          ], 178));
+      }
+    }
+
+    return RefreshIndicator(
+      color: c.pri,
+      onRefresh: () async {
+        if (yt) {
+          setState(() {
+            _homeFuture = YouTubeMusic.homeFeed(refresh: true);
+          });
+          await _homeFuture;
+        }
+      },
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics()),
+        padding: EdgeInsets.fromLTRB(16, top + 14, 16, 200),
         children: out,
       ),
     );
@@ -13413,12 +13942,16 @@ class MiniPlayer extends StatefulWidget {
   /// AlexLMP Signal look (same swipe gestures, new design).
   final bool signal;
 
+  /// AlexLMP Bloom look.
+  final bool bloom;
+
   const MiniPlayer({
     super.key,
     required this.track,
     required this.palette,
     this.compact = false,
     this.signal = false,
+    this.bloom = false,
   });
 
   @override
@@ -13632,7 +14165,127 @@ class _MiniPlayerState extends State<MiniPlayer>
     );
   }
 
+  Widget _bloomContent(BuildContext context) {
+    final t = widget.track;
+    final c = bc;
+    return SquishyGesture(
+      pressedScale: 0.98,
+      onTap: () => openPlayer(context),
+      child: Container(
+        height: 68,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: c.s3,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: const [
+            BoxShadow(
+                color: Color(0x59000000), blurRadius: 30, offset: Offset(0, 10)),
+          ],
+        ),
+        child: Stack(
+          children: [
+            Row(
+              children: [
+                Hero(
+                  tag: 'now_playing_art',
+                  createRectTween: _arcTween,
+                  flightShuttleBuilder: _artShuttle,
+                  child: BloomShape(
+                      kind: BloomKind.cookie,
+                      size: 50,
+                      child: CustomAlbumArtwork(track: t)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(t.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: bloomText(15, weight: FontWeight.w700)),
+                      Text(t.artist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: bloomText(12.5,
+                              color: c.t2, weight: FontWeight.w500)),
+                    ],
+                  ),
+                ),
+                ListenableBuilder(
+                  listenable: appState,
+                  builder: (context, _) {
+                    final liked = appState.isLiked(t.id);
+                    return IconButton(
+                      tooltip: liked ? 'Unlike' : 'Like',
+                      onPressed: () {
+                        HapticFeedback.lightImpact();
+                        appState.toggleLike(t.id);
+                      },
+                      icon: Icon(
+                          liked
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          color: liked ? c.pri : c.t1,
+                          size: 22),
+                    );
+                  },
+                ),
+                StreamBuilder<bool>(
+                  stream: audioHandler.player.playingStream,
+                  initialData: audioHandler.player.playing,
+                  builder: (context, snap) {
+                    final playing = snap.data ?? false;
+                    return BloomButton(
+                      kind: playing ? BloomKind.cookie : BloomKind.scallop,
+                      size: 46,
+                      bg: c.lc,
+                      icon: playing
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      iconColor: c.onLc,
+                      iconSize: 26,
+                      tooltip: playing ? 'Pause' : 'Play',
+                      onTap: () =>
+                          playing ? audioHandler.pause() : audioHandler.play(),
+                    );
+                  },
+                ),
+              ],
+            ),
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 5,
+              child: TrackProgress(
+                fallbackSeconds: t.durationSeconds,
+                builder: (context, pos, dur) {
+                  final v = dur.inMilliseconds <= 0
+                      ? 0.0
+                      : (pos.inMilliseconds / dur.inMilliseconds)
+                          .clamp(0.0, 1.0)
+                          .toDouble();
+                  return ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: v,
+                      minHeight: 3,
+                      backgroundColor: Colors.white.withOpacity(0.12),
+                      valueColor: AlwaysStoppedAnimation(c.pri),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _content(BuildContext context) {
+    if (widget.bloom) return _bloomContent(context);
     if (widget.signal) return _signalContent(context);
     final track = widget.track;
     final palette = widget.palette;
@@ -13829,6 +14482,18 @@ class NowPlayingScreen extends StatelessWidget {
             final repeat = state.repeatMode;
             final liked = appState.isLiked(track.id);
 
+            if (appState.playerStyle == 'bloom') {
+              return SwipeDownDismiss(
+                child: BloomPlayerView(
+                  track: track,
+                  playing: playing,
+                  loading: loading,
+                  shuffle: shuffle,
+                  repeat: repeat,
+                  liked: liked,
+                ),
+              );
+            }
             if (appState.playerStyle == 'signal') {
               return SwipeDownDismiss(
                 child: _artModeSwitch(SignalPlayerView(
@@ -15905,7 +16570,8 @@ class SettingsScreen extends StatelessWidget {
           'Look and shapes of the whole app (not the player controls)',
           appState.appStyle,
           const {
-            'alex': 'AlexLMP (Default)',
+            'bloom': 'AlexLMP Bloom (Default)',
+            'alex': 'AlexLMP',
             'signal': 'AlexLMP Signal',
             'plus': 'PLUS',
             'prestige': 'AlexLMP Prestige',
@@ -15915,6 +16581,7 @@ class SettingsScreen extends StatelessWidget {
           },
           (v) {
             appState.setStr('app_style', v);
+            if (v == 'bloom') appState.setPlayerStyle('bloom');
             if (v == 'apple') appState.setPlayerStyle('apple');
             if (v == 'plus') appState.setPlayerStyle('plus');
             if (v == 'signal') appState.setPlayerStyle('signal');
@@ -15927,7 +16594,8 @@ class SettingsScreen extends StatelessWidget {
           'How the player controls look',
           appState.playerStyle,
           const {
-            'alex': 'AlexLMP Classic (Default)',
+            'bloom': 'AlexLMP Bloom (Default)',
+            'alex': 'AlexLMP Classic',
             'signal': 'AlexLMP Signal',
             'plus': 'PLUS',
             'simp': 'AlexLMP',
@@ -22143,6 +22811,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
   List<Widget> _look(Color accent) {
     const appStyles = {
+      'bloom': 'Bloom',
       'signal': 'Signal',
       'alex': 'AlexLMP',
       'plus': 'PLUS',
@@ -22152,6 +22821,7 @@ class _SetupScreenState extends State<SetupScreen> {
       'apple': 'Apple Music',
     };
     const players = {
+      'bloom': 'Bloom',
       'signal': 'Signal',
       'alex': 'Classic',
       'plus': 'PLUS',
@@ -22272,6 +22942,7 @@ class _SetupScreenState extends State<SetupScreen> {
                         appState.setStr('app_style', e.key);
                         if (e.key == 'plus' ||
                             e.key == 'apple' ||
+                            e.key == 'bloom' ||
                             e.key == 'signal') {
                           appState.setPlayerStyle(e.key);
                         }
@@ -22306,10 +22977,22 @@ class _SetupScreenState extends State<SetupScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              title('Colors', 'True black, or match your wallpaper.'),
+              title('Colors', 'Lilac, true black, or match your wallpaper.'),
               const SizedBox(height: 12),
               Wrap(spacing: 8, runSpacing: 8, children: [
-                _choice('AMOLED', !appState.useWallpaper, () {
+                _choice(
+                    'Lilac',
+                    !appState.useWallpaper && appState.themeName == 'Lilac',
+                    () {
+                  appState.setB('use_wallpaper_colors', false);
+                  appState.setTheme('Lilac');
+                  appState.setB('pure_black', false);
+                }, accent),
+                _choice(
+                    'AMOLED',
+                    !appState.useWallpaper && appState.themeName == 'AMOLED',
+                    () {
+                  appState.setB('use_wallpaper_colors', false);
                   appState.setTheme('AMOLED');
                   appState.setB('pure_black', true);
                 }, accent),
@@ -28511,7 +29194,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '2.9.5';
+const String kAppVersion = '3.0.0';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -30557,9 +31240,12 @@ class _YtPageShell extends StatelessWidget {
       builder: (context, _) {
         final pal = appState.palette;
         return Scaffold(
-          backgroundColor: pal.bg,
+          backgroundColor: bloomLook ? bc.bg : pal.bg,
           body: Stack(
             children: [
+              if (bloomLook)
+                const Positioned.fill(child: BloomBackdrop())
+              else
               AuroraPlasmaBackground(
                 accent: pal.accent,
                 secondary: const Color(0xFF8CD0F0),
@@ -30716,6 +31402,7 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
     return FutureBuilder<YtAlbumPage>(
       future: _future,
       builder: (context, snap) {
+        if (bloomLook) return _bloomPage(context, snap);
         return _YtPageShell(buildBody: (context) {
           final pal = appState.palette;
           final page = snap.data ?? _cached;
@@ -30989,6 +31676,320 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
     );
   }
 
+  /// AlexLMP Bloom album / playlist page.
+  Widget _bloomPage(BuildContext context, AsyncSnapshot<YtAlbumPage> snap) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        appState,
+        audioHandler.libraryRevision,
+        audioHandler.currentIndex,
+        LibraryStore.revision,
+        OfflineStore.revision,
+      ]),
+      builder: (context, _) {
+        final c = bc;
+        final page = snap.data ?? _cached;
+        final cover = page?.thumbnail ?? widget.album.thumbnail;
+        final title = page?.title ?? widget.album.title;
+        final artist = (page?.artist.isNotEmpty ?? false)
+            ? page!.artist
+            : widget.album.artist;
+        final isAlbum = page?.kind != null || page?.year != null;
+        _libItem = widget.album.url.isNotEmpty
+            ? LibItem('album', widget.album.url, title, artist, cover)
+            : (widget.playlistId != null &&
+                    widget.playlistId!.isNotEmpty &&
+                    widget.playlistId != 'LM')
+                ? LibItem('playlist', widget.playlistId!, title, artist, cover)
+                : null;
+        final it = _libItem;
+        final tracks = page?.tracks ?? const <TrackItem>[];
+        final width = MediaQuery.of(context).size.width;
+        final art = min(236.0, width - 140);
+
+        Widget circle(IconData icon, VoidCallback onTap, String tip) =>
+            BloomButton(
+              kind: null,
+              size: 44,
+              bg: c.s2,
+              icon: icon,
+              iconColor: c.t1,
+              iconSize: 20,
+              tooltip: tip,
+              onTap: onTap,
+            );
+
+        void play(int i, {bool shuffle = false}) {
+          audioHandler.setShuffleMode(shuffle
+              ? AudioServiceShuffleMode.all
+              : AudioServiceShuffleMode.none);
+          _played();
+          audioHandler.playYouTubeList(tracks, i);
+          openPlayer(context);
+        }
+
+        final badgeTop = page?.year ?? (isAlbum ? '' : '${tracks.length}');
+        final badgeBottom =
+            (page?.kind ?? (isAlbum ? 'Album' : 'Songs')).toUpperCase();
+
+        final list = <Widget>[
+          Row(
+            children: [
+              circle(Icons.arrow_back_rounded, () => Navigator.pop(context),
+                  'Back'),
+              const Spacer(),
+              if (tracks.isNotEmpty)
+                circle(Icons.queue_play_next_rounded, () {
+                  audioHandler.addToQueue(tracks, next: true);
+                  appNotice.value = 'Playing "$title" next';
+                }, 'Play next'),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Center(
+            child: SizedBox(
+              width: art + 24,
+              height: art + 16,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(40),
+                        boxShadow: const [
+                          BoxShadow(
+                              color: Color(0x73000000),
+                              blurRadius: 50,
+                              offset: Offset(0, 24)),
+                        ],
+                      ),
+                      child: BloomShape(
+                        kind: null,
+                        radius: 40,
+                        size: art,
+                        child: YtNetworkImage(url: cover, size: art),
+                      ),
+                    ),
+                  ),
+                  if (badgeTop.isNotEmpty)
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: BloomShape(
+                        kind: BloomKind.scallop,
+                        size: 74,
+                        color: c.lc,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(badgeTop,
+                                style: bloomText(18,
+                                    color: c.onLc, weight: FontWeight.w800)),
+                            Text(badgeBottom,
+                                maxLines: 1,
+                                style: bloomText(8.5,
+                                    color: c.onLc,
+                                    weight: FontWeight.w700,
+                                    spacing: 1)),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(title,
+              textAlign: TextAlign.center,
+              style: bloomText(28, weight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          Center(
+            child: GestureDetector(
+              onTap: page?.artistUrl == null
+                  ? null
+                  : () => openYtArtist(context, page!.artistUrl!, artist),
+              child: Text(artist,
+                  textAlign: TextAlign.center,
+                  style: bloomText(15, color: c.pri, weight: FontWeight.w600)),
+            ),
+          ),
+          if (page != null && tracks.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                page.info ??
+                    [
+                      '${tracks.length} ${tracks.length == 1 ? 'song' : 'songs'}',
+                      _totalLength(tracks),
+                    ].where((x) => x.isNotEmpty).join(' · '),
+                textAlign: TextAlign.center,
+                style: bloomText(12.5, color: c.t2, weight: FontWeight.w500),
+              ),
+            ),
+          const SizedBox(height: 16),
+          if (tracks.isNotEmpty)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                circle(
+                    tracks.every(OfflineStore.isDownloaded)
+                        ? Icons.download_done_rounded
+                        : Icons.download_rounded,
+                    () => OfflineStore.downloadAll(tracks),
+                    'Download'),
+                const SizedBox(width: 10),
+                if (it != null) ...[
+                  circle(
+                      LibraryStore.isSaved(it)
+                          ? Icons.library_add_check_rounded
+                          : Icons.add_rounded, () {
+                    HapticFeedback.lightImpact();
+                    if (LibraryStore.isSaved(it)) {
+                      LibraryStore.unsave(it);
+                      appNotice.value = 'Removed "${it.title}" from your Library.';
+                    } else {
+                      LibraryStore.save(it);
+                      appNotice.value = 'Added "${it.title}" to your Library.';
+                    }
+                  }, 'Library'),
+                  const SizedBox(width: 10),
+                ],
+                SquishyGesture(
+                  pressedScale: 0.94,
+                  onTap: () => play(0),
+                  child: Container(
+                    height: 56,
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    decoration: BoxDecoration(
+                        color: c.lc, borderRadius: BorderRadius.circular(28)),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.play_arrow_rounded, color: c.onLc, size: 24),
+                        const SizedBox(width: 6),
+                        Text('Play',
+                            style: bloomText(16,
+                                color: c.onLc, weight: FontWeight.w800)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                BloomButton(
+                  size: 56,
+                  bg: c.s3,
+                  icon: Icons.shuffle_rounded,
+                  iconColor: c.t1,
+                  tooltip: 'Shuffle',
+                  onTap: () =>
+                      play(Random().nextInt(tracks.length), shuffle: true),
+                ),
+                if (it != null) ...[
+                  const SizedBox(width: 10),
+                  circle(
+                      LibraryStore.isPinned(it)
+                          ? Icons.push_pin
+                          : Icons.push_pin_outlined, () {
+                    HapticFeedback.lightImpact();
+                    LibraryStore.togglePin(it);
+                  }, 'Pin'),
+                ],
+              ],
+            ),
+          if (page?.description != null && page!.description!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: SquishyGesture(
+                pressedScale: 0.99,
+                onTap: () => setState(() => _descOpen = !_descOpen),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                      color: c.s1, borderRadius: BorderRadius.circular(24)),
+                  child: AnimatedSize(
+                    duration: const Duration(milliseconds: 250),
+                    alignment: Alignment.topCenter,
+                    child: Text(page.description!,
+                        maxLines: _descOpen ? 40 : 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: bloomText(13.5,
+                            color: c.t2, weight: FontWeight.w400)),
+                  ),
+                ),
+              ),
+            ),
+          const SizedBox(height: 16),
+        ];
+
+        if (page == null && snap.hasError) {
+          list.add(_ytLoadError(snap.error, () {
+            setState(() => _future = _load());
+          }));
+        } else if (page == null) {
+          list.add(Padding(
+            padding: const EdgeInsets.all(30),
+            child: Center(child: CircularProgressIndicator(color: c.pri)),
+          ));
+        } else {
+          if (tracks.isEmpty) {
+            list.add(Center(
+                child: Text('No playable songs here.',
+                    style: bloomText(14, color: c.t2))));
+          } else {
+            list.add(bloomGroup([
+              for (var i = 0; i < tracks.length; i++)
+                BloomSongRow(
+                  track: tracks[i],
+                  number: isAlbum ? i + 1 : null,
+                  showArt: !isAlbum,
+                  subtitle: isAlbum
+                      ? (tracks[i].artist.isNotEmpty ? tracks[i].artist : artist)
+                      : null,
+                  onTap: () => play(i),
+                ),
+            ]));
+          }
+          for (final sh in page.shelves) {
+            list
+              ..add(BloomSection(sh.title.isEmpty ? 'More' : sh.title))
+              ..add(bloomRow([
+                for (final a in sh.items)
+                  BloomCard(
+                    art: YtNetworkImage(url: a.thumbnail, size: 120),
+                    title: a.title,
+                    subtitle: a.artist,
+                    size: 120,
+                    kind: null,
+                    radius: 28,
+                    onTap: () => openYtAlbum(context, a),
+                  ),
+              ], 170));
+          }
+        }
+
+        return Scaffold(
+          backgroundColor: c.bg,
+          body: Stack(
+            children: [
+              const Positioned.fill(child: BloomBackdrop()),
+              SafeArea(
+                bottom: false,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 60),
+                  children: list,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _circleAction(AppPalette pal, IconData icon, VoidCallback onTap) {
     return SquishyGesture(
       onTap: onTap,
@@ -31102,6 +32103,344 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
     openPlayer(context);
   }
 
+  /// AlexLMP Bloom artist page.
+  Widget _bloomArtist(BuildContext context, YtArtistPage? page,
+      AsyncSnapshot<YtArtistPage> snap) {
+    final c = bc;
+    final name = page?.name ?? widget.name;
+    final photo = page?.thumbnail ?? widget.thumbnail;
+    final banner = page?.banner ?? photo;
+    final songs = page?.songs ?? const <TrackItem>[];
+    final stats = page == null
+        ? ''
+        : [
+            if (page.subscribersText != null)
+              '${page.subscribersText} subscribers'
+            else if (page.subscribers >= 0)
+              '${formatCompactCount(page.subscribers)} subscribers',
+            if (page.audience != null) page.audience!,
+          ].join(' · ');
+
+    Widget circle(IconData icon, VoidCallback onTap, String tip) => BloomButton(
+          kind: null,
+          size: 44,
+          bg: Colors.black.withOpacity(0.3),
+          icon: icon,
+          iconColor: Colors.white,
+          iconSize: 20,
+          tooltip: tip,
+          onTap: onTap,
+        );
+
+    void openShelf(YtShelfItem it) {
+      if (it.kind == 'song' || it.kind == 'video') {
+        audioHandler.playYouTubeTrack(YouTubeMusic.trackFromShelf(it, name));
+        openPlayer(context);
+      } else if (it.kind == 'artist') {
+        openYtArtist(context, it.id, it.title, thumbnail: it.thumbnail);
+      } else if (it.kind == 'playlist') {
+        openYtShelfItem(context, it);
+      } else {
+        openYtAlbum(context, YtAlbum(it.id, it.title, name, it.thumbnail, -1));
+      }
+    }
+
+    final list = <Widget>[
+      Row(
+        children: [
+          circle(Icons.arrow_back_rounded, () => Navigator.pop(context), 'Back'),
+          const Spacer(),
+          if (songs.isNotEmpty)
+            circle(Icons.queue_play_next_rounded, () {
+              audioHandler.addToQueue(songs, next: true);
+              appNotice.value = 'Playing $name next';
+            }, 'Play next'),
+        ],
+      ),
+      const SizedBox(height: 110),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          BloomShape(
+            kind: BloomKind.cookie,
+            size: 112,
+            child: YtNetworkImage(
+                url: photo, size: 112, fallbackIcon: Icons.person_rounded),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('ARTIST',
+                      style: bloomText(10.5,
+                          color: c.pri, weight: FontWeight.w700, spacing: 1.4)),
+                  Text(name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: bloomText(30, weight: FontWeight.w800)),
+                  if (stats.isNotEmpty)
+                    Text(stats,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: bloomText(12.5,
+                            color: c.t2, weight: FontWeight.w500)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 18),
+    ];
+
+    if (songs.isNotEmpty) {
+      list.add(Row(
+        children: [
+          Expanded(
+            child: SquishyGesture(
+              pressedScale: 0.95,
+              onTap: () => _play(songs, 0),
+              child: Container(
+                height: 52,
+                decoration: BoxDecoration(
+                    color: c.lc, borderRadius: BorderRadius.circular(26)),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.play_arrow_rounded, color: c.onLc, size: 22),
+                    const SizedBox(width: 6),
+                    Text('Play',
+                        style: bloomText(15.5,
+                            color: c.onLc, weight: FontWeight.w800)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: SquishyGesture(
+              pressedScale: 0.95,
+              onTap: () =>
+                  _play(songs, Random().nextInt(songs.length), shuffle: true),
+              child: Container(
+                height: 52,
+                decoration: BoxDecoration(
+                    color: c.s2, borderRadius: BorderRadius.circular(26)),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.shuffle_rounded, color: c.t1, size: 20),
+                    const SizedBox(width: 8),
+                    Text('Shuffle',
+                        style: bloomText(15, weight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          BloomButton(
+            size: 52,
+            bg: c.s3,
+            icon: Icons.playlist_add_rounded,
+            iconColor: c.t1,
+            tooltip: 'Add songs to the queue',
+            onTap: () {
+              audioHandler.addToQueue(songs);
+              appNotice.value = 'Added $name to the queue';
+            },
+          ),
+        ],
+      ));
+      list
+        ..add(BloomSection('Top songs',
+            top: 18,
+            action: 'See all',
+            onAction: () => openArtistAll(context, name, albums: false)))
+        ..add(bloomGroup([
+          for (var i = 0; i < min(5, songs.length); i++)
+            BloomSongRow(
+              track: songs[i],
+              subtitle: page!.plays[songs[i].id] ?? songs[i].artist,
+              onTap: () => _play(songs, i),
+            ),
+        ]));
+    }
+
+    if (page == null && snap.hasError) {
+      list.add(_ytLoadError(snap.error, () {
+        setState(() => _future = YouTubeMusic.artist(widget.url, widget.name));
+      }));
+    } else if (page == null) {
+      list.add(Padding(
+        padding: const EdgeInsets.all(30),
+        child: Center(child: CircularProgressIndicator(color: c.pri)),
+      ));
+    } else {
+      for (final sh in page.shelves) {
+        if (sh.items.isEmpty) continue;
+        final lower = sh.title.toLowerCase();
+        final albumShelf = sh.kind == 'album' &&
+            (lower.contains('album') || lower.contains('single'));
+        final round = sh.kind == 'artist';
+        final video = sh.kind == 'video';
+        final size = round ? 104.0 : (video ? 200.0 : 120.0);
+        list
+          ..add(BloomSection(sh.title.isEmpty ? 'More' : sh.title,
+              action: albumShelf ? 'See all' : null,
+              onAction: albumShelf
+                  ? () => openArtistAll(context, name, albums: true)
+                  : null))
+          ..add(SizedBox(
+            height: (video ? size * 9 / 16 : size) + 52,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: sh.items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (_, i) {
+                final it = sh.items[i];
+                final h = video ? size * 9 / 16 : size;
+                return SquishyGesture(
+                  pressedScale: 0.96,
+                  onTap: () => openShelf(it),
+                  child: SizedBox(
+                    width: size,
+                    child: Column(
+                      crossAxisAlignment: round
+                          ? CrossAxisAlignment.center
+                          : CrossAxisAlignment.start,
+                      children: [
+                        if (round)
+                          BloomShape(
+                            kind: BloomKind.cookie,
+                            size: size,
+                            child: YtNetworkImage(
+                                url: it.thumbnail,
+                                size: size,
+                                fallbackIcon: Icons.person_rounded),
+                          )
+                        else
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(video ? 20 : 28),
+                            child: SizedBox(
+                              width: size,
+                              height: h,
+                              child: it.thumbnail == null
+                                  ? ColoredBox(color: c.s2)
+                                  : Image.network(it.thumbnail!,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) =>
+                                          ColoredBox(color: c.s2)),
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        Text(it.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: bloomText(13.5, weight: FontWeight.w600)),
+                        Text(round ? 'Artist' : it.subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: bloomText(12,
+                                color: c.t2, weight: FontWeight.w500)),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ));
+      }
+      if (page.shelves.isEmpty && page.albums.isNotEmpty) {
+        list
+          ..add(BloomSection('Albums',
+              action: 'See all',
+              onAction: () => openArtistAll(context, name, albums: true)))
+          ..add(bloomRow([
+            for (final a in page.albums)
+              BloomCard(
+                art: YtNetworkImage(url: a.thumbnail, size: 120),
+                title: a.title,
+                subtitle: a.artist,
+                size: 120,
+                kind: null,
+                radius: 28,
+                onTap: () => openYtAlbum(context, a),
+              ),
+          ], 170));
+      }
+      if (page.description != null && page.description!.isNotEmpty) {
+        list
+          ..add(const BloomSection('About'))
+          ..add(SquishyGesture(
+            pressedScale: 0.99,
+            onTap: () => setState(() => _aboutOpen = !_aboutOpen),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                  color: c.s1, borderRadius: BorderRadius.circular(24)),
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 250),
+                alignment: Alignment.topCenter,
+                child: Text(page.description!,
+                    maxLines: _aboutOpen ? 60 : 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: bloomText(13.5,
+                        color: c.t2, weight: FontWeight.w400)),
+              ),
+            ),
+          ));
+      }
+    }
+
+    return Scaffold(
+      backgroundColor: c.bg,
+      body: Stack(
+        children: [
+          const Positioned.fill(child: BloomBackdrop()),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            height: 360,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (banner != null)
+                  Image.network(banner,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => ColoredBox(color: c.s2))
+                else
+                  ColoredBox(color: c.s2),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [c.bg.withOpacity(0.15), c.bg],
+                      stops: const [0.2, 0.98],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SafeArea(
+            bottom: false,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 60),
+              children: list,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -31114,6 +32453,7 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
           final name = page?.name ?? widget.name;
           final banner = page?.banner ?? page?.thumbnail ?? widget.thumbnail;
           final screenW = MediaQuery.of(context).size.width;
+          if (bloomLook) return _bloomArtist(context, page, snap);
 
           final slivers = <Widget>[
             SliverAppBar(
@@ -33837,6 +35177,1987 @@ class LocalCollectionScreen extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// ═══════════════════════════ AlexLMP Bloom ═══════════════════════════════
+// Material You "Bloom": lilac tones, scalloped cookie shapes, wavy progress.
+
+bool get bloomLook => appState.appStyle == 'bloom';
+
+/// Bloom colours, made from the current theme colour (lilac by default).
+class BloomColors {
+  final Color bg, s1, s2, s3, lc, onLc, pri, t1, t2, t3, pink, onPink, teal;
+  const BloomColors(this.bg, this.s1, this.s2, this.s3, this.lc, this.onLc,
+      this.pri, this.t1, this.t2, this.t3, this.pink, this.onPink, this.teal);
+
+  static final Map<int, BloomColors> _cache = {};
+  static BloomColors of(Color accent) =>
+      _cache.putIfAbsent(accent.value, () {
+        final h = HSLColor.fromColor(accent).hue;
+        Color c(double s, double l, [double dh = 0]) => HSLColor.fromAHSL(
+                1, (h + dh) % 360, s.clamp(0.0, 1.0).toDouble(), l)
+            .toColor();
+        return BloomColors(
+          c(0.25, 0.125),
+          c(0.24, 0.20),
+          c(0.24, 0.25),
+          c(0.22, 0.30),
+          c(0.72, 0.87),
+          c(0.38, 0.18),
+          accent,
+          c(0.50, 0.95),
+          c(0.20, 0.76),
+          c(0.12, 0.58),
+          c(0.20, 0.25, 34),
+          c(0.70, 0.88, 34),
+          c(0.43, 0.21, -79),
+        );
+      });
+}
+
+BloomColors get bc => BloomColors.of(appState.palette.accent);
+
+enum BloomKind { cookie, scallop, flower, clover, sunny, gem }
+
+extension on BloomKind {
+  int get lobes => const [9, 12, 6, 4, 8, 5][index];
+  double get amp => const [0.075, 0.045, 0.14, 0.18, 0.10, 0.12][index];
+}
+
+const List<BloomKind> kBloomCycle = [
+  BloomKind.cookie,
+  BloomKind.flower,
+  BloomKind.gem,
+  BloomKind.sunny,
+  BloomKind.clover,
+  BloomKind.scallop,
+];
+
+Path bloomPath(Size s, int n, double amp) {
+  final r0 = min(s.width, s.height) / 2 / (1 + amp);
+  final cx = s.width / 2, cy = s.height / 2;
+  final rot = n.isOdd ? pi / n / 2 : 0.0;
+  final path = Path();
+  const steps = 180;
+  for (var i = 0; i <= steps; i++) {
+    final t = 2 * pi * i / steps;
+    final r = r0 * (1 + amp * cos(n * (t + rot)));
+    final x = cx + r * cos(t), y = cy + r * sin(t);
+    i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+  }
+  return path..close();
+}
+
+class BloomClipper extends CustomClipper<Path> {
+  final BloomKind kind;
+  const BloomClipper(this.kind);
+  @override
+  Path getClip(Size size) => bloomPath(size, kind.lobes, kind.amp);
+  @override
+  bool shouldReclip(BloomClipper old) => old.kind != kind;
+}
+
+/// A scalloped / flower / cookie shape (or a rounded square when [kind] is
+/// null, with [radius]).
+class BloomShape extends StatelessWidget {
+  final BloomKind? kind;
+  final double size;
+  final double radius;
+  final Color? color;
+  final Widget? child;
+  const BloomShape(
+      {super.key,
+      this.kind = BloomKind.cookie,
+      required this.size,
+      this.radius = 28,
+      this.color,
+      this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final box = SizedBox(
+      width: size,
+      height: size,
+      child: color == null
+          ? child
+          : ColoredBox(color: color!, child: Center(child: child)),
+    );
+    final k = kind;
+    if (k == null) {
+      return ClipRRect(borderRadius: BorderRadius.circular(radius), child: box);
+    }
+    return ClipPath(clipper: BloomClipper(k), child: box);
+  }
+}
+
+/// Tappable shaped button with an icon.
+class BloomButton extends StatelessWidget {
+  final BloomKind? kind;
+  final double size;
+  final double radius;
+  final Color bg;
+  final IconData icon;
+  final Color iconColor;
+  final double iconSize;
+  final VoidCallback? onTap;
+  final String? tooltip;
+  final Widget? child;
+  const BloomButton({
+    super.key,
+    this.kind = BloomKind.cookie,
+    required this.size,
+    this.radius = 999,
+    required this.bg,
+    required this.icon,
+    required this.iconColor,
+    this.iconSize = 22,
+    this.onTap,
+    this.tooltip,
+    this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final b = SquishyGesture(
+      pressedScale: 0.88,
+      onTap: onTap,
+      child: BloomShape(
+        kind: kind,
+        size: size,
+        radius: radius,
+        color: bg,
+        child: child ?? Icon(icon, color: iconColor, size: iconSize),
+      ),
+    );
+    return tooltip == null ? b : Tooltip(message: tooltip!, child: b);
+  }
+}
+
+/// Soft lilac / teal glow behind Bloom pages.
+class BloomBackdrop extends StatelessWidget {
+  final Color? glow;
+  const BloomBackdrop({super.key, this.glow});
+  @override
+  Widget build(BuildContext context) {
+    final c = bc;
+    return DecoratedBox(
+      decoration: BoxDecoration(color: c.bg),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(-1, -1),
+                radius: 1.1,
+                colors: [
+                  (glow ?? Color.lerp(c.s3, c.pri, 0.18)!).withOpacity(0.75),
+                  c.bg.withOpacity(0),
+                ],
+              ),
+            ),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(1, 1),
+                radius: 1.2,
+                colors: [c.teal.withOpacity(0.85), c.teal.withOpacity(0)],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+TextStyle bloomText(double size,
+        {Color? color, FontWeight weight = FontWeight.w600, double? spacing}) =>
+    TextStyle(
+      color: color ?? bc.t1,
+      fontSize: size,
+      fontWeight: weight,
+      letterSpacing: spacing ?? (size > 20 ? -0.4 : 0),
+      height: 1.2,
+    );
+
+/// Section title with an optional action ("See all").
+class BloomSection extends StatelessWidget {
+  final String title;
+  final String? action;
+  final VoidCallback? onAction;
+  final double top;
+  const BloomSection(this.title,
+      {super.key, this.action, this.onAction, this.top = 22});
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: EdgeInsets.fromLTRB(4, top, 0, 8),
+        child: Row(
+          children: [
+            Expanded(
+                child: Text(title,
+                    style: bloomText(20, weight: FontWeight.w700))),
+            if (action != null)
+              TextButton(
+                style: TextButton.styleFrom(
+                    foregroundColor: bc.pri,
+                    padding: const EdgeInsets.symmetric(horizontal: 8)),
+                onPressed: onAction,
+                child: Text(action!,
+                    style: const TextStyle(
+                        fontSize: 13.5, fontWeight: FontWeight.w600)),
+              ),
+          ],
+        ),
+      );
+}
+
+/// Material 3 expressive grouped list: big outer corners, small inner ones.
+Widget bloomGroup(List<Widget> rows,
+    {double outer = 24, double inner = 6, Color? color}) {
+  final c = color ?? bc.s1;
+  return Column(
+    children: [
+      for (var i = 0; i < rows.length; i++)
+        Padding(
+          padding: EdgeInsets.only(bottom: i == rows.length - 1 ? 0 : 3),
+          child: ClipRRect(
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(i == 0 ? outer : inner),
+              bottom: Radius.circular(i == rows.length - 1 ? outer : inner),
+            ),
+            child: ColoredBox(color: c, child: rows[i]),
+          ),
+        ),
+    ],
+  );
+}
+
+String bloomDur(int s) =>
+    s <= 0 ? '' : '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+
+/// Little equalizer bars for the playing song.
+Widget bloomEq(Color c) => SizedBox(width: 20, height: 16, child: EqBars(color: c));
+
+/// Song row for grouped lists.
+class BloomSongRow extends StatelessWidget {
+  final TrackItem track;
+  final VoidCallback onTap;
+  final String? subtitle;
+  final int? number;
+  final bool showArt;
+  const BloomSongRow({
+    super.key,
+    required this.track,
+    required this.onTap,
+    this.subtitle,
+    this.number,
+    this.showArt = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = bc;
+    final playing = audioHandler.currentTrack?.id == track.id;
+    return InkWell(
+      onTap: onTap,
+      onLongPress: () => track.isYouTube
+          ? showYtAddToPlaylist(context, track)
+          : showAddToPlaylistSheet(context, track),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+        child: Row(
+          children: [
+            if (number != null)
+              SizedBox(
+                width: 28,
+                child: Text('$number',
+                    textAlign: TextAlign.center,
+                    style: bloomText(14,
+                        color: playing ? c.pri : c.t3,
+                        weight: FontWeight.w700)),
+              ),
+            if (showArt)
+              BloomShape(
+                kind: null,
+                radius: 12,
+                size: 48,
+                child: CustomAlbumArtwork(track: track),
+              ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(track.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: bloomText(15,
+                          color: playing ? c.pri : c.t1,
+                          weight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text(subtitle ?? track.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: bloomText(12.5,
+                          color: c.t2, weight: FontWeight.w500)),
+                ],
+              ),
+            ),
+            if (playing) ...[bloomEq(c.pri), const SizedBox(width: 6)],
+            Text(bloomDur(track.durationSeconds),
+                style: bloomText(12, color: c.t3, weight: FontWeight.w500)),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: Icon(Icons.more_vert_rounded, color: c.t3, size: 20),
+              onPressed: () => track.isYouTube
+                  ? showYtAddToPlaylist(context, track)
+                  : showAddToPlaylistSheet(context, track),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Square / shaped card with a title under it.
+class BloomCard extends StatelessWidget {
+  final Widget art;
+  final String title;
+  final String subtitle;
+  final double size;
+  final BloomKind? kind;
+  final double radius;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final bool center;
+  const BloomCard({
+    super.key,
+    required this.art,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.size = 128,
+    this.kind,
+    this.radius = 28,
+    this.onLongPress,
+    this.center = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = bc;
+    return GestureDetector(
+      onLongPress: onLongPress,
+      child: SquishyGesture(
+        pressedScale: 0.96,
+        onTap: onTap,
+        child: SizedBox(
+          width: size,
+          child: Column(
+            crossAxisAlignment:
+                center ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+            children: [
+              BloomShape(kind: kind, radius: radius, size: size, child: art),
+              const SizedBox(height: 8),
+              Text(title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: center ? TextAlign.center : TextAlign.start,
+                  style: bloomText(13.5, weight: FontWeight.w600)),
+              if (subtitle.isNotEmpty)
+                Text(subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: center ? TextAlign.center : TextAlign.start,
+                    style: bloomText(12, color: c.t2, weight: FontWeight.w500)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Horizontal row of cards.
+Widget bloomRow(List<Widget> cards, double height) => SizedBox(
+      height: height,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        itemCount: cards.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (_, i) => cards[i],
+      ),
+    );
+
+/// Bloom pill chip (filters).
+class BloomChip extends StatelessWidget {
+  final String label;
+  final bool on;
+  final IconData? icon;
+  final VoidCallback onTap;
+  const BloomChip(
+      {super.key,
+      required this.label,
+      required this.on,
+      required this.onTap,
+      this.icon});
+  @override
+  Widget build(BuildContext context) {
+    final c = bc;
+    final ic = on ? Icons.check_rounded : icon;
+    return SquishyGesture(
+      pressedScale: 0.94,
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        height: 36,
+        padding: EdgeInsets.symmetric(horizontal: ic != null ? 12 : 16),
+        decoration: BoxDecoration(
+          color: on ? c.lc : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: on ? null : Border.all(color: c.s3),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (ic != null) ...[
+              Icon(ic, size: 17, color: on ? c.onLc : c.t1),
+              const SizedBox(width: 6),
+            ],
+            Text(label,
+                style: bloomText(13.5,
+                    color: on ? c.onLc : c.t1, weight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Wavy progress line (Material 3 expressive). Moves while playing.
+class BloomWavePainter extends CustomPainter {
+  final double value;
+  final double phase;
+  final Color active;
+  final Color track;
+  final double amp;
+  final double period;
+  final double stroke;
+  final bool thumb;
+  BloomWavePainter({
+    required this.value,
+    required this.phase,
+    required this.active,
+    required this.track,
+    this.amp = 3.2,
+    this.period = 28,
+    this.stroke = 4,
+    this.thumb = true,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cy = size.height / 2;
+    final x = (size.width * value.clamp(0.0, 1.0)).toDouble();
+    final pa = Paint()
+      ..color = active
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round;
+    final path = Path()..moveTo(0, cy);
+    for (double px = 0; px <= x; px += 1.5) {
+      path.lineTo(px, cy + amp * sin(2 * pi * px / period + phase));
+    }
+    if (x > 1) canvas.drawPath(path, pa);
+    final gap = thumb ? 9.0 : 4.0;
+    if (x + gap < size.width) {
+      canvas.drawLine(
+          Offset(x + gap, cy),
+          Offset(size.width, cy),
+          Paint()
+            ..color = track
+            ..strokeWidth = stroke
+            ..strokeCap = StrokeCap.round);
+    }
+    if (thumb) {
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromCenter(
+                  center: Offset(x, cy), width: 5, height: size.height * 0.85),
+              const Radius.circular(3)),
+          Paint()..color = active);
+    }
+  }
+
+  @override
+  bool shouldRepaint(BloomWavePainter o) =>
+      o.value != value || o.phase != phase || o.active != active;
+}
+
+/// Wavy seek bar that you can drag. Shows times under it when [times].
+class BloomWaveSeek extends StatefulWidget {
+  final TrackItem track;
+  final Color active;
+  final Color inactive;
+  final bool times;
+  final Color? timeColor;
+  const BloomWaveSeek({
+    super.key,
+    required this.track,
+    required this.active,
+    required this.inactive,
+    this.times = true,
+    this.timeColor,
+  });
+  @override
+  State<BloomWaveSeek> createState() => _BloomWaveSeekState();
+}
+
+class _BloomWaveSeekState extends State<BloomWaveSeek>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _wave = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1600));
+  StreamSubscription<bool>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _sub = audioHandler.player.playingStream.listen((p) {
+      if (!mounted) return;
+      p ? _wave.repeat() : _wave.stop();
+    });
+    if (audioHandler.player.playing) _wave.repeat();
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    _wave.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final style = bloomText(12,
+        color: widget.timeColor ?? bc.t2, weight: FontWeight.w600);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        PlayerSeek(
+          fallbackSeconds: widget.track.durationSeconds,
+          height: 30,
+          showTimes: false,
+          timeStyle: const TextStyle(),
+          track: (v, dragging) => AnimatedBuilder(
+            animation: _wave,
+            builder: (_, __) => CustomPaint(
+              size: Size.infinite,
+              painter: BloomWavePainter(
+                value: v,
+                phase: -_wave.value * 2 * pi,
+                active: widget.active,
+                track: widget.inactive,
+                amp: dragging ? 1.5 : 3.2,
+                stroke: dragging ? 6 : 4,
+              ),
+            ),
+          ),
+        ),
+        if (widget.times)
+          TrackProgress(
+            fallbackSeconds: widget.track.durationSeconds,
+            builder: (context, pos, dur) => Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(bloomDur(pos.inSeconds).isEmpty
+                      ? '0:00'
+                      : bloomDur(pos.inSeconds), style: style),
+                  Text(bloomDur(dur.inSeconds), style: style),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Bloom bottom bar: Home, Search, Library, Settings.
+class BloomNavBar extends StatelessWidget {
+  final int tab;
+  final ValueChanged<int> onTab;
+  const BloomNavBar({super.key, required this.tab, required this.onTab});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = bc;
+    final bottom = MediaQuery.of(context).padding.bottom;
+    final items = [
+      (Icons.home_rounded, Icons.home_outlined, 'Home', 0),
+      (Icons.search_rounded, Icons.search_rounded, 'Search', 1),
+      (Icons.library_music_rounded, Icons.library_music_outlined, 'Library', 2),
+      (Icons.settings_rounded, Icons.settings_outlined, 'Settings', 3),
+    ];
+    return Container(
+      padding: EdgeInsets.fromLTRB(8, 10, 8, 8 + bottom),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [c.bg.withOpacity(0), c.bg, c.bg],
+          stops: const [0, 0.3, 1],
+        ),
+      ),
+      child: Row(
+        children: [
+          for (final (on, off, label, i) in items)
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  if (i == 3) {
+                    showSettingsSheet(context);
+                  } else {
+                    onTab(i);
+                  }
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 260),
+                      curve: Curves.easeOutBack,
+                      width: tab == i ? 60 : 44,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: tab == i ? c.lc : Colors.transparent,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Icon(tab == i ? on : off,
+                          size: 22, color: tab == i ? c.onLc : c.t2),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(label,
+                        style: bloomText(11.5,
+                            color: tab == i ? c.t1 : c.t2,
+                            weight:
+                                tab == i ? FontWeight.w700 : FontWeight.w500)),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// ── Bloom Search ─────────────────────────────────────────────────────────
+
+class BloomSearchPage extends StatefulWidget {
+  const BloomSearchPage({super.key});
+  @override
+  State<BloomSearchPage> createState() => _BloomSearchPageState();
+}
+
+class _BloomSearchPageState extends State<BloomSearchPage> {
+  final TextEditingController _ctrl = TextEditingController();
+  final FocusNode _focus = FocusNode();
+  String? _q; // submitted query
+  int _filter = 0; // 0 all, 1 songs, 2 albums, 3 artists, 4 playlists, 5 phone
+
+  Future<List<TrackItem>>? _songs;
+  Future<List<YtAlbum>>? _albums;
+  Future<List<YtArtist>>? _artists;
+  Future<List<YtPlaylistRef>>? _playlists;
+
+  static const _genres = [
+    ('Hip-Hop', BloomKind.cookie, Color(0xFFB5532F), Color(0xFFF7C27A)),
+    ('Chill', BloomKind.flower, Color(0xFF2F6E8C), Color(0xFF9FE0E8)),
+    ('Rock', BloomKind.clover, Color(0xFF9E3B5A), Color(0xFFFFB0B8)),
+    ('Indie', BloomKind.sunny, Color(0xFF3E7D58), Color(0xFFC9F0A4)),
+    ('Workout', BloomKind.scallop, Color(0xFF6E6A2A), Color(0xFFF2E68A)),
+    ('Sleep', BloomKind.gem, Color(0xFF5145A8), Color(0xFFA9B6FF)),
+    ('90s', BloomKind.cookie, Color(0xFF7B4B9E), Color(0xFFF0A6C8)),
+    ('Party', BloomKind.flower, Color(0xFF8A5CC9), Color(0xFFE7D4FF)),
+  ];
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  List<String> get _history {
+    try {
+      return YouTubeMusic.prefs?.getStringList('search_history') ?? const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  void _submit(String raw, {int filter = 0}) {
+    final q = raw.trim();
+    if (q.isEmpty) return;
+    if (appState.b('search_history_on', true)) {
+      final list = [
+        q,
+        ..._history.where((x) => x.toLowerCase() != q.toLowerCase())
+      ].take(12).toList();
+      YouTubeMusic.prefs?.setStringList('search_history', list);
+    }
+    _ctrl.text = q;
+    _focus.unfocus();
+    setState(() {
+      _q = q;
+      _filter = filter;
+      _songs = YouTubeMusic.search(q);
+      _albums = YouTubeMusic.searchAlbums(q);
+      _artists = YouTubeMusic.searchArtists(q);
+      _playlists = YouTubeMusic.searchPlaylists(q);
+    });
+  }
+
+  void _clear() {
+    _ctrl.clear();
+    setState(() => _q = null);
+    _focus.requestFocus();
+  }
+
+  void _playYt(List<TrackItem> list, int i) {
+    audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+    audioHandler.playYouTubeList(list, i);
+    openPlayer(context);
+  }
+
+  List<TrackItem> _local(String q) {
+    final l = q.toLowerCase();
+    return audioHandler.tracks
+        .where((t) =>
+            !t.isYouTube &&
+            (t.title.toLowerCase().contains(l) ||
+                t.artist.toLowerCase().contains(l) ||
+                t.album.toLowerCase().contains(l)))
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = bc;
+    final top = MediaQuery.of(context).padding.top;
+    final bar = Container(
+      height: 56,
+      decoration: BoxDecoration(
+          color: c.s2, borderRadius: BorderRadius.circular(28)),
+      padding: const EdgeInsets.only(left: 6, right: 7),
+      child: Row(
+        children: [
+          IconButton(
+            icon: Icon(_q == null ? Icons.search_rounded : Icons.arrow_back_rounded,
+                color: _q == null ? c.t2 : c.t1),
+            onPressed: _q == null ? () => _focus.requestFocus() : _clear,
+          ),
+          Expanded(
+            child: TextField(
+              controller: _ctrl,
+              focusNode: _focus,
+              textInputAction: TextInputAction.search,
+              style: bloomText(15.5, weight: FontWeight.w500),
+              cursorColor: c.pri,
+              decoration: InputDecoration(
+                hintText: 'Songs, albums, artists, playlists',
+                hintStyle: bloomText(15.5, color: c.t2, weight: FontWeight.w400),
+                border: InputBorder.none,
+                isCollapsed: true,
+              ),
+              onChanged: (_) => setState(() {}),
+              onSubmitted: _submit,
+            ),
+          ),
+          if (_ctrl.text.isNotEmpty)
+            IconButton(
+                icon: Icon(Icons.close_rounded, color: c.t2), onPressed: _clear),
+          BloomButton(
+            size: 42,
+            bg: c.lc,
+            icon: Icons.arrow_forward_rounded,
+            iconColor: c.onLc,
+            iconSize: 20,
+            tooltip: 'Search',
+            onTap: () => _submit(_ctrl.text),
+          ),
+        ],
+      ),
+    );
+
+    return ListenableBuilder(
+      listenable: Listenable.merge([appState, audioHandler.currentIndex]),
+      builder: (context, _) => ListView(
+        padding: EdgeInsets.fromLTRB(16, top + 12, 16, 200),
+        children: [
+          if (_q == null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 4, 4, 14),
+              child: Text('Search', style: bloomText(30, weight: FontWeight.w700)),
+            ),
+          bar,
+          if (_q == null) ..._browse(c) else ..._results(c),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _browse(BloomColors c) {
+    final history =
+        appState.b('search_history_on', true) ? _history : const <String>[];
+    return [
+      if (history.isNotEmpty) ...[
+        BloomSection('Recent', action: 'Clear', onAction: () {
+          YouTubeMusic.prefs?.remove('search_history');
+          setState(() {});
+        }),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final h in history.take(8))
+              BloomChip(
+                  label: h,
+                  on: false,
+                  icon: Icons.history_rounded,
+                  onTap: () => _submit(h)),
+          ],
+        ),
+      ],
+      const BloomSection('Browse'),
+      GridView.count(
+        crossAxisCount: 2,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 1.75,
+        children: [
+          for (final (name, kind, a, b) in _genres)
+            SquishyGesture(
+              pressedScale: 0.96,
+              onTap: () => _submit('$name playlists', filter: 4),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(26),
+                child: ColoredBox(
+                  color: c.s1,
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        right: -14,
+                        top: -12,
+                        child: Transform.rotate(
+                          angle: 0.25,
+                          child: BloomShape(
+                            kind: kind,
+                            size: 86,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: RadialGradient(
+                                  center: const Alignment(-0.4, 0.4),
+                                  radius: 0.9,
+                                  colors: [b, a],
+                                  stops: const [0.18, 0.2],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 14,
+                        bottom: 12,
+                        child: Text(name,
+                            style: bloomText(16, weight: FontWeight.w700)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    ];
+  }
+
+  Widget _loading() => Padding(
+        padding: const EdgeInsets.all(30),
+        child: Center(child: CircularProgressIndicator(color: bc.pri)),
+      );
+
+  Widget _err(Object? e) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: SelectableText(
+          'Couldn\'t reach YouTube Music.\n\nDetails: ${e is PlatformException ? (e.message ?? e.code) : e}',
+          style: bloomText(13, color: bc.t2, weight: FontWeight.w400),
+        ),
+      );
+
+  Widget _none(String t) => Padding(
+        padding: const EdgeInsets.all(30),
+        child: Center(
+            child: Text(t,
+                style: bloomText(14, color: bc.t2, weight: FontWeight.w500))),
+      );
+
+  Widget _future<T>(Future<List<T>>? f, Widget Function(List<T>) build,
+          {bool quiet = false}) =>
+      FutureBuilder<List<T>>(
+        future: f,
+        builder: (context, s) {
+          if (s.hasError) return quiet ? const SizedBox.shrink() : _err(s.error);
+          if (!s.hasData) return quiet ? const SizedBox.shrink() : _loading();
+          return build(s.data!);
+        },
+      );
+
+  Widget _albumCards(List<YtAlbum> list, {double size = 120}) => bloomRow([
+        for (final a in list)
+          BloomCard(
+            art: YtNetworkImage(url: a.thumbnail, size: size),
+            title: a.title,
+            subtitle: a.artist,
+            size: size,
+            kind: null,
+            radius: 28,
+            onTap: () => openYtAlbum(context, a),
+          ),
+      ], size + 50);
+
+  Widget _playlistCards(List<YtPlaylistRef> list, {double size = 120}) =>
+      bloomRow([
+        for (var i = 0; i < list.length; i++)
+          BloomCard(
+            art: YtNetworkImage(url: list[i].thumbnail, size: size),
+            title: list[i].title,
+            subtitle: list[i].subtitle,
+            size: size,
+            kind: kBloomCycle[i % kBloomCycle.length],
+            onTap: () => openYtPlaylistRef(context, list[i]),
+          ),
+      ], size + 50);
+
+  Widget _artistCards(List<YtArtist> list) => bloomRow([
+        for (final a in list)
+          BloomCard(
+            art: YtNetworkImage(
+                url: a.thumbnail,
+                size: 104,
+                fallbackIcon: Icons.person_rounded),
+            title: a.name,
+            subtitle: 'Artist',
+            size: 104,
+            kind: BloomKind.cookie,
+            center: true,
+            onTap: () =>
+                openYtArtist(context, a.url, a.name, thumbnail: a.thumbnail),
+          ),
+      ], 154);
+
+  List<Widget> _results(BloomColors c) {
+    final q = _q!;
+    final chips = [
+      ('All', 0),
+      ('Songs', 1),
+      ('Albums', 2),
+      ('Artists', 3),
+      ('Playlists', 4),
+      ('On this phone', 5),
+    ];
+    final out = <Widget>[
+      const SizedBox(height: 14),
+      SizedBox(
+        height: 36,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          children: [
+            for (final (l, i) in chips)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: BloomChip(
+                    label: l,
+                    on: _filter == i,
+                    onTap: () => setState(() => _filter = i)),
+              ),
+          ],
+        ),
+      ),
+    ];
+
+    switch (_filter) {
+      case 1:
+        out.add(const SizedBox(height: 14));
+        out.add(_future<TrackItem>(_songs, (l) => l.isEmpty
+            ? _none('No songs found.')
+            : bloomGroup([
+                for (var i = 0; i < l.length; i++)
+                  BloomSongRow(track: l[i], onTap: () => _playYt(l, i)),
+              ])));
+        break;
+      case 2:
+        out.add(const SizedBox(height: 14));
+        out.add(_future<YtAlbum>(_albums, (l) {
+          if (l.isEmpty) return _none('No albums found.');
+          return LayoutBuilder(builder: (context, k) {
+            final w = (k.maxWidth - 12) / 2;
+            return Wrap(spacing: 12, runSpacing: 16, children: [
+              for (final a in l)
+                BloomCard(
+                  art: YtNetworkImage(url: a.thumbnail, size: w),
+                  title: a.title,
+                  subtitle: a.artist,
+                  size: w,
+                  kind: null,
+                  radius: 28,
+                  onTap: () => openYtAlbum(context, a),
+                ),
+            ]);
+          });
+        }));
+        break;
+      case 3:
+        out.add(const SizedBox(height: 14));
+        out.add(_future<YtArtist>(_artists, (l) => l.isEmpty
+            ? _none('No artists found.')
+            : bloomGroup([
+                for (final a in l)
+                  InkWell(
+                    onTap: () => openYtArtist(context, a.url, a.name,
+                        thumbnail: a.thumbnail),
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Row(children: [
+                        BloomShape(
+                            kind: BloomKind.cookie,
+                            size: 56,
+                            child: YtNetworkImage(
+                                url: a.thumbnail,
+                                size: 56,
+                                fallbackIcon: Icons.person_rounded)),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(a.name,
+                                  style:
+                                      bloomText(15.5, weight: FontWeight.w700)),
+                              Text(
+                                  a.subscribers >= 0
+                                      ? 'Artist · ${formatCompactCount(a.subscribers)} subscribers'
+                                      : 'Artist',
+                                  style: bloomText(12.5,
+                                      color: c.t2, weight: FontWeight.w500)),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.chevron_right_rounded, color: c.t3),
+                      ]),
+                    ),
+                  ),
+              ])));
+        break;
+      case 4:
+        out.add(const SizedBox(height: 14));
+        out.add(_future<YtPlaylistRef>(_playlists, (l) {
+          if (l.isEmpty) return _none('No playlists found.');
+          return LayoutBuilder(builder: (context, k) {
+            final w = (k.maxWidth - 12) / 2;
+            return Wrap(spacing: 12, runSpacing: 16, children: [
+              for (var i = 0; i < l.length; i++)
+                BloomCard(
+                  art: YtNetworkImage(url: l[i].thumbnail, size: w),
+                  title: l[i].title,
+                  subtitle: l[i].subtitle,
+                  size: w,
+                  kind: i.isEven ? null : kBloomCycle[i % kBloomCycle.length],
+                  radius: 28,
+                  onTap: () => openYtPlaylistRef(context, l[i]),
+                ),
+            ]);
+          });
+        }));
+        break;
+      case 5:
+        final local = _local(q);
+        out.add(const SizedBox(height: 14));
+        out.add(local.isEmpty
+            ? _none('Nothing on this phone matches "$q".')
+            : bloomGroup([
+                for (final t in local.take(100))
+                  BloomSongRow(
+                      track: t,
+                      onTap: () {
+                        final idx = audioHandler.tracks.indexOf(t);
+                        if (idx >= 0) playAndOpen(context, idx);
+                      }),
+              ]));
+        break;
+      default:
+        // Everything: top result, songs, albums, artists, playlists.
+        out.add(_future<YtArtist>(_artists, (artists) {
+          final top = artists.isEmpty ? null : artists.first;
+          if (top == null ||
+              !top.name.toLowerCase().contains(q.toLowerCase().split(' ').first)) {
+            return const SizedBox.shrink();
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const BloomSection('Top result', top: 16),
+              SquishyGesture(
+                pressedScale: 0.98,
+                onTap: () => openYtArtist(context, top.url, top.name,
+                    thumbnail: top.thumbnail),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                      color: c.s2, borderRadius: BorderRadius.circular(32)),
+                  child: Row(
+                    children: [
+                      BloomShape(
+                          kind: BloomKind.cookie,
+                          size: 92,
+                          child: YtNetworkImage(
+                              url: top.thumbnail,
+                              size: 92,
+                              fallbackIcon: Icons.person_rounded)),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(top.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: bloomText(21, weight: FontWeight.w700)),
+                            const SizedBox(height: 3),
+                            Text(
+                                top.subscribers >= 0
+                                    ? 'Artist · ${formatCompactCount(top.subscribers)} subscribers'
+                                    : 'Artist',
+                                style: bloomText(12.5,
+                                    color: c.t2, weight: FontWeight.w500)),
+                            const SizedBox(height: 12),
+                            Row(children: [
+                              SquishyGesture(
+                                pressedScale: 0.94,
+                                onTap: () async {
+                                  final s = await _songs;
+                                  if (s != null && s.isNotEmpty) _playYt(s, 0);
+                                },
+                                child: Container(
+                                  height: 38,
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 16),
+                                  decoration: BoxDecoration(
+                                      color: c.lc,
+                                      borderRadius: BorderRadius.circular(19)),
+                                  child: Row(children: [
+                                    Icon(Icons.play_arrow_rounded,
+                                        color: c.onLc, size: 20),
+                                    const SizedBox(width: 4),
+                                    Text('Play',
+                                        style: bloomText(13.5,
+                                            color: c.onLc,
+                                            weight: FontWeight.w700)),
+                                  ]),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              BloomButton(
+                                size: 38,
+                                bg: c.s3,
+                                icon: Icons.shuffle_rounded,
+                                iconColor: c.t1,
+                                iconSize: 17,
+                                onTap: () async {
+                                  final s = await _songs;
+                                  if (s == null || s.isEmpty) return;
+                                  audioHandler.setShuffleMode(
+                                      AudioServiceShuffleMode.all);
+                                  audioHandler.playYouTubeList(
+                                      s, Random().nextInt(s.length));
+                                  if (mounted) openPlayer(context);
+                                },
+                              ),
+                            ]),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        }, quiet: true));
+        out.add(BloomSection('Songs',
+            action: 'See all', onAction: () => setState(() => _filter = 1)));
+        out.add(_future<TrackItem>(_songs, (l) => l.isEmpty
+            ? _none('No songs found.')
+            : bloomGroup([
+                for (var i = 0; i < min(4, l.length); i++)
+                  BloomSongRow(track: l[i], onTap: () => _playYt(l, i)),
+              ])));
+        out.add(_future<YtAlbum>(_albums, (l) => l.isEmpty
+            ? const SizedBox.shrink()
+            : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                BloomSection('Albums',
+                    action: 'See all',
+                    onAction: () => setState(() => _filter = 2)),
+                _albumCards(l),
+              ]), quiet: true));
+        out.add(_future<YtPlaylistRef>(_playlists, (l) => l.isEmpty
+            ? const SizedBox.shrink()
+            : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                BloomSection('Playlists',
+                    action: 'See all',
+                    onAction: () => setState(() => _filter = 4)),
+                _playlistCards(l),
+              ]), quiet: true));
+        out.add(_future<YtArtist>(_artists, (l) => l.length < 2
+            ? const SizedBox.shrink()
+            : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                BloomSection('Artists',
+                    action: 'See all',
+                    onAction: () => setState(() => _filter = 3)),
+                _artistCards(l),
+              ]), quiet: true));
+        final local = _local(q);
+        if (local.isNotEmpty) {
+          out
+            ..add(BloomSection('On this phone',
+                action: 'See all', onAction: () => setState(() => _filter = 5)))
+            ..add(bloomGroup([
+              for (final t in local.take(3))
+                BloomSongRow(
+                    track: t,
+                    onTap: () {
+                      final idx = audioHandler.tracks.indexOf(t);
+                      if (idx >= 0) playAndOpen(context, idx);
+                    }),
+            ]));
+        }
+    }
+    return out;
+  }
+}
+
+// ── Bloom Library ────────────────────────────────────────────────────────
+
+class BloomLibraryPage extends StatefulWidget {
+  final VoidCallback onSearch;
+  const BloomLibraryPage({super.key, required this.onSearch});
+  @override
+  State<BloomLibraryPage> createState() => _BloomLibraryPageState();
+}
+
+class _BloomLibraryPageState extends State<BloomLibraryPage> {
+  int _chip = 0; // 0 playlists, 1 albums, 2 songs
+  late Future<List<YtPlaylistRef>> _ytPl = YouTubeMusic.libraryPlaylists();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        appState,
+        LibraryStore.revision,
+        audioHandler.libraryRevision,
+        audioHandler.currentIndex,
+      ]),
+      builder: (context, _) => FutureBuilder<List<YtPlaylistRef>>(
+        future: _ytPl,
+        initialData: YouTubeMusic.cachedLibrary(),
+        builder: (context, snap) => _body(context, snap.data ?? const []),
+      ),
+    );
+  }
+
+  Widget _body(BuildContext context, List<YtPlaylistRef> ytPl) {
+    final c = bc;
+    final top = MediaQuery.of(context).padding.top;
+    final yt = appState.homeMode == 'youtube';
+    final grid = appState.b('bloom_lib_grid', true);
+    final localLiked = audioHandler.likedTracks.where((t) => !t.isYouTube).toList();
+
+    // (art, title, subtitle, shape, onTap, onLong)
+    final items = <(Widget Function(double), String, String, BloomKind?, VoidCallback, VoidCallback?)>[];
+    var n = 0;
+    BloomKind? nextShape(bool album) {
+      if (album) return null;
+      final k = n.isEven ? kBloomCycle[(n ~/ 2) % kBloomCycle.length] : null;
+      n++;
+      return k;
+    }
+
+    for (final i in LibraryStore.pins) {
+      final album = i.kind == 'album';
+      if (_chip == 0 && album || _chip == 1 && !album) continue;
+      final pl = i.kind == 'local' ? appState.playlistById(i.id) : null;
+      items.add((
+        (s) => pl != null
+            ? PlaylistCoverThumbnail(playlist: pl, size: s)
+            : YtNetworkImage(url: i.thumbnail, size: s),
+        i.title,
+        'Pinned · ${album ? 'Album' : 'Playlist'}',
+        nextShape(album),
+        () => LibraryStore.open(context, i),
+        () => LibraryStore.menu(context, i),
+      ));
+    }
+    if (_chip == 0) {
+      for (final pl in appState.playlists) {
+        if (LibraryStore.pins.any((x) => x.kind == 'local' && x.id == pl.id)) {
+          continue;
+        }
+        items.add((
+          (s) => PlaylistCoverThumbnail(playlist: pl, size: s),
+          pl.name,
+          'Playlist · ${pl.trackIds.length} songs',
+          nextShape(false),
+          () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => PlaylistDetailScreen(playlistId: pl.id))),
+          null,
+        ));
+      }
+      if (yt) {
+        for (final p in ytPl) {
+          if (p.playlistId == 'LM') continue;
+          items.add((
+            (s) => YtNetworkImage(url: p.thumbnail, size: s),
+            p.title,
+            p.subtitle.isEmpty ? 'Playlist' : p.subtitle,
+            nextShape(false),
+            () => openYtAccountPlaylist(context, p),
+            null,
+          ));
+        }
+      }
+    }
+    for (final i in LibraryStore.saved) {
+      if (LibraryStore.isPinned(i)) continue;
+      final album = i.kind == 'album';
+      if (_chip == 0 && album || _chip == 1 && !album) continue;
+      items.add((
+        (s) => YtNetworkImage(url: i.thumbnail, size: s),
+        i.title,
+        album ? 'Album · ${i.subtitle}' : 'Playlist',
+        nextShape(album),
+        () => LibraryStore.open(context, i),
+        () => LibraryStore.menu(context, i),
+      ));
+    }
+    if (_chip == 1 && !yt) {
+      final albums = <String, List<TrackItem>>{};
+      for (final t in audioHandler.tracks.where((t) => !t.isYouTube)) {
+        if (t.album.isEmpty) continue;
+        albums.putIfAbsent(t.album, () => []).add(t);
+      }
+      for (final e in albums.entries) {
+        items.add((
+          (s) => CustomAlbumArtwork(track: e.value.first),
+          e.key,
+          'Album · ${e.value.first.artist}',
+          null,
+          () => openLocalAlbum(context, e.key, e.value),
+          null,
+        ));
+      }
+    }
+
+    final songs = audioHandler.tracks
+        .where((t) => yt ? t.isYouTube : !t.isYouTube)
+        .toList();
+
+    final out = <Widget>[
+      Row(
+        children: [
+          Expanded(
+              child:
+                  Text('Library', style: bloomText(30, weight: FontWeight.w700))),
+          BloomButton(
+            kind: null,
+            size: 42,
+            bg: c.s2,
+            icon: Icons.search_rounded,
+            iconColor: c.t1,
+            iconSize: 20,
+            tooltip: 'Search',
+            onTap: widget.onSearch,
+          ),
+          const SizedBox(width: 8),
+          BloomButton(
+            size: 42,
+            bg: c.lc,
+            icon: Icons.add_rounded,
+            iconColor: c.onLc,
+            tooltip: 'New playlist',
+            onTap: () => showCreateOrEditPlaylistDialog(context),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      SizedBox(
+        height: 36,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          children: [
+            for (final (l, i) in const [('Playlists', 0), ('Albums', 1), ('Songs', 2)])
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: BloomChip(
+                    label: l,
+                    on: _chip == i,
+                    onTap: () => setState(() => _chip = i)),
+              ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      // Liked songs
+      SquishyGesture(
+        pressedScale: 0.98,
+        onTap: () => yt
+            ? openYtLikedMusic(context)
+            : Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const LikedSongsScreen())),
+        child: Container(
+          height: 96,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+              color: c.lc, borderRadius: BorderRadius.circular(32)),
+          child: Row(
+            children: [
+              BloomShape(
+                kind: BloomKind.flower,
+                size: 62,
+                color: c.onLc,
+                child: Icon(Icons.favorite_rounded, color: c.lc, size: 26),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Liked songs',
+                        style: bloomText(19,
+                            color: c.onLc, weight: FontWeight.w800)),
+                    Text(
+                        yt
+                            ? 'YouTube Music'
+                            : '${localLiked.length} ${localLiked.length == 1 ? 'song' : 'songs'}',
+                        style: bloomText(12.5,
+                            color: c.onLc.withOpacity(0.75),
+                            weight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+              BloomButton(
+                size: 48,
+                bg: c.onLc,
+                icon: Icons.play_arrow_rounded,
+                iconColor: c.lc,
+                iconSize: 26,
+                tooltip: 'Play',
+                onTap: () {
+                  if (yt || localLiked.isEmpty) {
+                    yt
+                        ? openYtLikedMusic(context)
+                        : Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) => const LikedSongsScreen()));
+                    return;
+                  }
+                  audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+                  audioHandler.playYouTubeList(localLiked, 0);
+                  openPlayer(context);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 14, 0, 8),
+        child: Row(
+          children: [
+            Icon(Icons.sort_rounded, size: 17, color: c.t2),
+            const SizedBox(width: 6),
+            Expanded(
+                child: Text(
+                    _chip == 2
+                        ? '${songs.length} ${songs.length == 1 ? 'song' : 'songs'}'
+                        : 'Pinned first',
+                    style:
+                        bloomText(13, color: c.t2, weight: FontWeight.w600))),
+            if (_chip != 2)
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: grid ? 'List' : 'Grid',
+                icon: Icon(grid ? Icons.view_agenda_outlined : Icons.grid_view_rounded,
+                    color: c.t2, size: 20),
+                onPressed: () => appState.setB('bloom_lib_grid', !grid),
+              ),
+          ],
+        ),
+      ),
+    ];
+
+    if (_chip == 2) {
+      out.add(songs.isEmpty
+          ? Padding(
+              padding: const EdgeInsets.all(30),
+              child: Center(
+                  child: Text('No songs yet.',
+                      style: bloomText(14, color: c.t2))))
+          : bloomGroup([
+              for (var i = 0; i < min(300, songs.length); i++)
+                BloomSongRow(
+                    track: songs[i],
+                    onTap: () {
+                      audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+                      audioHandler.playYouTubeList(songs, i);
+                      openPlayer(context);
+                    }),
+            ]));
+    } else if (items.isEmpty) {
+      out.add(Padding(
+        padding: const EdgeInsets.all(30),
+        child: Center(
+          child: Text(
+              _chip == 1
+                  ? 'Albums you play or save show up here.'
+                  : 'Make a playlist with +.',
+              textAlign: TextAlign.center,
+              style: bloomText(14, color: c.t2, weight: FontWeight.w500)),
+        ),
+      ));
+    } else if (grid) {
+      out.add(LayoutBuilder(builder: (context, k) {
+        final w = (k.maxWidth - 12) / 2;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 16,
+          children: [
+            for (final (art, t, s, kind, tap, long) in items)
+              BloomCard(
+                art: art(w),
+                title: t,
+                subtitle: s,
+                size: w,
+                kind: kind,
+                radius: 28,
+                onTap: tap,
+                onLongPress: long,
+              ),
+          ],
+        );
+      }));
+    } else {
+      out.add(bloomGroup([
+        for (final (art, t, s, kind, tap, long) in items)
+          InkWell(
+            onTap: tap,
+            onLongPress: long,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Row(
+                children: [
+                  BloomShape(kind: kind, radius: 14, size: 56, child: art(56)),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(t,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: bloomText(15, weight: FontWeight.w600)),
+                        Text(s,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: bloomText(12.5,
+                                color: c.t2, weight: FontWeight.w500)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ]));
+    }
+
+    return RefreshIndicator(
+      color: c.pri,
+      onRefresh: () async {
+        setState(() => _ytPl = YouTubeMusic.libraryPlaylists(refresh: true));
+        await _ytPl;
+      },
+      child: ListView(
+        padding: EdgeInsets.fromLTRB(16, top + 12, 16, 200),
+        children: out,
+      ),
+    );
+  }
+}
+
+
+// ── Bloom player ─────────────────────────────────────────────────────────
+
+class BloomPlayerView extends StatelessWidget {
+  final TrackItem track;
+  final bool playing;
+  final bool loading;
+  final bool shuffle;
+  final AudioServiceRepeatMode repeat;
+  final bool liked;
+  const BloomPlayerView({
+    super.key,
+    required this.track,
+    required this.playing,
+    required this.loading,
+    required this.shuffle,
+    required this.repeat,
+    required this.liked,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Color>(
+      future: artSeedFor(track),
+      initialData: artSeedNow(track),
+      builder: (context, snap) =>
+          _body(context, snap.data ?? track.artColors.first),
+    );
+  }
+
+  Widget _body(BuildContext context, Color seed) {
+    final c = bc;
+    final glow = Color.lerp(c.s3, seed, 0.45)!;
+    final source = liked
+        ? 'Your likes'
+        : track.isYouTube
+            ? 'YouTube Music'
+            : 'On this phone';
+
+    Widget round(IconData icon, VoidCallback onTap, String tip) => BloomButton(
+          kind: null,
+          size: 42,
+          bg: Colors.white.withOpacity(0.08),
+          icon: icon,
+          iconColor: c.t1,
+          tooltip: tip,
+          onTap: onTap,
+        );
+
+    Widget pill(IconData icon, String label, VoidCallback onTap,
+            {bool on = false}) =>
+        Expanded(
+          child: SquishyGesture(
+            pressedScale: 0.92,
+            onTap: onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              height: 58,
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              decoration: BoxDecoration(
+                color: on ? c.lc : Colors.white.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 20, color: on ? c.onLc : c.t1),
+                  const SizedBox(height: 3),
+                  Text(label,
+                      style: bloomText(10.5,
+                          color: on ? c.onLc : c.t2, weight: FontWeight.w700)),
+                ],
+              ),
+            ),
+          ),
+        );
+
+    final content = SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 22),
+        child: Column(
+          children: [
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                round(Icons.expand_more_rounded, () => Navigator.of(context).pop(),
+                    'Close'),
+                Expanded(
+                  child: Column(
+                    children: [
+                      Text('PLAYING FROM',
+                          style: bloomText(10.5,
+                              color: c.t2,
+                              weight: FontWeight.w700,
+                              spacing: 1.4)),
+                      const SizedBox(height: 2),
+                      Text(source,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: bloomText(14, weight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+                round(Icons.more_vert_rounded,
+                    () => showAddToPlaylistSheet(context, track), 'More'),
+              ],
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 20),
+                child: Center(
+                  child: AspectRatio(
+                    aspectRatio: 1,
+                    child: AnimatedScale(
+                      scale: playing ? 1.0 : 0.94,
+                      duration: const Duration(milliseconds: 420),
+                      curve: Curves.easeOutBack,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(48),
+                          boxShadow: [
+                            BoxShadow(
+                              color: seed.withOpacity(playing ? 0.5 : 0.25),
+                              blurRadius: 50,
+                              spreadRadius: -10,
+                              offset: const Offset(0, 24),
+                            ),
+                          ],
+                        ),
+                        child: Hero(
+                          tag: 'now_playing_art',
+                          createRectTween: _arcTween,
+                          flightShuttleBuilder: _artShuttle,
+                          child: SwipeArtCarousel(
+                              track: track, playing: playing, radius: 48),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      GestureDetector(
+                        onTap: () => goToAlbum(context, track),
+                        child: Text(track.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: bloomText(27, weight: FontWeight.w800)),
+                      ),
+                      const SizedBox(height: 2),
+                      GestureDetector(
+                        onTap: () => goToArtist(context, track),
+                        child: Text(
+                            track.album.isNotEmpty && track.album != track.title
+                                ? '${track.artist} · ${track.album}'
+                                : track.artist,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: bloomText(15,
+                                color: c.pri, weight: FontWeight.w600)),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SquishyGesture(
+                  pressedScale: 0.8,
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    appState.toggleLike(track.id);
+                  },
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 420),
+                    switchInCurve: Curves.elasticOut,
+                    transitionBuilder: (ch, a) => ScaleTransition(
+                        scale: a,
+                        child: RotationTransition(turns: a, child: ch)),
+                    child: BloomShape(
+                      key: ValueKey(liked),
+                      kind: BloomKind.flower,
+                      size: 52,
+                      color: liked ? c.lc : Colors.white.withOpacity(0.10),
+                      child: Icon(
+                          liked
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          color: liked ? c.onLc : c.t1,
+                          size: 23),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            BloomWaveSeek(
+              track: track,
+              active: c.pri,
+              inactive: Colors.white.withOpacity(0.18),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                IconButton(
+                  tooltip: 'Shuffle',
+                  icon: Icon(Icons.shuffle_rounded,
+                      color: shuffle ? c.pri : c.t2, size: 24),
+                  onPressed: () => audioHandler.setShuffleMode(shuffle
+                      ? AudioServiceShuffleMode.none
+                      : AudioServiceShuffleMode.all),
+                ),
+                BloomButton(
+                  kind: null,
+                  radius: 22,
+                  size: 64,
+                  bg: Colors.white.withOpacity(0.10),
+                  icon: Icons.skip_previous_rounded,
+                  iconColor: c.t1,
+                  iconSize: 32,
+                  tooltip: 'Previous',
+                  onTap: audioHandler.skipToPrevious,
+                ),
+                SquishyGesture(
+                  pressedScale: 0.88,
+                  onTap: () =>
+                      playing ? audioHandler.pause() : audioHandler.play(),
+                  child: AnimatedRotation(
+                    turns: playing ? 0 : 0.125,
+                    duration: const Duration(milliseconds: 500),
+                    curve: Curves.easeOutBack,
+                    child: BloomShape(
+                      kind: playing ? BloomKind.cookie : BloomKind.scallop,
+                      size: 98,
+                      color: c.lc,
+                      child: AnimatedRotation(
+                        turns: playing ? 0 : -0.125,
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.easeOutBack,
+                        child: loading
+                            ? SizedBox(
+                                width: 34,
+                                height: 34,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 3.5, color: c.onLc))
+                            : Icon(
+                                playing
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded,
+                                color: c.onLc,
+                                size: 44),
+                      ),
+                    ),
+                  ),
+                ),
+                BloomButton(
+                  kind: null,
+                  radius: 22,
+                  size: 64,
+                  bg: Colors.white.withOpacity(0.10),
+                  icon: Icons.skip_next_rounded,
+                  iconColor: c.t1,
+                  iconSize: 32,
+                  tooltip: 'Next',
+                  onTap: audioHandler.skipToNext,
+                ),
+                IconButton(
+                  tooltip: 'Repeat',
+                  icon: Icon(
+                      repeat == AudioServiceRepeatMode.one
+                          ? Icons.repeat_one_rounded
+                          : Icons.repeat_rounded,
+                      color: repeat != AudioServiceRepeatMode.none
+                          ? c.pri
+                          : c.t2,
+                      size: 24),
+                  onPressed: () =>
+                      audioHandler.setRepeatMode(_nextRepeat(repeat)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                pill(Icons.lyrics_outlined, 'Lyrics',
+                    () => showLyricsSheet(context, track)),
+                pill(Icons.queue_music_rounded, 'Up next',
+                    () => showQueueSheet(context)),
+                pill(Icons.graphic_eq_rounded, 'Sound',
+                    () => showPlaybackSheet(context),
+                    on: soundModified),
+                ValueListenableBuilder<String?>(
+                  valueListenable: audioHandler.sleepLabel,
+                  builder: (_, label, __) => pill(Icons.bedtime_outlined,
+                      label ?? 'Sleep', () => showSleepTimerSheet(context),
+                      on: label != null),
+                ),
+                pill(Icons.ios_share_rounded, 'Share', () => shareTrack(track)),
+              ],
+            ),
+            const SizedBox(height: 14),
+          ],
+        ),
+      ),
+    );
+
+    return Scaffold(
+      backgroundColor: c.bg,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 600),
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(0, -0.55),
+                radius: 1.0,
+                colors: [glow, c.bg],
+              ),
+            ),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(1, 1),
+                radius: 1.1,
+                colors: [c.teal.withOpacity(0.8), c.teal.withOpacity(0)],
+              ),
+            ),
+          ),
+          content,
         ],
       ),
     );
