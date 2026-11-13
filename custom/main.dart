@@ -5407,15 +5407,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       ),
     );
 
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.space): () =>
-            audioHandler.player.playing ? audioHandler.pause() : audioHandler.play(),
-        const SingleActivator(LogicalKeyboardKey.arrowRight, control: true):
-            audioHandler.skipToNext,
-        const SingleActivator(LogicalKeyboardKey.arrowLeft, control: true):
-            audioHandler.skipToPrevious,
-      },
+    return DesktopPlayerKeys(
       child: Focus(
         autofocus: true,
         child: Scaffold(
@@ -34970,10 +34962,9 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): () =>
             Navigator.of(context).maybePop(),
-        const SingleActivator(LogicalKeyboardKey.space): () =>
-            audioHandler.player.playing ? audioHandler.pause() : audioHandler.play(),
       },
-      child: Focus(
+      child: DesktopPlayerKeys(
+        child: Focus(
         autofocus: true,
         child: ListenableBuilder(
           listenable: Listenable.merge([audioHandler.currentIndex, appState]),
@@ -34988,6 +34979,7 @@ class _DesktopNowPlayingState extends State<DesktopNowPlaying> {
             );
           },
         ),
+      ),
       ),
     );
   }
@@ -35570,5 +35562,62 @@ class YtHelper {
     _waiting[id] = c;
     proc.stdin.writeln(jsonEncode({'id': id, 'method': method, 'args': _encode(args)}));
     return c.future;
+  }
+}
+
+
+/// Desktop keys: Space plays / pauses, Ctrl + Left / Right skip songs.
+/// They step aside while you're typing in a text box, so Space types a space
+/// and Ctrl + arrows move the cursor there.
+class DesktopPlayerKeys extends StatelessWidget {
+  final Widget child;
+  const DesktopPlayerKeys({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.space): _DeskKeyIntent(0),
+        SingleActivator(LogicalKeyboardKey.arrowRight, control: true):
+            _DeskKeyIntent(1),
+        SingleActivator(LogicalKeyboardKey.arrowLeft, control: true):
+            _DeskKeyIntent(-1),
+      },
+      child: Actions(
+        actions: {_DeskKeyIntent: _DeskKeyAction()},
+        child: child,
+      ),
+    );
+  }
+}
+
+class _DeskKeyIntent extends Intent {
+  final int kind;
+  const _DeskKeyIntent(this.kind);
+}
+
+class _DeskKeyAction extends Action<_DeskKeyIntent> {
+  @override
+  bool isEnabled(_DeskKeyIntent intent) {
+    final ctx = FocusManager.instance.primaryFocus?.context;
+    if (ctx == null) return true;
+    // Typing in a search box or any other text field: let the key through.
+    return ctx.widget is! EditableText &&
+        ctx.findAncestorWidgetOfExactType<EditableText>() == null;
+  }
+
+  @override
+  Object? invoke(_DeskKeyIntent intent) {
+    switch (intent.kind) {
+      case 1:
+        audioHandler.skipToNext();
+        break;
+      case -1:
+        audioHandler.skipToPrevious();
+        break;
+      default:
+        audioHandler.player.playing ? audioHandler.pause() : audioHandler.play();
+    }
+    return null;
   }
 }
