@@ -114,7 +114,7 @@ jobs:
           cp linux/login.py "$PKG/opt/alexlmp/login.py"
           ln -s /opt/alexlmp/alex_lmp "$PKG/usr/bin/alexlmp"
           cp alexlmp.png "$PKG/usr/share/icons/hicolor/512x512/apps/alexlmp.png"
-          cat > "$PKG/usr/share/applications/alexlmp.desktop" <<DESK
+          cat > "$PKG/usr/share/applications/com.alexlmp.app.alex_lmp.desktop" <<DESK
           [Desktop Entry]
           Type=Application
           Name=AlexLMP
@@ -124,9 +124,9 @@ jobs:
           Icon=alexlmp
           Terminal=false
           Categories=AudioVideo;Audio;Player;Music;
-          StartupWMClass=com.alexlmp.app.alex_lmp
+          StartupWMClass=alex_lmp
           DESK
-          sed -i 's/^          //' "$PKG/usr/share/applications/alexlmp.desktop"
+          sed -i 's/^          //' "$PKG/usr/share/applications/com.alexlmp.app.alex_lmp.desktop"
           SIZE=$(du -sk "$PKG/opt" | cut -f1)
           cat > "$PKG/DEBIAN/control" <<CTRL
           Package: alexlmp
