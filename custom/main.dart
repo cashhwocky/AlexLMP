@@ -9723,11 +9723,11 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               ),
               _roundIcon(
                   pal,
-                  appState.b('lib_list_view')
+                  appState.b('lib_list_view', isDesktop)
                       ? Icons.grid_view_rounded
                       : Icons.view_list_rounded,
                   () => appState.setB(
-                      'lib_list_view', !appState.b('lib_list_view'))),
+                      'lib_list_view', !appState.b('lib_list_view', isDesktop))),
               const SizedBox(width: 8),
               yt
                   ? _roundIcon(pal, Icons.refresh_rounded, _ytLibraryRefresh)
@@ -9897,7 +9897,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
-  bool get _listView => appState.b('lib_list_view');
+  bool get _listView => appState.b('lib_list_view', isDesktop);
 
   Widget _libHeroTile({
     required Color color,
