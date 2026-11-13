@@ -16033,8 +16033,12 @@ class SettingsScreen extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SupportCard(),
-                    const SizedBox(height: 18),
+                    // No support card on the computer version.
+                    if (!isDesktop) ...[
+                      const SupportCard(),
+                      const SizedBox(height: 18),
+                    ] else
+                      const SizedBox(height: 8),
                     ..._appearance(context, pal, cs),
                     ..._nowPlaying(context, pal),
                     ..._playback(context, pal),

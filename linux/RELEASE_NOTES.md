@@ -18,4 +18,4 @@ AlexLMP for Linux 0.1.0 is the first desktop version.
 ## Installing
 Download the .deb and open it, or run `sudo apt install ./AlexLMP-linux-v0.1.0-amd64.deb` in the folder you downloaded it to.
 
-If you enjoy AlexLMP, you can support the project from the card at the top of Settings <3
+<3
