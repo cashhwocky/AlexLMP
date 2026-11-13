@@ -26690,13 +26690,21 @@ class AppIconStyle {
   final List<Color> bars; // 1 = solid, 2 = vertical gradient
   final String anim; // bounce, wave, rise, pulse, spin, glow
   final String animName;
+  /// Bloom: a scalloped cookie instead of a circle, with smaller bars.
+  final bool cookie;
+  final double barScale;
   const AppIconStyle(this.key, this.name, this.bg, this.disc, this.ring,
-      this.bars, this.anim, this.animName);
+      this.bars, this.anim, this.animName,
+      {this.cookie = false, this.barScale = kIconBarScale});
 }
 
 const List<AppIconStyle> kAppIcons = [
   // Full-bleed: the colour fills the whole icon (no circle inside a
   // square), so it looks right in any launcher shape.
+  // Default: Material You lilac, dark bars on a purple cookie.
+  AppIconStyle('bloom', 'Bloom', [Color(0xFFD8CEF2)], Color(0xFF7667AA), null,
+      [Color(0xFF3D3258)], 'wave', 'Wave',
+      cookie: true, barScale: 1.08),
   AppIconStyle('classic', 'Classic', [Color(0xFF101830)], null, null,
       [Color(0xFF567CFF)], 'bounce', 'Bounce'),
   AppIconStyle('midnight', 'Midnight', [Color(0xFF000000)], null, null,
@@ -26722,7 +26730,7 @@ const List<AppIconStyle> kAppIcons = [
 const double kIconBarScale = 1.35;
 
 AppIconStyle appIconStyle([String? key]) {
-  final k = key ?? appState.str('app_icon', 'white');
+  final k = key ?? appState.str('app_icon', 'bloom');
   return kAppIcons.firstWhere((e) => e.key == k, orElse: () => kAppIcons.first);
 }
 
@@ -26782,7 +26790,16 @@ class AppIconPainter extends CustomPainter {
     canvas.drawRect(full, _fill(s.bg, full));
     const c = Offset(54, 54);
     final pulse = s.anim == 'pulse' ? 1 + 0.04 * sin(2 * pi * t * 2) : 1.0;
-    if (s.disc != null) {
+    if (s.disc != null && s.cookie) {
+      canvas.save();
+      canvas.translate(54 - 38.9 * pulse, 54 - 38.9 * pulse);
+      canvas.drawPath(
+          bloomPath(Size.square(77.8 * pulse), 9, 0.075),
+          Paint()
+            ..color = s.disc!
+            ..isAntiAlias = true);
+      canvas.restore();
+    } else if (s.disc != null) {
       canvas.drawCircle(c, 34 * pulse, Paint()..color = s.disc!);
     }
     if (s.ring != null) {
@@ -26838,12 +26855,12 @@ class AppIconPainter extends CustomPainter {
     }
     // Bars drawn 1.35× bigger, same as the launcher icon.
     canvas.translate(54, 54);
-    canvas.scale(kIconBarScale);
+    canvas.scale(s.barScale);
     canvas.translate(-54, -54);
     const barsRect = Rect.fromLTWH(30, 30, 48, 48);
     final bar = _fill(s.bars, barsRect, vertical: true)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 5.5
+      ..strokeWidth = s.cookie ? 5.4 : 5.5
       ..strokeCap = StrokeCap.round;
     for (var i = 0; i < 5; i++) {
       final m = t == 0 ? 1.0 : _mult(i);
@@ -27086,7 +27103,7 @@ Future<void> showAppIconPicker(BuildContext context) async {
     builder: (ctx) => ListenableBuilder(
       listenable: appState,
       builder: (ctx, _) {
-        final current = appState.str('app_icon', 'white');
+        final current = appState.str('app_icon', 'bloom');
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),

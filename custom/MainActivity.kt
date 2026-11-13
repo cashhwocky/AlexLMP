@@ -18,7 +18,7 @@ class MainActivity : AudioServiceActivity() {
     // Launcher icons (activity-aliases in AndroidManifest.xml).
     private val appIcons = listOf(
         "classic", "midnight", "sunset", "aurora", "neon",
-        "mint", "ember", "gold", "ocean", "white",
+        "mint", "ember", "gold", "ocean", "white", "bloom",
     )
 
     private fun iconAlias(key: String) = android.content.ComponentName(
@@ -29,30 +29,31 @@ class MainActivity : AudioServiceActivity() {
     private fun currentAppIcon(): String {
         val pm = packageManager
         for (k in appIcons) {
-            if (k == "white") continue
+            if (k == "bloom") continue
             val st = pm.getComponentEnabledSetting(iconAlias(k))
             if (st == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return k
         }
-        return "white"
+        return "bloom"
     }
 
     /**
-     * White is the default icon now. Anyone who picked an icon before keeps
-     * it: turn the default White entry off so they don't get two icons.
+     * Bloom (Material You lilac) is the default icon now. Anyone who picked
+     * an icon before keeps it: turn the default Bloom entry off so they
+     * don't get two icons.
      */
     private fun keepChosenIcon() {
         try {
             val pm = packageManager
             val enabled = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             val chosen = appIcons.any {
-                it != "white" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
+                it != "bloom" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
             }
-            val white = iconAlias("white")
-            if (chosen && pm.getComponentEnabledSetting(white) ==
+            val bloom = iconAlias("bloom")
+            if (chosen && pm.getComponentEnabledSetting(bloom) ==
                 android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
             ) {
                 pm.setComponentEnabledSetting(
-                    white,
+                    bloom,
                     android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                     android.content.pm.PackageManager.DONT_KILL_APP,
                 )
@@ -60,8 +61,6 @@ class MainActivity : AudioServiceActivity() {
         } catch (_: Exception) {}
     }
 
-    /** Turns on the chosen icon, reopens the app through it, then turns the
-     *  others off. The music engine is shared, so playback keeps going. */
     private fun switchAppIcon(key: String) {
         val pm = packageManager
         val on = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
@@ -161,7 +160,7 @@ class MainActivity : AudioServiceActivity() {
                     }
                     "getAppIcon" -> result.success(currentAppIcon())
                     "setAppIcon" -> {
-                        val key = call.argument<String>("key") ?: "white"
+                        val key = call.argument<String>("key") ?: "bloom"
                         if (key !in appIcons) {
                             result.error("ICON", "Unknown icon: $key", null)
                         } else {
