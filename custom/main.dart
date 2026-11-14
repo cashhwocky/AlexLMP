@@ -25039,7 +25039,11 @@ class _PrestigeBackdropState extends State<PrestigeBackdrop>
           gaplessPlayback: true,
           errorBuilder: (_, __, ___) => const SizedBox.shrink(),
         );
-    return Stack(
+    // Clipped: the moving layers are scaled and rotated past the edges, and
+    // without a clip they spill below the backdrop (a smeared, slanted block
+    // under playlists).
+    return ClipRect(
+        child: Stack(
       fit: StackFit.expand,
       children: [
         AnimatedBuilder(
@@ -25073,7 +25077,7 @@ class _PrestigeBackdropState extends State<PrestigeBackdrop>
           },
         ),
       ],
-    );
+    ));
   }
 
   Widget _for(TrackItem? t) {
@@ -29211,7 +29215,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.0.1';
+const String kAppVersion = '3.0.2';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
