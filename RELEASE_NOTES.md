@@ -1,6 +1,14 @@
 All your music, one player.
 
-AlexLMP 3.1.0 adds an AI DJ and a new bottom tab bar.
+AlexLMP 3.1.1 smooths out Bloom: a new home, mini player and full player to match the new tab bar.
+
+## Smoother Bloom
+- **Home:** pill-style switch between YouTube Music and your phone with a sliding highlight, softer rounded cards and song lists, and blocks that glide in when you open it.
+- **Mini player:** now a floating pill that lines up with the tab bar.
+- **Full player:** the play button morphs smoothly between a circle and a rounded square, round skip buttons, and the Lyrics / Up next / Sound / Sleep / Share buttons sit in a dock-style pill.
+
+## From 3.1.0
+AI DJ and a new bottom tab bar.
 
 ## New
 - **AI DJ tab.** Chat with an assistant that can control your music. Say "play Blinding Lights by The Weeknd" and it searches the app (your songs first, then YouTube Music) and plays it. It can also queue songs, skip, go back, pause, resume and shuffle.

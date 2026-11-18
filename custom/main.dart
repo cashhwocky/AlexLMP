@@ -5438,18 +5438,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
     Widget modeChips = Padding(
       padding: const EdgeInsets.only(top: 14, bottom: 14),
-      child: Row(
-        children: [
-          BloomChip(
-              label: 'YouTube Music',
-              on: yt,
-              onTap: () => _setMode('youtube')),
-          const SizedBox(width: 8),
-          BloomChip(
-              label: 'On this phone',
-              on: !yt,
-              onTap: () => _setMode('local')),
-        ],
+      child: BloomModeSwitch(
+        labels: const ['YouTube Music', 'On this phone'],
+        index: yt ? 0 : 1,
+        onChanged: (i) => _setMode(i == 0 ? 'youtube' : 'local'),
       ),
     );
 
@@ -5478,7 +5470,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 child: Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                      color: c.s2, borderRadius: BorderRadius.circular(32)),
+                      color: c.s2,
+                      borderRadius: BorderRadius.circular(34),
+                      border:
+                          Border.all(color: Colors.white.withOpacity(0.07))),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -5627,7 +5622,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     Widget songs(List<TrackItem> list, int n) => bloomGroup([
           for (var i = 0; i < min(n, list.length); i++)
             BloomSongRow(track: list[i], onTap: () => _ytPlay(list, i)),
-        ]);
+        ], outer: 30, inner: 8);
 
     Widget shelfCards(List<YtShelfItem> items, {bool shapes = true}) =>
         bloomRow([
@@ -5797,7 +5792,11 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics()),
         padding: EdgeInsets.fromLTRB(16, top + 14, 16, 200),
-        children: out,
+        // The first few blocks glide in one after another.
+        children: [
+          for (var i = 0; i < out.length; i++)
+            i < 4 ? Reveal(delayMs: i * 55, dy: 18, child: out[i]) : out[i],
+        ],
       ),
     );
   }
@@ -14320,14 +14319,15 @@ class _MiniPlayerState extends State<MiniPlayer>
       pressedScale: 0.98,
       onTap: () => openPlayer(context),
       child: Container(
-        height: 68,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        height: 66,
+        padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
         decoration: BoxDecoration(
-          color: c.s3,
-          borderRadius: BorderRadius.circular(24),
+          color: c.s2,
+          borderRadius: BorderRadius.circular(34),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
           boxShadow: const [
             BoxShadow(
-                color: Color(0x59000000), blurRadius: 30, offset: Offset(0, 10)),
+                color: Color(0x40000000), blurRadius: 24, offset: Offset(0, 8)),
           ],
         ),
         child: Stack(
@@ -14386,8 +14386,9 @@ class _MiniPlayerState extends State<MiniPlayer>
                   builder: (context, snap) {
                     final playing = snap.data ?? false;
                     return BloomButton(
-                      kind: playing ? BloomKind.cookie : BloomKind.scallop,
-                      size: 46,
+                      kind: null,
+                      radius: 23,
+                      size: 48,
                       bg: c.lc,
                       icon: playing
                           ? Icons.pause_rounded
@@ -14403,9 +14404,9 @@ class _MiniPlayerState extends State<MiniPlayer>
               ],
             ),
             Positioned(
-              left: 12,
-              right: 12,
-              bottom: 5,
+              left: 26,
+              right: 26,
+              bottom: 4,
               child: TrackProgress(
                 fallbackSeconds: t.durationSeconds,
                 builder: (context, pos, dur) {
@@ -14418,8 +14419,8 @@ class _MiniPlayerState extends State<MiniPlayer>
                     borderRadius: BorderRadius.circular(2),
                     child: LinearProgressIndicator(
                       value: v,
-                      minHeight: 3,
-                      backgroundColor: Colors.white.withOpacity(0.12),
+                      minHeight: 2.5,
+                      backgroundColor: Colors.white.withOpacity(0.10),
                       valueColor: AlwaysStoppedAnimation(c.pri),
                     ),
                   );
@@ -29363,7 +29364,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.1.0';
+const String kAppVersion = '3.1.1';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -35793,6 +35794,77 @@ Widget bloomRow(List<Widget> cards, double height) => SizedBox(
       ),
     );
 
+/// Dock-style segmented pill with a sliding indicator (2+ options).
+class BloomModeSwitch extends StatelessWidget {
+  final List<String> labels;
+  final int index;
+  final ValueChanged<int> onChanged;
+  const BloomModeSwitch({
+    super.key,
+    required this.labels,
+    required this.index,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = bc;
+    final n = labels.length;
+    return Container(
+      height: 50,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: c.s2,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: Stack(
+        children: [
+          AnimatedAlign(
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment(n <= 1 ? 0 : -1 + 2 * index / (n - 1), 0),
+            child: FractionallySizedBox(
+              widthFactor: 1 / n,
+              heightFactor: 1,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: c.lc,
+                  borderRadius: BorderRadius.circular(24),
+                ),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              for (var i = 0; i < n; i++)
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      if (i == index) return;
+                      HapticFeedback.selectionClick();
+                      onChanged(i);
+                    },
+                    child: Center(
+                      child: AnimatedDefaultTextStyle(
+                        duration: const Duration(milliseconds: 240),
+                        style: bloomText(13.5,
+                            color: i == index ? c.onLc : c.t2,
+                            weight: FontWeight.w700),
+                        child: Text(labels[i]),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Bloom pill chip (filters).
 class BloomChip extends StatelessWidget {
   final String label;
@@ -37081,11 +37153,11 @@ class BloomPlayerView extends StatelessWidget {
             onTap: onTap,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
-              height: 58,
-              margin: const EdgeInsets.symmetric(horizontal: 4),
+              height: 54,
+              margin: const EdgeInsets.symmetric(horizontal: 2),
               decoration: BoxDecoration(
-                color: on ? c.lc : Colors.white.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(20),
+                color: on ? c.lc : Colors.transparent,
+                borderRadius: BorderRadius.circular(26),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -37243,8 +37315,8 @@ class BloomPlayerView extends StatelessWidget {
                 ),
                 BloomButton(
                   kind: null,
-                  radius: 22,
-                  size: 64,
+                  radius: 30,
+                  size: 60,
                   bg: Colors.white.withOpacity(0.10),
                   icon: Icons.skip_previous_rounded,
                   iconColor: c.t1,
@@ -37256,38 +37328,40 @@ class BloomPlayerView extends StatelessWidget {
                   pressedScale: 0.88,
                   onTap: () =>
                       playing ? audioHandler.pause() : audioHandler.play(),
-                  child: AnimatedRotation(
-                    turns: playing ? 0 : 0.125,
-                    duration: const Duration(milliseconds: 500),
-                    curve: Curves.easeOutBack,
-                    child: BloomShape(
-                      kind: playing ? BloomKind.cookie : BloomKind.scallop,
-                      size: 98,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 340),
+                    curve: Curves.easeOutCubic,
+                    width: 92,
+                    height: 92,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
                       color: c.lc,
-                      child: AnimatedRotation(
-                        turns: playing ? 0 : -0.125,
-                        duration: const Duration(milliseconds: 500),
-                        curve: Curves.easeOutBack,
-                        child: loading
-                            ? SizedBox(
-                                width: 34,
-                                height: 34,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 3.5, color: c.onLc))
-                            : Icon(
+                      borderRadius: BorderRadius.circular(playing ? 46 : 32),
+                    ),
+                    child: loading
+                        ? SizedBox(
+                            width: 34,
+                            height: 34,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 3.5, color: c.onLc))
+                        : AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 220),
+                            transitionBuilder: (ch, a) =>
+                                ScaleTransition(scale: a, child: ch),
+                            child: Icon(
                                 playing
                                     ? Icons.pause_rounded
                                     : Icons.play_arrow_rounded,
+                                key: ValueKey(playing),
                                 color: c.onLc,
                                 size: 44),
-                      ),
-                    ),
+                          ),
                   ),
                 ),
                 BloomButton(
                   kind: null,
-                  radius: 22,
-                  size: 64,
+                  radius: 30,
+                  size: 60,
                   bg: Colors.white.withOpacity(0.10),
                   icon: Icons.skip_next_rounded,
                   iconColor: c.t1,
@@ -37311,7 +37385,14 @@ class BloomPlayerView extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 20),
-            Row(
+            Container(
+              padding: const EdgeInsets.all(5),
+              decoration: BoxDecoration(
+                color: c.s2.withOpacity(0.75),
+                borderRadius: BorderRadius.circular(34),
+                border: Border.all(color: Colors.white.withOpacity(0.08)),
+              ),
+              child: Row(
               children: [
                 pill(Icons.lyrics_outlined, 'Lyrics',
                     () => showLyricsSheet(context, track)),
@@ -37328,6 +37409,7 @@ class BloomPlayerView extends StatelessWidget {
                 ),
                 pill(Icons.ios_share_rounded, 'Share', () => shareTrack(track)),
               ],
+            ),
             ),
             const SizedBox(height: 14),
           ],
