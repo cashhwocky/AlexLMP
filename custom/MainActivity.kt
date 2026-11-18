@@ -7,6 +7,11 @@ import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
+import java.net.URLEncoder
+import java.net.URL
+import java.net.HttpURLConnection
+import java.io.FileOutputStream
+import java.io.File
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
@@ -99,40 +104,14 @@ class MainActivity : AudioServiceActivity() {
     private var updateTapped = false
     private var tts: TextToSpeech? = null
     private var ttsReady = false
-    private var pendingSpeech: String? = null
+    private var djPlayer: MediaPlayer? = null
+    private var djVoiceStyle: String = "nova"
 
     private fun initTts() {
         if (tts != null) return
         tts = TextToSpeech(applicationContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.US
-                try {
-                    val voices = tts?.voices
-                    if (voices != null) {
-                        val best = voices
-                            .filter { it.locale.language == "en" && it.locale.country == "US" && !it.isNetworkConnectionRequired }
-                            .maxWithOrNull(compareBy<android.speech.tts.Voice> { it.quality }
-                                .thenBy {
-                                    val n = it.name.lowercase()
-                                    when {
-                                        n.contains("iom") || n.contains("tpd") || n.contains("sfg") || n.contains("wavenet") -> 3
-                                        n.contains("local") -> 2
-                                        else -> 1
-                                    }
-                                })
-                        if (best != null) tts?.voice = best
-                    }
-                } catch (_: Exception) {}
-                tts?.setPitch(1.02f)
-                tts?.setSpeechRate(1.06f)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    tts?.setAudioAttributes(
-                        android.media.AudioAttributes.Builder()
-                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build()
-                    )
-                }
                 ttsReady = true
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
@@ -146,32 +125,125 @@ class MainActivity : AudioServiceActivity() {
                         runOnUiThread { mediaChannel?.invokeMethod("djSpeaking", false) }
                     }
                 })
-                pendingSpeech?.let { queued ->
-                    pendingSpeech = null
-                    speakDjNow(queued)
-                }
             }
         }
     }
 
     private fun stopDjAudio() {
-        pendingSpeech = null
-        try {
-            tts?.stop()
-        } catch (_: Exception) {}
+        try { djPlayer?.stop() } catch (_: Exception) {}
+        try { djPlayer?.release() } catch (_: Exception) {}
+        djPlayer = null
+        try { tts?.stop() } catch (_: Exception) {}
     }
 
-    private fun speakDjNow(text: String) {
+    private fun downloadVoiceBytes(urlStr: String): ByteArray? {
+        var conn: HttpURLConnection? = null
+        return try {
+            conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 4500
+                readTimeout = 5500
+                instanceFollowRedirects = true
+                requestMethod = "GET"
+                setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android 14; Pixel) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                )
+            }
+            if (conn.responseCode in 200..299) {
+                val bytes = conn.inputStream.use { it.readBytes() }
+                if (bytes.size > 800) bytes else null
+            } else null
+        } catch (_: Exception) {
+            null
+        } finally {
+            try { conn?.disconnect() } catch (_: Exception) {}
+        }
+    }
+
+    private fun speakDjNow(text: String, voiceArg: String? = null) {
+        if (!voiceArg.isNullOrBlank()) djVoiceStyle = voiceArg
+        stopDjAudio()
+        runOnUiThread { mediaChannel?.invokeMethod("djSpeaking", true) }
+
+        Thread {
+            val clean = text.trim()
+            val enc = URLEncoder.encode(clean, "UTF-8")
+
+            val pollyVoice = when (djVoiceStyle) {
+                "kira" -> "Salli"      // Smooth, warm American female voice
+                "aria" -> "Kimberly"   // Bright, energetic American female voice
+                "xavier" -> "Matthew"  // Deep, natural American male radio voice
+                else -> "Joanna"       // Studio natural American female voice ("nova")
+            }
+
+            val urls = ArrayList<String>()
+            urls.add("https://api.streamelements.com/kappa/v2/speech?voice=$pollyVoice&text=$enc")
+            if (djVoiceStyle != "xavier") {
+                urls.add("https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=$enc")
+            } else {
+                urls.add("https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-GB&q=$enc")
+            }
+
+            var audioBytes: ByteArray? = null
+            for (u in urls) {
+                audioBytes = downloadVoiceBytes(u)
+                if (audioBytes != null) break
+            }
+
+            if (audioBytes != null) {
+                try {
+                    val outFile = File(cacheDir, "alexlmp_dj_speech.mp3")
+                    FileOutputStream(outFile).use { it.write(audioBytes) }
+                    runOnUiThread {
+                        try {
+                            val mp = MediaPlayer()
+                            mp.setAudioAttributes(
+                                AudioAttributes.Builder()
+                                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                    .build()
+                            )
+                            mp.setDataSource(outFile.absolutePath)
+                            mp.setOnCompletionListener { player ->
+                                try { player.release() } catch (_: Exception) {}
+                                if (djPlayer === player) djPlayer = null
+                                mediaChannel?.invokeMethod("djSpeaking", false)
+                            }
+                            mp.setOnErrorListener { player, _, _ ->
+                                try { player.release() } catch (_: Exception) {}
+                                if (djPlayer === player) djPlayer = null
+                                speakOfflineFallback(clean)
+                                true
+                            }
+                            djPlayer = mp
+                            mp.prepare()
+                            mp.start()
+                        } catch (_: Exception) {
+                            speakOfflineFallback(clean)
+                        }
+                    }
+                    return@Thread
+                } catch (_: Exception) {}
+            }
+
+            runOnUiThread { speakOfflineFallback(clean) }
+        }.start()
+    }
+
+    private fun speakOfflineFallback(text: String) {
         initTts()
         if (!ttsReady) {
-            pendingSpeech = text
-            runOnUiThread { mediaChannel?.invokeMethod("djSpeaking", true) }
+            mediaChannel?.invokeMethod("djSpeaking", false)
             return
         }
+        tts?.setPitch(if (djVoiceStyle == "xavier") 0.96f else 1.12f)
+        tts?.setSpeechRate(1.06f)
         val params = android.os.Bundle()
         params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
-        runOnUiThread { mediaChannel?.invokeMethod("djSpeaking", true) }
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "alexlmp_dj_${System.currentTimeMillis()}")
+        val res = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "alexlmp_dj_${System.currentTimeMillis()}")
+        if (res == TextToSpeech.ERROR) {
+            mediaChannel?.invokeMethod("djSpeaking", false)
+        }
     }
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
@@ -200,7 +272,7 @@ class MainActivity : AudioServiceActivity() {
                         if (text.isEmpty()) {
                             result.success(false)
                         } else {
-                            speakDjNow(text)
+                            speakDjNow(text, call.argument<String>("voice"))
                             result.success(true)
                         }
                     }

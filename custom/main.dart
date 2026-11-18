@@ -5771,22 +5771,25 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             pressedScale: 0.96,
             onTap: () => _ytPlay(items, i),
             child: Container(
-              height: 64,
+              height: 56,
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
-                  color: c.s2, borderRadius: BorderRadius.circular(22)),
+                color: c.s2.withOpacity(0.88),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.06)),
+              ),
               child: Row(
                 children: [
                   SizedBox(
-                      width: 64,
-                      height: 64,
+                      width: 56,
+                      height: 56,
                       child: CustomAlbumArtwork(track: items[i])),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(items[i].title,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: bloomText(13, weight: FontWeight.w600)),
+                        style: bloomText(13, weight: FontWeight.w700)),
                   ),
                   const SizedBox(width: 8),
                 ],
@@ -17284,13 +17287,33 @@ class SettingsScreen extends StatelessWidget {
   List<Widget> _ai(BuildContext context, AppPalette pal) {
     return [
       _section(pal, 'AI', Icons.auto_awesome_rounded, [
+        ListenableBuilder(
+          listenable: AiDjState.i,
+          builder: (context, _) => _tile(
+            pal,
+            Icons.record_voice_over_rounded,
+            'AI DJ voice',
+            AiDjState.i.voiceTitle,
+            () => showAiDjVoicePicker(
+              context,
+              onPreview: (vKey) async {
+                try {
+                  await _mediaChannel.invokeMethod('speakDj', {
+                    'text': "Hey! I'm your AlexLMP DJ, locked into your rotation.",
+                    'voice': vKey,
+                  });
+                } catch (_) {}
+              },
+            ),
+          ),
+        ),
         _flag(pal, Icons.manage_search_rounded, 'ai_search_on', 'AI search help',
             'Fixes typos and suggests the right songs when you search',
             def: true),
         _flag(pal, Icons.auto_awesome_mosaic_rounded, 'ai_home_on', 'AI mixes on Home',
-            'Shows a one-tap AI mix for the time of day', def: true),
+            'Shows the AI DJ and one-tap AI mix on Home', def: true),
         _tile(pal, Icons.key_rounded, 'AI key & service',
-            'Needed for AI features. Free key from enter.pollinations.ai',
+            'Optional custom endpoint (works out of the box with no key)',
             () => showAiSetup(context),
             trailing: const SizedBox.shrink()),
       ]),
@@ -38582,7 +38605,7 @@ class BloomPlayerView extends StatelessWidget {
                       curve: Curves.easeOutCubic,
                       child: DecoratedBox(
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(44),
+                          borderRadius: BorderRadius.circular(22),
                           boxShadow: [
                             BoxShadow(
                                 color: seed.withOpacity(0.50),
@@ -38596,7 +38619,7 @@ class BloomPlayerView extends StatelessWidget {
                           createRectTween: _arcTween,
                           flightShuttleBuilder: _artShuttle,
                           child: SwipeArtCarousel(
-                              track: track, playing: playing, radius: 44),
+                              track: track, playing: playing, radius: 22),
                         ),
                       ),
                     ),
@@ -38825,7 +38848,7 @@ class BloomPlayerView extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color.lerp(c.bg, seed, 0.42)!, c.bg],
+                colors: [Color.lerp(c.bg, seed, 0.58)!, Color.lerp(c.bg, Colors.black, 0.45)!],
                 stops: const [0, 0.7],
               ),
             ),
@@ -38979,7 +39002,7 @@ Future<void> _speakDjVibeShift(TrackItem current) async {
     } catch (_) {}
 
     try {
-      await _mediaChannel.invokeMethod('speakDj', {'text': speech});
+      await _mediaChannel.invokeMethod('speakDj', {'text': speech, 'voice': AiDjState.i.voice});
     } catch (_) {}
 
     final wordCount = speech.split(RegExp(r'\s+')).length;
@@ -39071,7 +39094,7 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
       const msg = "Check your internet connection or add local songs so I can spin a set for you!";
       AiDjState.i.update(isActive: false, isSpeaking: false, text: msg, tag: "OFFLINE");
       try {
-        await _mediaChannel.invokeMethod('speakDj', {'text': msg});
+        await _mediaChannel.invokeMethod('speakDj', {'text': msg, 'voice': AiDjState.i.voice});
       } catch (_) {}
       return msg;
     }
@@ -39141,7 +39164,7 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
     } catch (_) {}
 
     try {
-      await _mediaChannel.invokeMethod('speakDj', {'text': djSpeech});
+      await _mediaChannel.invokeMethod('speakDj', {'text': djSpeech, 'voice': AiDjState.i.voice});
     } catch (_) {}
 
     final wordCount = djSpeech.split(RegExp(r'\s+')).length;

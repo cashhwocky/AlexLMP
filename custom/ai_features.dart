@@ -1051,12 +1051,49 @@ Future<void> showAiSetup(BuildContext context) async {
 
 class AiDjState extends ChangeNotifier {
   static final AiDjState i = AiDjState._();
-  AiDjState._();
+  AiDjState._() {
+    _loadVoicePref();
+  }
 
   bool active = false;
   bool speaking = false;
-  String line = "Tap to start your personal AI DJ session.";
-  String modeTag = "ON AIR";
+  String line = "Tap play to spin a personalized mix from your history & fresh discoveries.";
+  String modeTag = "AI DJ";
+  String voice = "nova"; // Default: natural female studio voice
+
+  static const List<(String, String, String)> voices = [
+    ('nova', 'Nova (Female · Studio)', 'Natural, upbeat American female DJ voice'),
+    ('kira', 'Kira (Female · Warm)', 'Smooth, laid-back late-night female DJ voice'),
+    ('aria', 'Aria (Female · Bright)', 'Crisp, energetic radio host female voice'),
+    ('xavier', 'Xavier (Male · Deep)', 'Classic smooth male radio DJ voice'),
+  ];
+
+  String get voiceTitle {
+    for (final v in voices) {
+      if (v.\$1 == voice) return v.\$2;
+    }
+    return voices.first.\$2;
+  }
+
+  Future<void> _loadVoicePref() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      final saved = p.getString('ai_dj_voice');
+      if (saved != null && saved.isNotEmpty) {
+        voice = saved;
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> setVoice(String v) async {
+    voice = v;
+    notifyListeners();
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setString('ai_dj_voice', v);
+    } catch (_) {}
+  }
 
   void setSpeaking(bool v) {
     if (speaking == v) return;
@@ -1073,7 +1110,138 @@ class AiDjState extends ChangeNotifier {
   }
 }
 
-/// Smooth Material You fluid voice equalizer pill (no ugly concentric rings).
+/// Bottom sheet in Settings -> AI to pick and preview the AI DJ voice.
+Future<void> showAiDjVoicePicker(
+  BuildContext context, {
+  required Future<void> Function(String voiceKey) onPreview,
+}) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: const Color(0xFF121218),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+    ),
+    builder: (ctx) => ListenableBuilder(
+      listenable: AiDjState.i,
+      builder: (ctx, _) {
+        final current = AiDjState.i.voice;
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const Row(
+                  children: [
+                    AiDjLogoIcon(size: 26),
+                    SizedBox(width: 10),
+                    Text(
+                      'AI DJ Voice',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Choose the voice for your AI DJ transitions. Tap any voice to select and preview it.',
+                  style: TextStyle(color: Colors.white60, fontSize: 13.5),
+                ),
+                const SizedBox(height: 14),
+                for (final v in AiDjState.i.voices)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () async {
+                        HapticFeedback.selectionClick();
+                        await AiDjState.i.setVoice(v.\$1);
+                        await onPreview(v.\$1);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 13),
+                        decoration: BoxDecoration(
+                          color: current == v.\$1
+                              ? const Color(0xFF22D3EE).withOpacity(0.16)
+                              : Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: current == v.\$1
+                                ? const Color(0xFF22D3EE)
+                                : Colors.white12,
+                            width: current == v.\$1 ? 1.4 : 1.0,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              current == v.\$1
+                                  ? Icons.radio_button_checked_rounded
+                                  : Icons.radio_button_off_rounded,
+                              color: current == v.\$1
+                                  ? const Color(0xFF22D3EE)
+                                  : Colors.white54,
+                              size: 22,
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    v.\$2,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15.5,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    v.\$3,
+                                    style: const TextStyle(
+                                      color: Colors.white60,
+                                      fontSize: 12.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(
+                              Icons.volume_up_rounded,
+                              color: Colors.white54,
+                              size: 20,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    ),
+  );
+}
+
 class AiDjVisualizer extends StatefulWidget {
   final bool active;
   final double size;
@@ -1113,17 +1281,25 @@ class _AiDjVisualizerState extends State<AiDjVisualizer>
           height: widget.size,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: widget.accent.withOpacity(widget.active ? 0.22 : 0.12),
-            border: Border.all(
-              color: widget.accent.withOpacity(widget.active ? 0.55 : 0.22),
-              width: 1.4,
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF10B981), Color(0xFF06B6D4), Color(0xFF6366F1)],
             ),
+            boxShadow: widget.active
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFF06B6D4).withOpacity(0.45),
+                      blurRadius: 14,
+                    ),
+                  ]
+                : null,
           ),
           child: CustomPaint(
             painter: _AiDjWaveBarsPainter(
               phase: t,
               speaking: widget.active,
-              accent: widget.accent,
+              accent: Colors.white,
             ),
           ),
         );
@@ -1148,14 +1324,14 @@ class _AiDjWaveBarsPainter extends CustomPainter {
     final barPaint = Paint()
       ..color = accent
       ..strokeCap = StrokeCap.round
-      ..strokeWidth = size.width * 0.075;
+      ..strokeWidth = size.width * 0.08;
 
     const weights = [0.55, 0.85, 1.0, 0.85, 0.55];
     for (int i = 0; i < 5; i++) {
       final offsetIdx = i - 2;
-      final x = c.dx + offsetIdx * (size.width * 0.125);
+      final x = c.dx + offsetIdx * (size.width * 0.13);
       final wave = ((phase + i * 0.95).sin() * 0.5 + 0.5);
-      final factor = speaking ? (0.14 + 0.26 * wave * weights[i]) : 0.07;
+      final factor = speaking ? (0.14 + 0.25 * wave * weights[i]) : 0.08;
       final h = size.height * factor;
       canvas.drawLine(Offset(x, c.dy - h), Offset(x, c.dy + h), barPaint);
     }
@@ -1163,7 +1339,7 @@ class _AiDjWaveBarsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _AiDjWaveBarsPainter old) =>
-      old.phase != phase || old.speaking != speaking || old.accent != accent;
+      old.phase != phase || old.speaking != speaking;
 }
 
 extension _TrigExt on double {
@@ -1177,7 +1353,7 @@ extension _TrigExt on double {
   }
 }
 
-/// Home screen Material You AI DJ card.
+/// Flush Spotify-style AI DJ Home Banner (NO voice picker button here).
 class AiDjHomeCard extends StatelessWidget {
   final VoidCallback onStartOrSkip;
   final VoidCallback onStop;
@@ -1205,7 +1381,7 @@ class AiDjHomeCard extends StatelessWidget {
         return Material(
           color: Colors.transparent,
           child: InkWell(
-            borderRadius: BorderRadius.circular(28),
+            borderRadius: BorderRadius.circular(22),
             onTap: () {
               HapticFeedback.mediumImpact();
               onStartOrSkip();
@@ -1214,20 +1390,27 @@ class AiDjHomeCard extends StatelessWidget {
               duration: const Duration(milliseconds: 260),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
-                color: surface,
-                borderRadius: BorderRadius.circular(28),
+                borderRadius: BorderRadius.circular(22),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color.lerp(surface, const Color(0xFF06B6D4), 0.18)!,
+                    Color.lerp(surface, const Color(0xFF6366F1), 0.22)!,
+                  ],
+                ),
                 border: Border.all(
                   color: st.speaking
-                      ? accent.withOpacity(0.55)
-                      : Colors.white.withOpacity(0.08),
-                  width: 1.2,
+                      ? const Color(0xFF22D3EE).withOpacity(0.65)
+                      : Colors.white.withOpacity(0.09),
+                  width: 1.1,
                 ),
               ),
               child: Row(
                 children: [
                   AiDjVisualizer(
                     active: st.speaking,
-                    size: 48,
+                    size: 50,
                     accent: accent,
                   ),
                   const SizedBox(width: 14),
@@ -1239,31 +1422,32 @@ class AiDjHomeCard extends StatelessWidget {
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 2.5),
+                                  horizontal: 7, vertical: 2),
                               decoration: BoxDecoration(
-                                color: accent.withOpacity(0.18),
-                                borderRadius: BorderRadius.circular(8),
+                                color: const Color(0xFF22D3EE).withOpacity(0.20),
+                                borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
                                 st.speaking
-                                    ? 'LIVE'
-                                    : (st.active ? st.modeTag : 'AI DJ'),
-                                style: TextStyle(
-                                  color: accent,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.7,
+                                    ? 'LIVE ON AIR'
+                                    : (st.active ? st.modeTag : 'SPOTIFY AI DJ'),
+                                style: const TextStyle(
+                                  color: Color(0xFF67E8F9),
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.8,
                                   decoration: TextDecoration.none,
                                 ),
                               ),
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              'Personal AI DJ',
+                              'DJ',
                               style: TextStyle(
                                 color: text,
-                                fontSize: 15.5,
-                                fontWeight: FontWeight.w800,
+                                fontSize: 17,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -0.3,
                                 decoration: TextDecoration.none,
                               ),
                             ),
@@ -1276,10 +1460,10 @@ class AiDjHomeCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: st.speaking ? text : subtext,
-                            fontSize: 13,
+                            fontSize: 12.8,
                             fontWeight:
-                                st.speaking ? FontWeight.w600 : FontWeight.w400,
-                            height: 1.3,
+                                st.speaking ? FontWeight.w600 : FontWeight.w500,
+                            height: 1.28,
                             decoration: TextDecoration.none,
                           ),
                         ),
@@ -1288,7 +1472,7 @@ class AiDjHomeCard extends StatelessWidget {
                   ),
                   if (st.active)
                     IconButton(
-                      tooltip: 'Next DJ Pick',
+                      tooltip: 'Switch Up Vibe',
                       onPressed: () {
                         HapticFeedback.lightImpact();
                         onStartOrSkip();
@@ -1305,8 +1489,8 @@ class AiDjHomeCard extends StatelessWidget {
                       st.active
                           ? Icons.stop_circle_rounded
                           : Icons.play_circle_fill_rounded,
-                      color: accent,
-                      size: 32,
+                      color: const Color(0xFF22D3EE),
+                      size: 34,
                     ),
                   ),
                 ],
@@ -1319,8 +1503,6 @@ class AiDjHomeCard extends StatelessWidget {
   }
 }
 
-/// Polished floating pill inside NowPlayingScreen that ONLY appears while the
-/// AI DJ is actively speaking and automatically slides/fades away when done.
 class AiDjPlayerBanner extends StatelessWidget {
   final VoidCallback onNextVibe;
   final Color accent;
@@ -1350,18 +1532,18 @@ class AiDjPlayerBanner extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
                 child: Material(
-                  color: const Color(0xE61C1926),
-                  elevation: 8,
-                  shadowColor: Colors.black54,
+                  color: const Color(0xEE14141C),
+                  elevation: 10,
+                  shadowColor: Colors.black87,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(22),
                     side: BorderSide(
-                      color: accent.withOpacity(0.38),
+                      color: const Color(0xFF22D3EE).withOpacity(0.45),
                       width: 1.1,
                     ),
                   ),
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(22),
                     onTap: () {
                       HapticFeedback.lightImpact();
                       onNextVibe();
@@ -1383,11 +1565,11 @@ class AiDjPlayerBanner extends StatelessWidget {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
-                                  'AI DJ · ${st.modeTag}',
-                                  style: TextStyle(
-                                    color: accent,
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w800,
+                                  'DJ · ${st.modeTag}',
+                                  style: const TextStyle(
+                                    color: Color(0xFF67E8F9),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w900,
                                     letterSpacing: 0.8,
                                     decoration: TextDecoration.none,
                                   ),
@@ -1399,7 +1581,7 @@ class AiDjPlayerBanner extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
                                     color: Colors.white,
-                                    fontSize: 13,
+                                    fontSize: 12.8,
                                     fontWeight: FontWeight.w600,
                                     height: 1.25,
                                     decoration: TextDecoration.none,
@@ -1409,9 +1591,9 @@ class AiDjPlayerBanner extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          Icon(
+                          const Icon(
                             Icons.skip_next_rounded,
-                            color: accent,
+                            color: Color(0xFF67E8F9),
                             size: 22,
                           ),
                         ],
@@ -1428,9 +1610,6 @@ class AiDjPlayerBanner extends StatelessWidget {
   }
 }
 
-
-/// Colored custom-drawn AI DJ logo icon (cyan-violet-magenta gradient disc + voice wave)
-/// used on the player dock when AI DJ mode is active.
 class AiDjLogoIcon extends StatelessWidget {
   final double size;
   const AiDjLogoIcon({super.key, this.size = 22});
@@ -1452,15 +1631,13 @@ class _AiDjLogoPainter extends CustomPainter {
     final c = Offset(size.width / 2, size.height / 2);
     final r = size.width / 2;
 
-    // Vibrant gradient disc
     final grad = const LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xFF22D3EE), Color(0xFF6366F1), Color(0xFFEC4899)],
+      colors: [Color(0xFF10B981), Color(0xFF06B6D4), Color(0xFF6366F1)],
     ).createShader(rect);
     canvas.drawCircle(c, r, Paint()..shader = grad);
 
-    // Subtle vinyl outer ring
     canvas.drawCircle(
       c,
       r * 0.80,
@@ -1470,7 +1647,6 @@ class _AiDjLogoPainter extends CustomPainter {
         ..color = Colors.white.withOpacity(0.32),
     );
 
-    // 3 equalizer pulse bars in the center
     final barPaint = Paint()
       ..color = Colors.white
       ..strokeCap = StrokeCap.round
