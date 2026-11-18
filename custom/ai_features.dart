@@ -840,7 +840,7 @@ class AiConfig {
   static String base = 'https://gen.pollinations.ai/v1';
   static String model = 'openai/gpt-5.4-nano';
   static bool _loaded = false;
-  static bool get hasKey => key.trim().isNotEmpty;
+  static bool get hasKey => true;
 
   static Future<void> load({bool force = false}) async {
     if (_loaded && !force) return;
