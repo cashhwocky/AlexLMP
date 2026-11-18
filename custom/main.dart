@@ -1627,9 +1627,48 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     }
   }
 
-  /// Plays a list of YouTube Music songs (an album or an artist's top songs)
-  /// as the queue, starting at [start]. The rest of the library follows it.
-  Future<void> playYouTubeList(List<TrackItem> list, int start) async {
+  /// Number of tracks at the front of [tracks] belonging to the active
+  /// artist/album session. When > 0, shuffle and next stay strictly inside
+  /// this artist/collection instead of jumping to unrelated songs.
+  int _activeScopeCount = 0;
+
+  /// Appends newly fetched artist catalog songs into the active artist session
+  /// without interrupting the currently playing track.
+  void expandActiveArtistSession(List<TrackItem> fullCatalog) {
+    if (fullCatalog.isEmpty) return;
+    final existingIds = <String>{};
+    final scoped = <TrackItem>[];
+    final limit = _activeScopeCount > 0 ? min(_activeScopeCount, tracks.length) : 0;
+    for (var i = 0; i < limit; i++) {
+      existingIds.add(tracks[i].id);
+      scoped.add(tracks[i]);
+    }
+    for (final t in fullCatalog) {
+      if (existingIds.add(t.id)) {
+        appState.unmarkDeleted(t.id, t.source);
+        scoped.add(trackById(t.id) ?? t);
+      }
+    }
+    final tail = tracks.where((t) => !existingIds.contains(t.id)).toList();
+    final curId = currentTrack?.id;
+    tracks = [...scoped, ...tail];
+    _activeScopeCount = scoped.length;
+    if (curId != null) {
+      final newIdx = tracks.indexWhere((t) => t.id == curId);
+      if (newIdx >= 0) {
+        _index = newIdx;
+        currentIndex.value = newIdx;
+      }
+    }
+    _shufflePick = null;
+    _publishQueue();
+  }
+
+  /// Plays a list of songs (an artist's catalog or album) and locks playback
+  /// and shuffle to that list so it plays through their entire catalog without
+  /// jumping to random artists.
+  Future<void> playYouTubeList(List<TrackItem> list, int start,
+      {bool lockToScope = false}) async {
     if (list.isEmpty) return;
     final merged = <TrackItem>[];
     final ids = <String>{};
@@ -1640,7 +1679,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     }
     final rest = tracks.where((t) => !ids.contains(t.id)).toList();
     tracks = [...merged, ...rest];
+    _activeScopeCount = lockToScope ? merged.length : 0;
     _history.clear();
+    _shufflePick = null;
     _publishQueue();
     await _load(start.clamp(0, merged.length - 1), play: true);
   }
@@ -1741,19 +1782,24 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     return idx;
   }
 
+  int get _scopeLimit =>
+      (_activeScopeCount > 1 && _activeScopeCount <= tracks.length)
+          ? _activeScopeCount
+          : tracks.length;
+
   int? _nextIndex({required bool auto}) {
     if (tracks.isEmpty && upNext.isEmpty) return null;
     final queued = _takeUpNext();
     if (queued != null) return queued;
     if (tracks.isEmpty) return null;
-    if (_shuffle && tracks.length > 1) {
-      // Use the song already picked (and preloaded) as "next".
+    final limit = _scopeLimit;
+    if (_shuffle && limit > 1) {
       final n = _shuffleNext();
       _shufflePick = null;
       return n;
     }
     final n = _index + 1;
-    if (n < tracks.length) return n;
+    if (n < limit) return n;
     if (_repeat == AudioServiceRepeatMode.all || !auto) return 0;
     return null;
   }
@@ -2194,11 +2240,13 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   int? _shufflePick;
 
   int _shuffleNext() {
+    final limit = _scopeLimit;
     final p = _shufflePick;
-    if (p != null && p < tracks.length && p != _index) return p;
+    if (p != null && p < limit && p != _index) return p;
+    if (limit <= 1) return 0;
     int n;
     do {
-      n = _rng.nextInt(tracks.length);
+      n = _rng.nextInt(limit);
     } while (n == _index);
     _shufflePick = n;
     return n;
@@ -21476,20 +21524,55 @@ class LyricsScreen extends StatefulWidget {
 
 class _LyricsScreenState extends State<LyricsScreen> {
   final Map<int, GlobalKey> _keys = {};
+  final ScrollController _scrollCtrl = ScrollController();
   int _shown = -1;
+  bool _initialScrolled = false;
+  String? _lastTrackId;
 
   GlobalKey _key(int i) => _keys.putIfAbsent(i, () => GlobalKey());
 
-  void _follow(int i) {
-    if (i == _shown || i < 0) return;
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  void _follow(int i, int totalLines) {
+    if (i < 0) return;
+    final firstOpen = !_initialScrolled;
+    if (i == _shown && !firstOpen) return;
     _shown = i;
+    _initialScrolled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final ctx = _keys[i]?.currentContext;
       if (ctx != null) {
-        Scrollable.ensureVisible(ctx,
-            alignment: 0.35,
-            duration: const Duration(milliseconds: 420),
-            curve: Curves.easeOutCubic);
+        Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.35,
+          duration: Duration(milliseconds: firstOpen ? 220 : 420),
+          curve: Curves.easeOutCubic,
+        );
+      } else if (_scrollCtrl.hasClients && totalLines > 0) {
+        final maxExt = _scrollCtrl.position.maxScrollExtent;
+        final target = (maxExt * (i / totalLines)).clamp(0.0, maxExt);
+        _scrollCtrl.animateTo(
+          target,
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+        );
+        Future.delayed(const Duration(milliseconds: 280), () {
+          if (!mounted) return;
+          final ctx2 = _keys[i]?.currentContext;
+          if (ctx2 != null) {
+            Scrollable.ensureVisible(
+              ctx2,
+              alignment: 0.35,
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        });
       }
     });
   }
@@ -21603,43 +21686,53 @@ class _LyricsScreenState extends State<LyricsScreen> {
                               color: cs.onSurfaceVariant, fontSize: 16)),
                     );
                   }
-                  if (r.synced.isEmpty) {
-                    return SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(26, 10, 26, 60),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(r.plain ?? '',
-                              style: TextStyle(
-                                  color: cs.onSurface,
-                                  fontSize: 22,
-                                  height: 1.5,
-                                  fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 24),
-                          Text('Lyrics from ${r.source}',
-                              style: TextStyle(
-                                  color: cs.onSurfaceVariant, fontSize: 12)),
-                        ],
-                      ),
+                  final List<(Duration, String)> syncedLines = r.synced.isNotEmpty
+                      ? r.synced
+                      : () {
+                          final rawLines = (r.plain ?? '')
+                              .split('\n')
+                              .map((s) => s.trim())
+                              .where((s) => s.isNotEmpty)
+                              .toList();
+                          if (rawLines.isEmpty) return <(Duration, String)>[];
+                          final totalMs = (audioHandler.player.duration?.inMilliseconds ??
+                                  (t.durationSeconds > 0 ? t.durationSeconds * 1000 : 180000))
+                              .clamp(30000, 1200000);
+                          final stepMs = (totalMs * 0.90) ~/ rawLines.length;
+                          return <(Duration, String)>[
+                            for (var i = 0; i < rawLines.length; i++)
+                              (Duration(milliseconds: 1500 + i * stepMs), rawLines[i]),
+                          ];
+                        }();
+                  if (syncedLines.isEmpty) {
+                    return Center(
+                      child: Text('No lyrics found for this song.',
+                          style: TextStyle(color: cs.onSurfaceVariant, fontSize: 16)),
                     );
+                  }
+                  if (_lastTrackId != t.id) {
+                    _lastTrackId = t.id;
+                    _shown = -1;
+                    _initialScrolled = false;
                   }
                   return StreamBuilder<Duration>(
                     stream: audioHandler.player.positionStream,
                     builder: (context, posSnap) {
                       final pos = posSnap.data ?? audioHandler.player.position;
-                      var idx = -1;
-                      for (var i = 0; i < r.synced.length; i++) {
-                        if (r.synced[i].$1 <= pos) idx = i;
+                      var idx = 0;
+                      for (var i = 0; i < syncedLines.length; i++) {
+                        if (syncedLines[i].$1 <= pos) idx = i;
                       }
-                      _follow(idx);
+                      _follow(idx, syncedLines.length);
                       return ListView(
+                        controller: _scrollCtrl,
                         padding: const EdgeInsets.fromLTRB(26, 20, 26, 300),
                         children: [
-                          for (var i = 0; i < r.synced.length; i++)
+                          for (var i = 0; i < syncedLines.length; i++)
                             GestureDetector(
                               key: _key(i),
                               behavior: HitTestBehavior.opaque,
-                              onTap: () => audioHandler.seek(r.synced[i].$1),
+                              onTap: () => audioHandler.seek(syncedLines[i].$1),
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(vertical: 9),
                                 child: AnimatedDefaultTextStyle(
@@ -21655,19 +21748,19 @@ class _LyricsScreenState extends State<LyricsScreen> {
                                   ),
                                   child: i == idx &&
                                           appState.b('word_lyrics', true) &&
-                                          r.synced[i].$2.trim().isNotEmpty
+                                          syncedLines[i].$2.trim().isNotEmpty
                                       ? KaraokeLine(
-                                          line: r.synced[i].$2,
-                                          start: r.synced[i].$1,
-                                          nextStart: i + 1 < r.synced.length
-                                              ? r.synced[i + 1].$1
-                                              : r.synced[i].$1 +
+                                          line: syncedLines[i].$2,
+                                          start: syncedLines[i].$1,
+                                          nextStart: i + 1 < syncedLines.length
+                                              ? syncedLines[i + 1].$1
+                                              : syncedLines[i].$1 +
                                                   const Duration(seconds: 6),
                                           color: cs.onSurface,
                                         )
-                                      : Text(r.synced[i].$2.isEmpty
+                                      : Text(syncedLines[i].$2.isEmpty
                                           ? '♪'
-                                          : r.synced[i].$2
+                                          : syncedLines[i].$2
                                               .replaceAll(RegExp(r'<\d+:\d+(?:\.\d+)?>'), '')),
                                 ),
                               ),
@@ -33360,11 +33453,37 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
     _future = YouTubeMusic.artist(widget.url, widget.name);
   }
 
+  Future<void> _loadEntireArtistCatalog(String artistName) async {
+    try {
+      final allSongs = await YouTubeMusic.artistSongs(artistName);
+      if (allSongs.isNotEmpty) {
+        audioHandler.expandActiveArtistSession(allSongs);
+      }
+      final albums = await YouTubeMusic.artistAlbums(artistName);
+      for (final alb in albums.take(8)) {
+        try {
+          final page = await YouTubeMusic.album(alb.url);
+          if (page.tracks.isNotEmpty) {
+            audioHandler.expandActiveArtistSession(page.tracks);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
   void _play(List<TrackItem> songs, int i, {bool shuffle = false}) {
+    final localArtistTracks = audioHandler.tracks
+        .where((t) => t.artist.toLowerCase() == widget.name.toLowerCase())
+        .toList();
+    final combined = <TrackItem>[...songs];
+    for (final lt in localArtistTracks) {
+      if (!combined.any((x) => x.id == lt.id)) combined.add(lt);
+    }
     audioHandler.setShuffleMode(
         shuffle ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none);
-    audioHandler.playYouTubeList(songs, i);
+    audioHandler.playYouTubeList(combined, i, lockToScope: true);
     openPlayer(context);
+    unawaited(_loadEntireArtistCatalog(widget.name));
   }
 
   /// AlexLMP Bloom artist page.
@@ -36195,7 +36314,7 @@ class LocalCollectionScreen extends StatelessWidget {
   void _play(BuildContext context, int i, {bool shuffle = false}) {
     audioHandler.setShuffleMode(
         shuffle ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none);
-    audioHandler.playYouTubeList(tracks, i);
+    audioHandler.playYouTubeList(tracks, i, lockToScope: true);
     openPlayer(context);
   }
 
