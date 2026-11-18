@@ -39,6 +39,8 @@ jobs:
         run: |
           cp custom/pubspec.yaml app_build/pubspec.yaml
           cp custom/main.dart app_build/lib/main.dart
+          cp custom/tab_dock.dart app_build/lib/tab_dock.dart
+          cp custom/ai_music_chat.dart app_build/lib/ai_music_chat.dart
           cp custom/AndroidManifest.xml app_build/android/app/src/main/AndroidManifest.xml
           rm -rf app_build/android/app/src/main/kotlin
           mkdir -p app_build/android/app/src/main/kotlin/com/alexlmp/app

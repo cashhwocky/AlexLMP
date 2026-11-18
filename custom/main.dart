@@ -18,6 +18,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'ai_music_chat.dart';
+import 'tab_dock.dart';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Globals
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4242,6 +4245,8 @@ class AlexLmpRoot extends StatefulWidget {
 class _AlexLmpRootState extends State<AlexLmpRoot> {
   int _tab = 0;
   int _dir = 1;
+  final GlobalKey _bloomBottomKey = GlobalKey();
+  double _bloomBottomH = 130;
   int _libraryFilter = 0;
 
   AppLifecycleListener? _life;
@@ -5159,9 +5164,31 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   // ═══════════════════════ AlexLMP Bloom app style ═══════════════════════
 
+  /// Measures the floating bottom stack (mini player + tab dock) so the AI
+  /// chat can keep its input box right above it.
+  void _measureBloomBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final box = _bloomBottomKey.currentContext?.findRenderObject();
+      if (box is RenderBox && box.hasSize && mounted) {
+        final h = box.size.height;
+        if ((h - _bloomBottomH).abs() > 1) setState(() => _bloomBottomH = h);
+      }
+    });
+  }
+
+  static const List<TabItem> _bloomTabs = [
+    TabItem(Icons.home_outlined, Icons.home_rounded, 'Home'),
+    TabItem(Icons.search_rounded, Icons.search_rounded, 'Search'),
+    TabItem(Icons.library_music_outlined, Icons.library_music_rounded, 'Library'),
+    TabItem(Icons.auto_awesome_outlined, Icons.auto_awesome_rounded, 'AI'),
+    TabItem(Icons.settings_outlined, Icons.settings_rounded, 'Settings'),
+  ];
+
   Widget _bloomScaffold(
       BuildContext context, AppPalette pal, List<TrackItem> tracks) {
-    final tab = _tab > 2 ? 0 : _tab;
+    final tab = _tab > 3 ? 0 : _tab;
+    final c = bc;
+    _measureBloomBottom();
     Widget page;
     switch (tab) {
       case 1:
@@ -5174,11 +5201,28 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   _tab = 1;
                 }));
         break;
+      case 3:
+        page = AiMusicChat(
+          onCommand: _aiCommand,
+          nowPlaying: () {
+            final t = audioHandler.currentTrack;
+            return t == null ? '' : '${t.title} - ${t.artist}';
+          },
+          bg: c.bg,
+          surface: c.s2,
+          userBubble: c.lc,
+          onUserBubble: c.onLc,
+          text: c.t1,
+          subtext: c.t2,
+          accent: c.pri,
+          bottomPad: _bloomBottomH,
+        );
+        break;
       default:
         page = _bloomHome(context, pal, tracks);
     }
     return Scaffold(
-      backgroundColor: bc.bg,
+      backgroundColor: c.bg,
       resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
@@ -5205,6 +5249,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             right: 0,
             bottom: 0,
             child: Column(
+              key: _bloomBottomKey,
               mainAxisSize: MainAxisSize.min,
               children: [
                 ValueListenableBuilder<int>(
@@ -5218,12 +5263,30 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     );
                   },
                 ),
-                BloomNavBar(
-                  tab: tab,
-                  onTab: (i) => setState(() {
-                    _dir = i >= _tab ? 1 : -1;
-                    _tab = i;
-                  }),
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+                    child: TabDock(
+                      items: _bloomTabs,
+                      index: tab,
+                      containerColor: c.s2,
+                      indicatorColor: c.lc,
+                      selectedColor: c.onLc,
+                      unselectedColor: c.t2,
+                      onSelect: (i) {
+                        HapticFeedback.selectionClick();
+                        if (i == 4) {
+                          showSettingsSheet(context);
+                        } else {
+                          setState(() {
+                            _dir = i >= _tab ? 1 : -1;
+                            _tab = i;
+                          });
+                        }
+                      },
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -5231,6 +5294,91 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         ],
       ),
     );
+  }
+
+  // ── AI DJ: lets the chat search the app and drive the player ─────────
+
+  int _aiScore(TrackItem t, List<String> words) {
+    final hay = '${t.title} ${t.artist} ${t.album}'.toLowerCase();
+    var n = 0;
+    for (final w in words) {
+      if (hay.contains(w)) n++;
+    }
+    return n;
+  }
+
+  /// Best match for [query] in the songs on the phone (null if none is close).
+  TrackItem? _aiFindLocal(String query) {
+    final words = query
+        .toLowerCase()
+        .split(RegExp(r'[^a-z0-9\u00C0-\uFFFF]+'))
+        .where((w) => w.isNotEmpty && w != 'by' && w != 'the' && w != 'a')
+        .toList();
+    if (words.isEmpty) return null;
+    TrackItem? best;
+    var bestScore = 0;
+    for (final t in audioHandler.tracks) {
+      if (t.isYouTube) continue;
+      final sc = _aiScore(t, words);
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = t;
+      }
+    }
+    // Every word (or nearly every word for long requests) must match.
+    final need = words.length <= 2 ? words.length : (words.length * 0.75).ceil();
+    return bestScore >= need ? best : null;
+  }
+
+  Future<TrackItem?> _aiFindYt(String query) async {
+    try {
+      final r = await YouTubeMusic.search(query);
+      return r.isEmpty ? null : r.first;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String> _aiCommand(String action, String query) async {
+    switch (action) {
+      case 'pause':
+        await audioHandler.pause();
+        return 'Paused';
+      case 'resume':
+        await audioHandler.play();
+        return 'Playing';
+      case 'next':
+        await audioHandler.skipToNext();
+        return 'Skipped to the next song';
+      case 'previous':
+        await audioHandler.skipToPrevious();
+        return 'Went back a song';
+      case 'shuffle':
+        await audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
+        return 'Shuffle is on';
+      case 'play':
+      case 'queue':
+        if (query.trim().isEmpty) return 'Tell me which song to play';
+        final queue = action == 'queue';
+        final ytFirst = appState.homeMode == 'youtube';
+        TrackItem? t;
+        if (!ytFirst) t = _aiFindLocal(query);
+        t ??= await _aiFindYt(query);
+        if (t == null && ytFirst) t = _aiFindLocal(query);
+        if (t == null) return "Couldn't find \"$query\" in the app";
+        if (queue) {
+          audioHandler.addToQueue([t]);
+          return 'Added to queue: ${t.title} - ${t.artist}';
+        }
+        await audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+        if (t.isYouTube) {
+          await audioHandler.playYouTubeList([t], 0);
+        } else {
+          await audioHandler.playTrackById(t.id);
+        }
+        return 'Now playing: ${t.title} - ${t.artist}';
+    }
+    return '';
   }
 
   Widget _bloomHome(BuildContext context, AppPalette pal, List<TrackItem> all) {
@@ -29215,7 +29363,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.0.2';
+const String kAppVersion = '3.1.0';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
