@@ -28475,41 +28475,47 @@ Future<void> showAppIconPicker(BuildContext context) async {
       listenable: appState,
       builder: (ctx, _) {
         final current = appState.str('app_icon', 'bloom');
+        final maxH = MediaQuery.of(ctx).size.height * 0.82;
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(2)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxH),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                          color: Colors.white24,
+                          borderRadius: BorderRadius.circular(2)),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 18),
-                const Text('App icon',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800)),
-                const SizedBox(height: 4),
-                const Text(
-                    'Each icon has its own launch animation. AlexLMP restarts to switch.',
-                    style: TextStyle(color: Colors.white60, fontSize: 14)),
-                const SizedBox(height: 18),
-                GridView.count(
-                  crossAxisCount: 3,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  mainAxisSpacing: 14,
-                  crossAxisSpacing: 14,
-                  childAspectRatio: 0.82,
-                  children: [
+                  const SizedBox(height: 18),
+                  const Text('App icon',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  const Text(
+                      'Each icon has its own launch animation. AlexLMP restarts to switch.',
+                      style: TextStyle(color: Colors.white60, fontSize: 14)),
+                  const SizedBox(height: 18),
+                  Flexible(
+                    child: GridView.count(
+                      crossAxisCount: 3,
+                      shrinkWrap: true,
+                      physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics()),
+                      padding: const EdgeInsets.only(bottom: 28),
+                      mainAxisSpacing: 14,
+                      crossAxisSpacing: 14,
+                      childAspectRatio: 0.80,
+                      children: [
                     for (final (i, s) in kAppIcons.indexed)
                       Reveal(
                         delayMs: i * 40,
@@ -28549,11 +28555,13 @@ Future<void> showAppIconPicker(BuildContext context) async {
                           ),
                         ),
                       ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
+        ),
         );
       },
     ),
