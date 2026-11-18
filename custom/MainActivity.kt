@@ -46,8 +46,7 @@ class MainActivity : AudioServiceActivity() {
      * an icon before keeps it: turn the default Bloom entry off so they
      * don't get two icons.
      */
-    private fun keepChosenIcon()
-        initTts() {
+    private fun keepChosenIcon() {
         try {
             val pm = packageManager
             val enabled = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
