@@ -5,6 +5,9 @@ import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import java.util.Locale
 import android.provider.MediaStore
 import android.util.Size
 import java.io.ByteArrayOutputStream
@@ -43,7 +46,8 @@ class MainActivity : AudioServiceActivity() {
      * an icon before keeps it: turn the default Bloom entry off so they
      * don't get two icons.
      */
-    private fun keepChosenIcon() {
+    private fun keepChosenIcon()
+        initTts() {
         try {
             val pm = packageManager
             val enabled = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
@@ -92,10 +96,37 @@ class MainActivity : AudioServiceActivity() {
 
     private var mediaChannel: MethodChannel? = null
     private var updateTapped = false
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+
+    private fun initTts() {
+        if (tts != null) return
+        tts = TextToSpeech(applicationContext) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.US
+                tts?.setPitch(0.98f)
+                tts?.setSpeechRate(1.03f)
+                ttsReady = true
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                        runOnUiThread { mediaChannel?.invokeMethod("djSpeaking", true) }
+                    }
+                    override fun onDone(utteranceId: String?) {
+                        runOnUiThread { mediaChannel?.invokeMethod("djSpeaking", false) }
+                    }
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(utteranceId: String?) {
+                        runOnUiThread { mediaChannel?.invokeMethod("djSpeaking", false) }
+                    }
+                })
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         keepChosenIcon()
+        initTts()
         if (intent?.getBooleanExtra("alexlmp_update", false) == true) updateTapped = true
     }
 
@@ -113,6 +144,23 @@ class MainActivity : AudioServiceActivity() {
         mediaChannel!!
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "speakDj" -> {
+                        initTts()
+                        val text = call.argument<String>("text") ?: ""
+                        if (text.isEmpty() || !ttsReady) {
+                            result.success(false)
+                        } else {
+                            val params = android.os.Bundle()
+                            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+                            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "alexlmp_dj_utt")
+                            result.success(true)
+                        }
+                    }
+                    "stopDj" -> {
+                        try { tts?.stop() } catch (_: Exception) {}
+                        mediaChannel?.invokeMethod("djSpeaking", false)
+                        result.success(null)
+                    }
                     "takeUpdateTap" -> {
                         result.success(updateTapped)
                         updateTapped = false

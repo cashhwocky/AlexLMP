@@ -4298,6 +4298,14 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     // Tapping the "update available" notification opens AlexLMP straight
     // into the update.
     _mediaChannel.setMethodCallHandler((call) async {
+      if (call.method == 'djSpeaking') {
+        final on = call.arguments == true;
+        AiDjState.i.setSpeaking(on);
+        if (!on) {
+          audioHandler.player.setVolume(1.0).catchError((_) {});
+        }
+        return null;
+      }
       if (call.method == 'updateTapped' && mounted) {
         checkForUpdates(context, manual: true);
       }
@@ -5675,6 +5683,15 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             ],
           ),
           if (appState.b('ai_home_on', true)) ...[
+            const SizedBox(height: 10),
+            AiDjHomeCard(
+              surface: c.s2,
+              text: c.t1,
+              subtext: c.t2,
+              accent: c.pri,
+              onStartOrSkip: () => startOrStepAiDj(openInPlayer: context),
+              onStop: () => stopAiDjSession(),
+            ),
             const SizedBox(height: 10),
             AiMixCard(
               title: 'AI mix · ${mixLabel.$1}',
@@ -14775,7 +14792,34 @@ class NowPlayingScreen extends StatelessWidget {
             final repeat = state.repeatMode;
             final liked = appState.isLiked(track.id);
 
+            Widget wrapDjOverlay(Widget p) => Stack(
+              children: [
+                p,
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: MediaQuery.of(context).padding.top + 56,
+                  child: AiDjPlayerBanner(
+                    accent: pal.accent,
+                    onNextVibe: () => startOrStepAiDj(),
+                  ),
+                ),
+              ],
+            );
+
             if (appState.playerStyle == 'bloom') {
+              return SwipeDownDismiss(
+                child: wrapDjOverlay(BloomPlayerView(
+                  track: track,
+                  playing: playing,
+                  loading: loading,
+                  shuffle: shuffle,
+                  repeat: repeat,
+                  liked: liked,
+                )),
+              );
+            }
+            if (false) {
               return SwipeDownDismiss(
                 child: BloomPlayerView(
                   track: track,
@@ -38637,4 +38681,152 @@ Future<String> aiMixPlay(String vibe) async {
       count: 10, nowPlaying: cur == null ? '' : '${cur.title} - ${cur.artist}');
   if (songs.isEmpty) return AiHelper.problemText();
   return aiPlaySongs(songs);
+}
+
+
+// ─────────────────────── SPOTIFY-STYLE AI DJ ENGINE ───────────────────────
+
+int _djStep = 0;
+
+Future<void> stopAiDjSession() async {
+  AiDjState.i.update(
+    isActive: false,
+    isSpeaking: false,
+    text: "Tap anytime to start your personal AI DJ.",
+    tag: "OFF",
+  );
+  try {
+    await _mediaChannel.invokeMethod('stopDj');
+  } catch (_) {}
+  try {
+    await audioHandler.player.setVolume(1.0);
+  } catch (_) {}
+}
+
+/// Picks from listening history (heavy rotation), liked favorites, or unplayed
+/// discovery tracks ("hiding new stuff"), generates a natural DJ intro (using
+/// keyless AI with instant on-device fallback), ducks volume, speaks out loud,
+/// and drops the track.
+Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
+  final all = audioHandler.tracks;
+  if (all.isEmpty) {
+    const msg = "Load or scan some music first so I can spin a set for you!";
+    AiDjState.i.update(isActive: true, text: msg, tag: "WAITING");
+    try {
+      await _mediaChannel.invokeMethod('speakDj', {'text': msg});
+    } catch (_) {}
+    return msg;
+  }
+
+  final rng = Random();
+  final recentIds = appState.recents;
+  final recentTracks = <TrackItem>[];
+  for (final id in recentIds) {
+    final t = audioHandler.trackById(id);
+    if (t != null) recentTracks.add(t);
+  }
+  final likedTracks = audioHandler.likedTracks;
+  final unplayedTracks =
+      all.where((t) => !recentIds.contains(t.id)).toList();
+
+  TrackItem chosen;
+  String modeTag;
+  String fallbackIntro;
+
+  final mode = _djStep % 3;
+  _djStep++;
+
+  if (mode == 0 && recentTracks.isNotEmpty) {
+    chosen = recentTracks[rng.nextInt(recentTracks.length)];
+    modeTag = "FROM YOUR HISTORY";
+    fallbackIntro =
+        "Alright, jumping into your recent rotation. You've been rinsing ${chosen.artist} lately, so here's ${chosen.title}.";
+  } else if (mode == 1 && unplayedTracks.isNotEmpty) {
+    chosen = unplayedTracks[rng.nextInt(unplayedTracks.length)];
+    modeTag = "NEW DISCOVERY";
+    fallbackIntro =
+        "Time to switch it up and sneak in something fresh you haven't spun in a minute. Check out ${chosen.title} by ${chosen.artist}.";
+  } else if (likedTracks.isNotEmpty) {
+    chosen = likedTracks[rng.nextInt(likedTracks.length)];
+    modeTag = "LIKED FAVORITE";
+    fallbackIntro =
+        "Bringing back one of your certified favorites right now. Here is ${chosen.title} by ${chosen.artist}.";
+  } else {
+    chosen = all[rng.nextInt(all.length)];
+    modeTag = "DJ PICK";
+    fallbackIntro =
+        "Keeping the vibe moving right now with ${chosen.title} by ${chosen.artist}. Let's get into it.";
+  }
+
+  AiDjState.i.update(
+    isActive: true,
+    isSpeaking: true,
+    text: "Cooking up your next transition…",
+    tag: modeTag,
+  );
+
+  // Ask keyless AI for a short Spotify-DJ voiceover; fall back immediately if offline
+  String djSpeech = fallbackIntro;
+  try {
+    final prompt = modeTag == "FROM YOUR HISTORY"
+        ? "You are Spotify AI DJ. In 1-2 short punchy spoken sentences (under 28 words, no quotes or emojis), hype up playing '${chosen.title}' by '${chosen.artist}' from the user's listening history."
+        : modeTag == "NEW DISCOVERY"
+            ? "You are Spotify AI DJ. In 1-2 short punchy spoken sentences (under 28 words, no quotes or emojis), tell the listener you're sneaking in a fresh hidden gem they haven't played yet: '${chosen.title}' by '${chosen.artist}'."
+            : "You are Spotify AI DJ. In 1-2 short punchy spoken sentences (under 28 words, no quotes or emojis), introduce their favorite track '${chosen.title}' by '${chosen.artist}'.";
+    final reply = await AiHelper.ask(
+      [
+        {'role': 'user', 'content': prompt}
+      ],
+      maxTokens: 70,
+      timeout: const Duration(seconds: 4),
+    );
+    if (reply != null && reply.trim().isNotEmpty) {
+      djSpeech = reply.replaceAll('"', '').replaceAll('*', '').trim();
+    }
+  } catch (_) {}
+
+  AiDjState.i.update(
+    isActive: true,
+    isSpeaking: true,
+    text: djSpeech,
+    tag: modeTag,
+  );
+
+  // Start the song at ducked volume so the DJ talks over the intro like Spotify AI DJ
+  try {
+    await audioHandler.player.setVolume(0.22);
+  } catch (_) {}
+
+  if (chosen.isYouTube) {
+    await audioHandler.playYouTubeList([chosen], 0);
+  } else {
+    await audioHandler.playTrackById(chosen.id);
+  }
+
+  if (openInPlayer != null && openInPlayer.mounted) {
+    openPlayer(openInPlayer);
+  }
+
+  try {
+    await _mediaChannel.invokeMethod('speakDj', {'text': djSpeech});
+  } catch (_) {
+    AiDjState.i.setSpeaking(false);
+    try {
+      await audioHandler.player.setVolume(1.0);
+    } catch (_) {}
+  }
+
+  // Safety timer to restore full volume once speech finishes
+  final wordCount = djSpeech.split(RegExp(r'\s+')).length;
+  final estMs = (wordCount * 390 + 900).clamp(2500, 9500);
+  Future.delayed(Duration(milliseconds: estMs), () async {
+    if (AiDjState.i.speaking) {
+      AiDjState.i.setSpeaking(false);
+    }
+    try {
+      await audioHandler.player.setVolume(1.0);
+    } catch (_) {}
+  });
+
+  return djSpeech;
 }

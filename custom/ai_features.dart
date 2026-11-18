@@ -944,3 +944,388 @@ Future<void> showAiSetup(BuildContext context) async {
     ),
   );
 }
+
+
+// ═══════════════════════════ SPOTIFY-STYLE AI DJ ═══════════════════════════
+
+class AiDjState extends ChangeNotifier {
+  static final AiDjState i = AiDjState._();
+  AiDjState._();
+
+  bool active = false;
+  bool speaking = false;
+  String line = "Hey! Tap to start your personal AI DJ session.";
+  String modeTag = "ON AIR";
+
+  void setSpeaking(bool v) {
+    if (speaking == v) return;
+    speaking = v;
+    notifyListeners();
+  }
+
+  void update({bool? isActive, bool? isSpeaking, String? text, String? tag}) {
+    if (isActive != null) active = isActive;
+    if (isSpeaking != null) speaking = isSpeaking;
+    if (text != null) line = text;
+    if (tag != null) modeTag = tag;
+    notifyListeners();
+  }
+}
+
+/// Animated glowing waveform & pulsing orb shown on Home and inside the Player
+/// while the AI DJ is speaking out loud.
+class AiDjVisualizer extends StatefulWidget {
+  final bool active;
+  final double size;
+  final Color accent;
+  const AiDjVisualizer({
+    super.key,
+    required this.active,
+    this.size = 48,
+    this.accent = const Color(0xFF22D3EE),
+  });
+
+  @override
+  State<AiDjVisualizer> createState() => _AiDjVisualizerState();
+}
+
+class _AiDjVisualizerState extends State<AiDjVisualizer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        final t = _ctrl.value * 6.2831853;
+        return SizedBox(
+          width: widget.size,
+          height: widget.size,
+          child: CustomPaint(
+            painter: _AiDjOrbPainter(
+              phase: t,
+              speaking: widget.active,
+              accent: widget.accent,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _AiDjOrbPainter extends CustomPainter {
+  final double phase;
+  final bool speaking;
+  final Color accent;
+  const _AiDjOrbPainter({
+    required this.phase,
+    required this.speaking,
+    required this.accent,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(size.width / 2, size.height / 2);
+    final baseR = size.width * 0.34;
+    final pulse = speaking ? (0.14 * (0.5 + 0.5 * (phase).sin())) : 0.03;
+
+    // Outer halo rings
+    for (int ring = 3; ring >= 1; ring--) {
+      final r = baseR * (1.0 + ring * 0.24 + pulse * ring * 0.6);
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = speaking ? 2.2 : 1.2
+        ..color = Color.lerp(
+          const Color(0xFF22D3EE),
+          const Color(0xFFA855F7),
+          ring / 3.0,
+        )!.withOpacity(speaking ? (0.55 / ring) : 0.18);
+      canvas.drawCircle(c, r, paint);
+    }
+
+    // Core glowing sphere
+    final rect = Rect.fromCircle(center: c, radius: baseR * (1.0 + pulse));
+    final grad = const LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF22D3EE), Color(0xFF6366F1), Color(0xFFEC4899)],
+    ).createShader(rect);
+    canvas.drawCircle(c, baseR * (1.0 + pulse), Paint()..shader = grad);
+
+    // Equalizer voice bars inside the orb
+    final barPaint = Paint()
+      ..color = Colors.white
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = size.width * 0.055;
+    for (int i = -2; i <= 2; i++) {
+      final x = c.dx + i * (size.width * 0.09);
+      final amp = speaking
+          ? (0.18 + 0.24 * ((phase * 2.0 + i * 1.1).sin().abs()))
+          : 0.08;
+      final h = size.height * amp;
+      canvas.drawLine(Offset(x, c.dy - h), Offset(x, c.dy + h), barPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _AiDjOrbPainter old) =>
+      old.phase != phase || old.speaking != speaking;
+}
+
+extension _TrigExt on double {
+  double sin() => _sinTable(this);
+  static double _sinTable(double x) {
+    // Fast Taylor sine approximation without extra import collisions
+    var a = x % 6.283185307179586;
+    if (a > 3.141592653589793) a -= 6.283185307179586;
+    if (a < -3.141592653589793) a += 6.283185307179586;
+    final a2 = a * a;
+    return a * (1 - a2 / 6 * (1 - a2 / 20 * (1 - a2 / 42)));
+  }
+}
+
+/// Home screen interactive Spotify-style AI DJ card with live voice visuals.
+class AiDjHomeCard extends StatelessWidget {
+  final VoidCallback onStartOrSkip;
+  final VoidCallback onStop;
+  final Color surface;
+  final Color text;
+  final Color subtext;
+  final Color accent;
+
+  const AiDjHomeCard({
+    super.key,
+    required this.onStartOrSkip,
+    required this.onStop,
+    required this.surface,
+    required this.text,
+    required this.subtext,
+    required this.accent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: AiDjState.i,
+      builder: (context, _) {
+        final st = AiDjState.i;
+        return GestureDetector(
+          onTap: () {
+            HapticFeedback.mediumImpact();
+            onStartOrSkip();
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 280),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: st.speaking
+                    ? [
+                        const Color(0xFF06B6D4).withOpacity(0.38),
+                        const Color(0xFF6366F1).withOpacity(0.38),
+                        const Color(0xFFEC4899).withOpacity(0.34),
+                      ]
+                    : [
+                        const Color(0xFF22D3EE).withOpacity(0.18),
+                        const Color(0xFF6366F1).withOpacity(0.20),
+                        const Color(0xFFA855F7).withOpacity(0.18),
+                      ],
+              ),
+              border: Border.all(
+                color: st.speaking
+                    ? const Color(0xFF22D3EE).withOpacity(0.65)
+                    : Colors.white.withOpacity(0.12),
+                width: st.speaking ? 1.6 : 1.0,
+              ),
+            ),
+            child: Row(
+              children: [
+                AiDjVisualizer(
+                  active: st.speaking || st.active,
+                  size: 54,
+                  accent: accent,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: st.speaking
+                                  ? const Color(0xFF22D3EE)
+                                  : Colors.white.withOpacity(0.14),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              st.speaking
+                                  ? 'DJ SPEAKING LIVE'
+                                  : (st.active ? st.modeTag : 'AI DJ · NO KEY'),
+                              style: TextStyle(
+                                color: st.speaking ? Colors.black : text,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.8,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Your Personal DJ',
+                            style: TextStyle(
+                              color: text,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        st.line,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: st.speaking ? Colors.white : subtext,
+                          fontSize: 13,
+                          fontWeight:
+                              st.speaking ? FontWeight.w700 : FontWeight.w500,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (st.active)
+                  IconButton(
+                    tooltip: 'Next DJ Vibe',
+                    onPressed: () {
+                      HapticFeedback.lightImpact();
+                      onStartOrSkip();
+                    },
+                    icon: Icon(Icons.skip_next_rounded, color: text, size: 28),
+                  ),
+                IconButton(
+                  tooltip: st.active ? 'Stop DJ' : 'Start DJ',
+                  onPressed: () {
+                    HapticFeedback.mediumImpact();
+                    st.active ? onStop() : onStartOrSkip();
+                  },
+                  icon: Icon(
+                    st.active
+                        ? Icons.stop_circle_rounded
+                        : Icons.play_circle_fill_rounded,
+                    color: accent,
+                    size: 34,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Overlay shown inside NowPlayingScreen while the AI DJ is talking or active.
+class AiDjPlayerBanner extends StatelessWidget {
+  final VoidCallback onNextVibe;
+  final Color accent;
+  const AiDjPlayerBanner({
+    super.key,
+    required this.onNextVibe,
+    this.accent = const Color(0xFF22D3EE),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: AiDjState.i,
+      builder: (context, _) {
+        final st = AiDjState.i;
+        if (!st.active && !st.speaking) return const SizedBox.shrink();
+        return GestureDetector(
+          onTap: () {
+            HapticFeedback.lightImpact();
+            onNextVibe();
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 260),
+            margin: const EdgeInsets.fromLTRB(18, 6, 18, 6),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(st.speaking ? 0.72 : 0.45),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: st.speaking
+                    ? const Color(0xFF22D3EE).withOpacity(0.8)
+                    : Colors.white24,
+              ),
+            ),
+            child: Row(
+              children: [
+                AiDjVisualizer(
+                  active: st.speaking,
+                  size: 36,
+                  accent: accent,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        st.speaking ? 'AI DJ · SPEAKING' : 'AI DJ · ${st.modeTag}',
+                        style: const TextStyle(
+                          color: Color(0xFF22D3EE),
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.9,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        st.line,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Icon(Icons.skip_next_rounded,
+                    color: Colors.white70, size: 22),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
