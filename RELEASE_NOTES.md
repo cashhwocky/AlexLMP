@@ -1,5 +1,12 @@
 All your music, one player.
 
+AlexLMP 3.2.1 gives the AI tab a full redesign and makes search much nicer.
+
+## New
+- **AI DJ redone.** Pure AMOLED black background whenever you open it, a ChatGPT-style chat layout, haptic feedback as it answers, and glowing mood colors that shift when you send a message.
+- **Search results redone.** New "All" view with a Top result card, rounded song groups, and scrolling Artists, Albums and Playlists rows, plus rounded filter pills.
+
+## From 3.2.0
 AlexLMP 3.2.0 puts the new tab bar and AI DJ in every app style, and redoes the Bloom player, library and settings.
 
 ## New
