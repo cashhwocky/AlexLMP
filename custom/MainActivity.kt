@@ -3,6 +3,8 @@ package com.alexlmp.app
 import android.content.ContentUris
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.speech.tts.TextToSpeech
@@ -97,14 +99,34 @@ class MainActivity : AudioServiceActivity() {
     private var updateTapped = false
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var djPlayer: MediaPlayer? = null
 
     private fun initTts() {
         if (tts != null) return
-        tts = TextToSpeech(applicationContext) { status ->
+        tts = TextToSpeech(applicationContext, { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.US
-                tts?.setPitch(0.98f)
-                tts?.setSpeechRate(1.03f)
+                // Pick the most natural, high-quality US English voice available on the phone
+                try {
+                    val voices = tts?.voices
+                    if (voices != null) {
+                        val best = voices
+                            .filter { it.locale.language == "en" && it.locale.country == "US" && !it.isNetworkConnectionRequired }
+                            .maxWithOrNull(compareBy<android.speech.tts.Voice> { it.quality }
+                                .thenBy {
+                                    val n = it.name.lowercase()
+                                    when {
+                                        n.contains("iom") || n.contains("tpd") || n.contains("sfg") || n.contains("wavenet") -> 3
+                                        n.contains("local") -> 2
+                                        else -> 1
+                                    }
+                                })
+                        if (best != null) tts?.voice = best
+                    }
+                } catch (_: Exception) {}
+                // Warm, upbeat radio host cadence instead of slow/creepy lowered pitch
+                tts?.setPitch(1.04f)
+                tts?.setSpeechRate(1.08f)
                 ttsReady = true
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
@@ -119,7 +141,74 @@ class MainActivity : AudioServiceActivity() {
                     }
                 })
             }
-        }
+        }, "com.google.android.tts")
+    }
+
+    private fun stopDjAudio() {
+        try {
+            djPlayer?.stop()
+        } catch (_: Exception) {}
+        try {
+            djPlayer?.release()
+        } catch (_: Exception) {}
+        djPlayer = null
+        try {
+            tts?.stop()
+        } catch (_: Exception) {}
+    }
+
+    private fun speakDjNatural(text: String) {
+        stopDjAudio()
+        // Try ultra-natural keyless neural studio DJ voice first; fall back to HD device voice if offline
+        Thread {
+            var playedNeural = false
+            try {
+                val prompt = "Say this naturally like a warm, upbeat Spotify radio DJ: $text"
+                val encoded = Uri.encode(prompt)
+                val url = "https://text.pollinations.ai/$encoded?model=openai-audio&voice=onyx"
+                val mp = MediaPlayer()
+                mp.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .build()
+                )
+                mp.setDataSource(url)
+                mp.setOnPreparedListener { player ->
+                    runOnUiThread { mediaChannel?.invokeMethod("djSpeaking", true) }
+                    player.start()
+                }
+                mp.setOnCompletionListener { player ->
+                    player.release()
+                    if (djPlayer === player) djPlayer = null
+                    runOnUiThread { mediaChannel?.invokeMethod("djSpeaking", false) }
+                }
+                mp.setOnErrorListener { player, _, _ ->
+                    player.release()
+                    if (djPlayer === player) djPlayer = null
+                    runOnUiThread { mediaChannel?.invokeMethod("djSpeaking", false) }
+                    true
+                }
+                djPlayer = mp
+                mp.prepareAsync()
+                playedNeural = true
+            } catch (_: Exception) {
+                playedNeural = false
+            }
+
+            if (!playedNeural) {
+                runOnUiThread {
+                    initTts()
+                    if (ttsReady) {
+                        val params = android.os.Bundle()
+                        params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+                        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "alexlmp_dj_utt")
+                    } else {
+                        mediaChannel?.invokeMethod("djSpeaking", false)
+                    }
+                }
+            }
+        }.start()
     }
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
@@ -144,19 +233,16 @@ class MainActivity : AudioServiceActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "speakDj" -> {
-                        initTts()
-                        val text = call.argument<String>("text") ?: ""
-                        if (text.isEmpty() || !ttsReady) {
+                        val text = (call.argument<String>("text") ?: "").trim()
+                        if (text.isEmpty()) {
                             result.success(false)
                         } else {
-                            val params = android.os.Bundle()
-                            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
-                            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "alexlmp_dj_utt")
+                            speakDjNatural(text)
                             result.success(true)
                         }
                     }
                     "stopDj" -> {
-                        try { tts?.stop() } catch (_: Exception) {}
+                        stopDjAudio()
                         mediaChannel?.invokeMethod("djSpeaking", false)
                         result.success(null)
                     }
