@@ -1622,7 +1622,10 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// Plays a YouTube Music result. If it's already in the queue it just
   /// plays it; otherwise it's added to the front of the queue.
-  Future<void> playYouTubeTrack(TrackItem t) async {
+  Future<void> playYouTubeTrack(TrackItem t, {bool fromDj = false}) async {
+    if (!fromDj && AiDjState.i.active) {
+      unawaited(stopAiDjSession());
+    }
     appState.unmarkDeleted(t.id, t.source);
     final existing = tracks.indexWhere((x) => x.id == t.id);
     if (existing >= 0) {
@@ -1673,7 +1676,10 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   /// and shuffle to that list so it plays through their entire catalog without
   /// jumping to random artists.
   Future<void> playYouTubeList(List<TrackItem> list, int start,
-      {bool lockToScope = false}) async {
+      {bool lockToScope = false, bool fromDj = false}) async {
+    if (!fromDj && AiDjState.i.active) {
+      unawaited(stopAiDjSession());
+    }
     if (list.isEmpty) return;
     final merged = <TrackItem>[];
     final ids = <String>{};
@@ -1712,7 +1718,10 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     _publishQueue();
   }
 
-  Future<void> playIndex(int i) async {
+  Future<void> playIndex(int i, {bool fromDj = false}) async {
+    if (!fromDj && AiDjState.i.active) {
+      unawaited(stopAiDjSession());
+    }
     if (i < 0 || i >= tracks.length) return;
     if (i == _index &&
         _loadedId == tracks[i].id &&
@@ -39135,7 +39144,7 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
       }
       try {
         await audioHandler.player.setVolume(1.0);
-        await audioHandler.playYouTubeList(sessionQueue, 0);
+        await audioHandler.playYouTubeList(sessionQueue, 0, fromDj: true);
         if (openInPlayer != null && openInPlayer.mounted) {
           openPlayer(openInPlayer);
         }
