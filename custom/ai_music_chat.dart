@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'ai_features.dart';
+
 /// Runs a command for the chat. Implemented in main.dart so the chat can
 /// search the library / YouTube Music and drive the real player.
 ///   action: play | queue | pause | resume | next | previous | shuffle
@@ -24,14 +26,14 @@ String _system(String nowPlaying) =>
     "You are DJ, the assistant inside AlexLMP, a music player app. Be short, warm and casual "
     "(under 50 words). You CAN control the player by writing a command tag on its own line at the very "
     "end of your reply. Tags: [[play: song title - artist]] plays a song, [[queue: song title - artist]] "
-    "adds a song to the queue, and [[pause]] [[resume]] [[next]] [[previous]] [[shuffle]]. "
+    "adds a song to the queue, [[mix: vibe or artist]] builds and plays a whole AI playlist (use it for \"make me a mix\", workout playlists, more songs like this), and [[pause]] [[resume]] [[next]] [[previous]] [[shuffle]]. "
     "Only add a tag when the user asked for that action, and write only one tag. If the user names a "
     "song vaguely, use your best guess of the real title and artist. If they just want to chat or want "
     "recommendations, answer normally with no tag (you may suggest songs by name). "
     "${nowPlaying.isEmpty ? 'Nothing is playing right now.' : 'Now playing: $nowPlaying.'}";
 
 final RegExp _tag = RegExp(
-    r'\[\[\s*(play|queue|pause|resume|next|previous|shuffle)\s*(?::\s*([^\]]*?))?\s*\]\]',
+    r'\[\[\s*(play|queue|mix|pause|resume|next|previous|shuffle)\s*(?::\s*([^\]]*?))?\s*\]\]',
     caseSensitive: false);
 
 class _Msg {
@@ -147,10 +149,10 @@ class _AiMusicChatState extends State<AiMusicChat>
   DateTime _lastTick = DateTime.fromMillisecondsSinceEpoch(0);
 
   static const List<String> _chips = [
+    'Make me a workout mix',
+    'More songs like this',
+    "What's this song about?",
     'Play something upbeat',
-    'Queue a chill song',
-    'Skip this song',
-    'Shuffle my library',
   ];
 
   @override
@@ -342,7 +344,7 @@ class _AiMusicChatState extends State<AiMusicChat>
         _finish(null, r);
       } else {
         _finish(
-            "I can't reach the AI right now, but commands like \"play <song>\" still work.",
+            '${AiHelper.problemText()} Commands like "play <song>" still work without it.',
             null);
       }
       return;
@@ -400,36 +402,7 @@ class _AiMusicChatState extends State<AiMusicChat>
       {'role': 'system', 'content': _system(widget.nowPlaying())},
       for (final m in tail) {'role': m.user ? 'user' : 'assistant', 'content': m.text},
     ];
-    for (final model in const ['openai-fast', 'openai']) {
-      final client = http.Client();
-      try {
-        final res = await client
-            .post(
-              Uri.parse('https://text.pollinations.ai/openai'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({
-                'model': model,
-                'messages': messages,
-                'max_tokens': 220,
-                'private': true,
-              }),
-            )
-            .timeout(const Duration(seconds: 18));
-        if (res.statusCode != 200) continue;
-        final body = utf8.decode(res.bodyBytes);
-        try {
-          final j = jsonDecode(body);
-          final t = (j['choices'][0]['message']['content'] as String?)?.trim();
-          if (t != null && t.isNotEmpty) return t;
-        } catch (_) {
-          if (body.trim().isNotEmpty) return body.trim();
-        }
-      } catch (_) {
-      } finally {
-        client.close();
-      }
-    }
-    return null;
+    return AiHelper.ask(messages, maxTokens: 260);
   }
 
   // ── UI ────────────────────────────────────────────────────────────────
@@ -526,6 +499,11 @@ class _AiMusicChatState extends State<AiMusicChat>
                     fontSize: 20,
                     fontWeight: FontWeight.w600,
                     letterSpacing: -0.2)),
+          ),
+          IconButton(
+            tooltip: 'AI settings',
+            onPressed: () => showAiSetup(context),
+            icon: const Icon(Icons.tune_rounded, color: _gptText, size: 22),
           ),
           IconButton(
             tooltip: 'New chat',

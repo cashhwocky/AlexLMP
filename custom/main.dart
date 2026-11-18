@@ -18,6 +18,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'ai_features.dart';
 import 'ai_music_chat.dart';
 import 'tab_dock.dart';
 
@@ -5425,6 +5426,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       case 'shuffle':
         await audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
         return 'Shuffle is on';
+      case 'mix':
+        return aiMixPlay(query);
       case 'play':
       case 'queue':
         if (query.trim().isEmpty) return 'Tell me which song to play';
@@ -5514,7 +5517,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       ),
     );
 
-    // The widget grid at the top (big card + Liked + Discover).
+    // Hero card + quick actions + AI mix (new Bloom home layout).
     Widget grid({
       required Widget art,
       required String kicker,
@@ -5526,167 +5529,239 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       required VoidCallback onLiked,
       required VoidCallback onDiscover,
     }) {
-      return SizedBox(
-        height: 206,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              flex: 115,
-              child: SquishyGesture(
-                pressedScale: 0.97,
-                onTap: onOpen,
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                      color: c.s2,
-                      borderRadius: BorderRadius.circular(34),
-                      border:
-                          Border.all(color: Colors.white.withOpacity(0.07))),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          BloomShape(
-                              kind: BloomKind.scallop, size: 82, child: art),
-                          const Spacer(),
-                          BloomButton(
-                            kind: null,
-                            radius: 16,
-                            size: 42,
-                            bg: c.lc,
-                            icon: Icons.play_arrow_rounded,
-                            iconColor: c.onLc,
-                            iconSize: 24,
-                            tooltip: 'Play',
-                            onTap: onPlay,
-                          ),
-                        ],
-                      ),
-                      const Spacer(),
-                      Text(kicker,
-                          style: bloomText(10.5,
-                              color: c.pri,
-                              weight: FontWeight.w700,
-                              spacing: 1)),
-                      const SizedBox(height: 3),
-                      Text(title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: bloomText(19, weight: FontWeight.w700)),
-                      const SizedBox(height: 2),
-                      Text(sub,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: bloomText(12,
-                              color: c.t2, weight: FontWeight.w500)),
-                    ],
+      Widget action(String label, IconData icon, Color bg, Color fg,
+          VoidCallback onTap, {String? trailing}) {
+        return Expanded(
+          child: SquishyGesture(
+            pressedScale: 0.96,
+            onTap: onTap,
+            child: Container(
+              height: 68,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                  color: bg, borderRadius: BorderRadius.circular(34)),
+              child: Row(
+                children: [
+                  Icon(icon, color: fg, size: 24),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: bloomText(15, color: fg, weight: FontWeight.w700)),
                   ),
-                ),
+                  if (trailing != null)
+                    Text(trailing,
+                        style: bloomText(16, color: fg, weight: FontWeight.w800)),
+                ],
               ),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              flex: 100,
-              child: Column(
+          ),
+        );
+      }
+
+      final mixLabel = h < 5
+          ? ('Late night calm', 'late night calm and moody songs')
+          : h < 12
+              ? ('Morning boost', 'upbeat morning energy songs to start the day')
+              : h < 17
+                  ? ('Afternoon flow', 'good-mood focus songs for the afternoon')
+                  : h < 21
+                      ? ('Evening wind-down', 'relaxed evening songs to wind down')
+                      : ('Night chill', 'late night chill vibes');
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Hero: big title on the left, scalloped artwork on the right.
+          SquishyGesture(
+            pressedScale: 0.98,
+            onTap: onOpen,
+            child: Container(
+              height: 226,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(40),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [c.s3, Color.lerp(c.s2, c.pri, 0.30)!],
+                ),
+                border: Border.all(color: Colors.white.withOpacity(0.07)),
+              ),
+              child: Stack(
                 children: [
-                  Expanded(
-                    child: SquishyGesture(
-                      pressedScale: 0.96,
-                      onTap: onLiked,
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                            color: c.lc,
-                            borderRadius: BorderRadius.circular(30)),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                BloomShape(
-                                  kind: BloomKind.flower,
-                                  size: 34,
-                                  color: c.onLc,
-                                  child: Icon(Icons.favorite_rounded,
-                                      color: c.lc, size: 16),
-                                ),
-                                const Spacer(),
-                                if (likedCount > 0)
-                                  Text('$likedCount',
-                                      style: bloomText(22,
-                                          color: c.onLc,
-                                          weight: FontWeight.w800)),
-                              ],
-                            ),
-                            const Spacer(),
-                            Text('Liked songs',
-                                style: bloomText(15,
-                                    color: c.onLc, weight: FontWeight.w700)),
-                          ],
-                        ),
-                      ),
-                    ),
+                  Positioned(
+                    right: -22,
+                    top: 18,
+                    child: BloomShape(kind: BloomKind.scallop, size: 168, child: art),
                   ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: SquishyGesture(
-                      pressedScale: 0.96,
-                      onTap: onDiscover,
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                            color: c.pink,
-                            borderRadius: BorderRadius.circular(30)),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 11, vertical: 5),
+                          decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.28),
+                              borderRadius: BorderRadius.circular(14)),
+                          child: Text(kicker,
+                              style: bloomText(10.5,
+                                  color: c.t1,
+                                  weight: FontWeight.w700,
+                                  spacing: 1)),
+                        ),
+                        const Spacer(),
+                        Padding(
+                          padding: const EdgeInsets.only(right: 120),
+                          child: Text(title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: bloomText(25, weight: FontWeight.w800)),
+                        ),
+                        const SizedBox(height: 3),
+                        Padding(
+                          padding: const EdgeInsets.only(right: 120),
+                          child: Text(sub,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: bloomText(13,
+                                  color: c.t2, weight: FontWeight.w500)),
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
                           children: [
-                            Text('Discover',
-                                style: bloomText(15,
-                                    color: c.onPink, weight: FontWeight.w700)),
-                            const Spacer(),
-                            Row(
-                              children: [
-                                Text('Shuffle',
-                                    style: bloomText(12,
-                                        color: c.onPink,
-                                        weight: FontWeight.w600)),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: SizedBox(
-                                    height: 18,
-                                    child: CustomPaint(
-                                      painter: BloomWavePainter(
-                                        value: 1,
-                                        phase: 0,
-                                        active: c.onPink,
-                                        track: Colors.transparent,
-                                        amp: 2.6,
-                                        period: 12,
-                                        stroke: 3,
-                                        thumb: true,
-                                      ),
-                                    ),
-                                  ),
+                            SquishyGesture(
+                              pressedScale: 0.94,
+                              onTap: onPlay,
+                              child: Container(
+                                height: 46,
+                                padding: const EdgeInsets.symmetric(horizontal: 20),
+                                decoration: BoxDecoration(
+                                    color: c.lc,
+                                    borderRadius: BorderRadius.circular(23)),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.play_arrow_rounded,
+                                        color: c.onLc, size: 26),
+                                    const SizedBox(width: 4),
+                                    Text('Play',
+                                        style: bloomText(15,
+                                            color: c.onLc,
+                                            weight: FontWeight.w800)),
+                                  ],
                                 ),
-                              ],
+                              ),
                             ),
                           ],
                         ),
-                      ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              action('Liked', Icons.favorite_rounded, c.lc, c.onLc, onLiked,
+                  trailing: likedCount > 0 ? '$likedCount' : null),
+              const SizedBox(width: 10),
+              action('Shuffle', Icons.shuffle_rounded, c.pink, c.onPink,
+                  onDiscover),
+            ],
+          ),
+          if (appState.b('ai_home_on', true)) ...[
+            const SizedBox(height: 10),
+            AiMixCard(
+              title: 'AI mix · ${mixLabel.$1}',
+              subtitle: 'Tap and I\'ll build a playlist for right now',
+              surface: c.s2,
+              text: c.t1,
+              subtext: c.t2,
+              accent: c.pri,
+              onStart: () => aiMixPlay(mixLabel.$2),
+            ),
           ],
-        ),
+        ],
       );
     }
+
+    // Two-column "speed dial": compact tiles with the cover on the left.
+    Widget speedDial(List<TrackItem> list, int n) {
+      final items = list.take(n).toList();
+      Widget tile(int i) => SquishyGesture(
+            pressedScale: 0.96,
+            onTap: () => _ytPlay(items, i),
+            child: Container(
+              height: 64,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                  color: c.s2, borderRadius: BorderRadius.circular(22)),
+              child: Row(
+                children: [
+                  SizedBox(
+                      width: 64,
+                      height: 64,
+                      child: CustomAlbumArtwork(track: items[i])),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(items[i].title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: bloomText(13, weight: FontWeight.w600)),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              ),
+            ),
+          );
+      return Column(
+        children: [
+          for (var r = 0; r < items.length; r += 2)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Expanded(child: tile(r)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: r + 1 < items.length ? tile(r + 1) : const SizedBox()),
+                ],
+              ),
+            ),
+        ],
+      );
+    }
+
+    // Search pill under the greeting (opens search, mentions AI).
+    Widget searchPill = SquishyGesture(
+      pressedScale: 0.98,
+      onTap: () => showSearchSheet(context),
+      child: Container(
+        height: 54,
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        decoration: BoxDecoration(
+            color: c.s2, borderRadius: BorderRadius.circular(27)),
+        child: Row(
+          children: [
+            Icon(Icons.search_rounded, color: c.t2, size: 24),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                  appState.b('ai_search_on', true)
+                      ? 'Search, or ask AI for a vibe'
+                      : 'Search songs, artists, albums',
+                  style: bloomText(15, color: c.t2, weight: FontWeight.w500)),
+            ),
+            if (appState.b('ai_search_on', true)) const AiSpark(size: 20),
+          ],
+        ),
+      ),
+    );
 
     Widget songs(List<TrackItem> list, int n) => bloomGroup([
           for (var i = 0; i < min(n, list.length); i++)
@@ -5710,7 +5785,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             ),
         ], 178);
 
-    final out = <Widget>[header, modeChips];
+    final out = <Widget>[header, Padding(padding: const EdgeInsets.only(top: 14), child: searchPill), modeChips];
 
     if (yt) {
       out.add(_ytData((d, err, loading) {
@@ -5748,7 +5823,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           col
             ..add(BloomSection('Quick picks',
                 action: 'Play all', onAction: () => _ytPlay(d.quick, 0)))
-            ..add(songs(d.quick, 5));
+            ..add(speedDial(d.quick, 8));
         }
         if (d.allMixes.isNotEmpty || d.mixes.isNotEmpty) {
           col
@@ -5812,7 +5887,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       out
         ..add(BloomSection('Quick picks',
             action: 'Play all', onAction: () => _ytPlay(quick, 0)))
-        ..add(songs(quick, 6));
+        ..add(speedDial(quick, 8));
       if (recent.length > 1) {
         out
           ..add(const BloomSection('Listen again'))
@@ -16593,6 +16668,7 @@ class SettingsScreen extends StatelessWidget {
                     ..._appearance(context, pal, cs),
                     ..._nowPlaying(context, pal),
                     ..._playback(context, pal),
+                    ..._ai(context, pal),
                     ..._youtube(context, pal),
                     ..._library(context, pal),
                     ..._labs(context, pal),
@@ -17069,6 +17145,22 @@ class SettingsScreen extends StatelessWidget {
         ),
       );
     });
+  }
+
+  List<Widget> _ai(BuildContext context, AppPalette pal) {
+    return [
+      _section(pal, 'AI', Icons.auto_awesome_rounded, [
+        _flag(pal, Icons.manage_search_rounded, 'ai_search_on', 'AI search help',
+            'Fixes typos and suggests the right songs when you search',
+            def: true),
+        _flag(pal, Icons.auto_awesome_mosaic_rounded, 'ai_home_on', 'AI mixes on Home',
+            'Shows a one-tap AI mix for the time of day', def: true),
+        _tile(pal, Icons.key_rounded, 'AI key & service',
+            'Needed for AI features. Free key from enter.pollinations.ai',
+            () => showAiSetup(context),
+            trailing: const SizedBox.shrink()),
+      ]),
+    ];
   }
 
   List<Widget> _youtube(BuildContext context, AppPalette pal) {
@@ -18475,9 +18567,20 @@ class _SearchScreenState extends State<SearchScreen> {
       return ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
         children: [
+          if (appState.b('ai_search_on', true)) ...[
+            AiPromptChips(
+              accent: pal.accent,
+              surface: pal.surface,
+              onTap: (p) {
+                _ctrl.text = p;
+                _submit(p);
+              },
+            ),
+            const SizedBox(height: 22),
+          ],
           if (history.isEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 60),
+              padding: const EdgeInsets.only(top: 30),
               child: Column(
                 children: [
                   Icon(Icons.manage_search_rounded, size: 64, color: pal.accent),
@@ -18999,6 +19102,33 @@ class _SearchScreenState extends State<SearchScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
       children: [
+        if (appState.b('ai_search_on', true))
+          AiSearchPanel(
+            key: ValueKey('ai_$q'),
+            query: q,
+            accent: pal.accent,
+            surface: pal.surface,
+            onPick: (song) async {
+              final t = await aiResolveYt(song);
+              if (t == null) {
+                appNotice.value = "Couldn't find ${song.title}";
+                return;
+              }
+              _playYtList([t], 0);
+            },
+            onPlayAll: (songs) async {
+              appNotice.value = 'Starting AI picks…';
+              final r = await aiPlaySongs(songs);
+              if (mounted) {
+                appNotice.value = r;
+                openPlayer(context);
+              }
+            },
+            onUseQuery: (x) {
+              _ctrl.text = x;
+              _submit(x);
+            },
+          ),
         _in(top),
         _in(songs, ms: 80),
         _in(artists, ms: 160),
@@ -23018,7 +23148,8 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _battery = false;
   AppLifecycleListener? _life;
 
-  static const _pageCount = 5;
+  static const _pageCount = 7;
+  String? _pickedIcon; // applied when setup finishes (the launcher restarts the app)
 
   @override
   void initState() {
@@ -23069,6 +23200,15 @@ class _SetupScreenState extends State<SetupScreen> {
   void _finish() {
     HapticFeedback.mediumImpact();
     appState.setB('setup_done', true);
+    final k = _pickedIcon;
+    if (k != null && k != 'bloom') {
+      Future.delayed(const Duration(milliseconds: 600), () async {
+        try {
+          appState.setStr('app_icon', k);
+          await _mediaChannel.invokeMethod('setAppIcon', {'key': k});
+        } catch (_) {}
+      });
+    }
   }
 
   // ── Pieces ──────────────────────────────────────────────────────────
@@ -23139,9 +23279,9 @@ class _SetupScreenState extends State<SetupScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: _card.withOpacity(0.92),
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: border ?? Colors.white10),
+          color: bc.s1,
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: border ?? Colors.transparent, width: 1.6),
         ),
         child: child,
       ),
@@ -23238,7 +23378,7 @@ class _SetupScreenState extends State<SetupScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
         decoration: BoxDecoration(
           color: selected ? accent : Colors.white.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(20),
           border: Border.all(color: selected ? accent : Colors.white12),
         ),
         child: Text(label,
@@ -23256,7 +23396,14 @@ class _SetupScreenState extends State<SetupScreen> {
   List<Widget> _welcome(Color accent) => [
         const SizedBox(height: 70),
         Center(
-          child: Reveal(child: AlexLogo(size: 150, color: accent)),
+          child: Reveal(
+            child: AnimatedAppIcon(
+              style: kAppIcons.firstWhere(
+                  (e) => e.key == (_pickedIcon ?? appState.str('app_icon', 'bloom')),
+                  orElse: () => kAppIcons.first),
+              size: 150,
+            ),
+          ),
         ),
         const SizedBox(height: 40),
         const Reveal(
@@ -23291,6 +23438,7 @@ class _SetupScreenState extends State<SetupScreen> {
         const SizedBox(height: 34),
         for (final (i, item) in const [
           (Icons.library_music_rounded, 'Your files and streaming, together'),
+          (Icons.auto_awesome_rounded, 'AI that finds the right songs for you'),
           (Icons.lyrics_outlined, 'Synced lyrics and offline saving'),
           (Icons.palette_rounded, 'Players and styles you can switch any time'),
         ].indexed)
@@ -23313,8 +23461,138 @@ class _SetupScreenState extends State<SetupScreen> {
           ),
       ];
 
+  List<Widget> _icons(Color accent) {
+    final current = _pickedIcon ?? appState.str('app_icon', 'bloom');
+    return [
+      _heading(Icons.apps_rounded, 'Step 1 · Icon', 'Pick your icon',
+          'Choose how AlexLMP looks on your home screen. Each one has its own launch animation.',
+          accent),
+      Reveal(
+        delayMs: 160,
+        child: GridView.count(
+          crossAxisCount: 3,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: 0.86,
+          children: [
+            for (final s in kAppIcons)
+              SquishyGesture(
+                pressedScale: 0.93,
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  setState(() => _pickedIcon = s.key);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOutCubic,
+                  padding: const EdgeInsets.fromLTRB(6, 12, 6, 8),
+                  decoration: BoxDecoration(
+                    color: s.key == current ? accent.withOpacity(0.18) : bc.s1,
+                    borderRadius: BorderRadius.circular(26),
+                    border: Border.all(
+                        color: s.key == current ? accent : Colors.transparent,
+                        width: 2),
+                  ),
+                  child: Column(
+                    children: [
+                      AnimatedAppIcon(style: s, size: 64),
+                      const SizedBox(height: 8),
+                      Text(s.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: s.key == current ? accent : Colors.white,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      const Text('It switches when you finish setup. You can change it any time in Settings.',
+          style: TextStyle(color: _soft, fontSize: 13.5, height: 1.4)),
+    ];
+  }
+
+  List<Widget> _ai(Color accent) => [
+        _heading(Icons.auto_awesome_rounded, 'Step 5 · AI', 'AI in everything',
+            'Search that fixes typos and suggests the right songs, one-tap mixes, an AI DJ you can chat with, and song info in the player.',
+            accent),
+        ListenableBuilder(
+          listenable: appState,
+          builder: (context, _) => _card2(
+            border: appState.b('ai_search_on', true) ? accent.withOpacity(0.5) : null,
+            child: Row(
+              children: [
+                const AiSpark(size: 26),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('AI search help',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700)),
+                      Text('Better results for any search.',
+                          style: TextStyle(color: _soft, fontSize: 13.5)),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: appState.b('ai_search_on', true),
+                  activeColor: Colors.black,
+                  activeTrackColor: accent,
+                  onChanged: (v) {
+                    HapticFeedback.selectionClick();
+                    appState.setB('ai_search_on', v);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        _card2(
+          delay: 70,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Connect the AI',
+                  style: TextStyle(
+                      color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              const Text(
+                  'The AI needs a free key from enter.pollinations.ai. Paste it in and you are set. You can skip this and do it later in Settings > AI.',
+                  style: TextStyle(color: _soft, fontSize: 13.5, height: 1.4)),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: accent,
+                    side: BorderSide(color: accent, width: 1.6),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(25)),
+                  ),
+                  onPressed: () => showAiSetup(context),
+                  icon: const Icon(Icons.key_rounded),
+                  label: const Text('Add AI key'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ];
+
   List<Widget> _permissions(Color accent) => [
-        _heading(Icons.verified_user_rounded, 'Step 1 · Access',
+        _heading(Icons.verified_user_rounded, 'Step 2 · Access',
             'A few quick permissions',
             'Turn on what you want. You can skip anything and change it later in Android settings.',
             accent),
@@ -23351,7 +23629,7 @@ class _SetupScreenState extends State<SetupScreen> {
       ];
 
   List<Widget> _account(Color accent) => [
-        _heading(Icons.person_rounded, 'Step 2 · Account', 'Bring your library',
+        _heading(Icons.person_rounded, 'Step 3 · Account', 'Bring your library',
             'Sign in to YouTube Music to see your playlists, likes and home feed. Totally optional.',
             accent),
         ValueListenableBuilder<YtAccount>(
@@ -23486,7 +23764,7 @@ class _SetupScreenState extends State<SetupScreen> {
           ],
         );
     return [
-      _heading(Icons.tune_rounded, 'Step 3 · Your way', 'Make it yours',
+      _heading(Icons.tune_rounded, 'Step 4 · Your way', 'Make it yours',
           'Pick how it sounds and looks. Everything can be changed later in Settings.',
           accent),
       // Crossfade first.
@@ -23703,8 +23981,8 @@ class _SetupScreenState extends State<SetupScreen> {
     return ListenableBuilder(
       listenable: appState,
       builder: (context, _) {
-        final accent = Color.lerp(appState.palette.accent, Colors.white, 0.1)!;
-        final pages = [_welcome, _permissions, _account, _look, _done];
+        final accent = bc.lc;
+        final pages = [_welcome, _icons, _permissions, _account, _look, _ai, _done];
         final last = _page == _pageCount - 1;
         final bottom = MediaQuery.of(context).padding.bottom;
         return Theme(
@@ -23714,11 +23992,11 @@ class _SetupScreenState extends State<SetupScreen> {
             colorScheme: AppPalette.scheme(accent),
           ),
           child: Scaffold(
-            backgroundColor: Colors.black,
+            backgroundColor: bc.bg,
             body: Stack(
               fit: StackFit.expand,
               children: [
-                AmoledGlow(accent: accent),
+                const BloomBackdrop(),
                 SafeArea(
                   bottom: false,
                   child: Column(
@@ -23808,10 +24086,10 @@ class _SetupScreenState extends State<SetupScreen> {
                                     last ? _finish() : _go(_page + 1),
                                 child: AnimatedContainer(
                                   duration: const Duration(milliseconds: 300),
-                                  height: 56,
+                                  height: 60,
                                   decoration: BoxDecoration(
                                     color: accent,
-                                    borderRadius: BorderRadius.circular(18),
+                                    borderRadius: BorderRadius.circular(30),
                                     boxShadow: [
                                       BoxShadow(
                                         color: accent.withOpacity(0.35),
@@ -23830,11 +24108,11 @@ class _SetupScreenState extends State<SetupScreen> {
                                               ? 'Get started'
                                               : last
                                                   ? 'Start listening'
-                                                  : (_page == 2 && !acc.signedIn)
+                                                  : (_page == 3 && !acc.signedIn)
                                                       ? 'Skip for now'
                                                       : 'Continue',
-                                          style: const TextStyle(
-                                            color: Colors.black,
+                                          style: TextStyle(
+                                            color: bc.onLc,
                                             fontSize: 17,
                                             fontWeight: FontWeight.w800,
                                           ),
@@ -27339,9 +27617,12 @@ class AppIconStyle {
   /// Bloom: a scalloped cookie instead of a circle, with smaller bars.
   final bool cookie;
   final double barScale;
+  /// Drawn-in-code artwork that replaces the five bars: orb, note, vinyl or
+  /// borealis. (Android side: custom/make_icons_extra.py draws the same shapes.)
+  final String? custom;
   const AppIconStyle(this.key, this.name, this.bg, this.disc, this.ring,
       this.bars, this.anim, this.animName,
-      {this.cookie = false, this.barScale = kIconBarScale});
+      {this.cookie = false, this.barScale = kIconBarScale, this.custom});
 }
 
 const List<AppIconStyle> kAppIcons = [
@@ -27371,6 +27652,27 @@ const List<AppIconStyle> kAppIcons = [
       null, null, [Color(0xFFFFFFFF)], 'spin', 'Orbit'),
   AppIconStyle('white', 'White', [Color(0xFFFFFFFF)], null, null,
       [Color(0xFF111318)], 'bounce', 'Bounce'),
+  // More icons, all drawn in code (no image files).
+  AppIconStyle('prism', 'Prism', [Color(0xFF1B0B3B), Color(0xFF0F4C81)],
+      null, null, [Color(0xFFFF7AD9), Color(0xFF7AF0FF)], 'wave', 'Wave'),
+  AppIconStyle('halo', 'Halo', [Color(0xFF0A0F1F)], null,
+      [Color(0xFF7CF7D4), Color(0xFF5B8CFF), Color(0xFFC084FC)],
+      [Color(0xFFFFFFFF)], 'spin', 'Orbit'),
+  AppIconStyle('frost', 'Frost', [Color(0xFFE8F4FF), Color(0xFFC7D2FE)],
+      null, null, [Color(0xFF2563EB), Color(0xFF7C3AED)], 'bounce', 'Bounce'),
+  AppIconStyle('rose', 'Rose', [Color(0xFF2B0A1E)], Color(0xFFFF6FA5), null,
+      [Color(0xFF2B0A1E)], 'glow', 'Shine'),
+  AppIconStyle('matrix', 'Matrix', [Color(0xFF020B05)], null, null,
+      [Color(0xFF39FF14), Color(0xFF00C46A)], 'pulse', 'Pulse'),
+  // Not the five bars: each of these has its own drawn artwork.
+  AppIconStyle('orb', 'Orb', [Color(0xFF03040A), Color(0xFF090712)], null, null,
+      [Colors.white], 'float', 'Float', custom: 'orb'),
+  AppIconStyle('note', 'Note', [Color(0xFF2A0E5C), Color(0xFFC026D3), Color(0xFFFB7185)],
+      null, null, [Colors.white], 'bounce', 'Bounce', custom: 'note'),
+  AppIconStyle('vinyl', 'Vinyl', [Color(0xFF04050C), Color(0xFF0A0C1C)], null, null,
+      [Colors.white], 'spin', 'Spin', custom: 'vinyl'),
+  AppIconStyle('borealis', 'Borealis', [Color(0xFF04060E), Color(0xFF080A1C)], null,
+      null, [Colors.white], 'wave', 'Drift', custom: 'borealis'),
 ];
 
 const double kIconBarScale = 1.35;
@@ -27434,6 +27736,11 @@ class AppIconPainter extends CustomPainter {
       canvas.clipPath(Path()..addOval(full));
     }
     canvas.drawRect(full, _fill(s.bg, full));
+    if (s.custom != null) {
+      _paintCustom(canvas, s.custom!);
+      canvas.restore();
+      return;
+    }
     const c = Offset(54, 54);
     final pulse = s.anim == 'pulse' ? 1 + 0.04 * sin(2 * pi * t * 2) : 1.0;
     if (s.disc != null && s.cookie) {
@@ -27533,6 +27840,245 @@ class AppIconPainter extends CustomPainter {
       );
     }
     canvas.restore();
+  }
+
+  // ── Drawn-in-code artwork (mirrors custom/make_icons_extra.py) ──────────
+
+  static Path _circle(double cx, double cy, double r) =>
+      Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: r));
+
+  void _paintCustom(Canvas canvas, String kind) {
+    switch (kind) {
+      case 'orb':
+        return _paintOrb(canvas);
+      case 'note':
+        return _paintNote(canvas);
+      case 'vinyl':
+        return _paintVinyl(canvas);
+      default:
+        return _paintBorealis(canvas);
+    }
+  }
+
+  void _paintOrb(Canvas canvas) {
+    final w = 2 * pi * t;
+    final float = t == 0 ? 0.0 : 1.6 * sin(w);
+    final grow = Curves.easeOutBack.transform(intro.clamp(0.0, 1.0));
+    canvas.save();
+    canvas.translate(54, 54 + float);
+    canvas.scale(grow);
+    canvas.translate(-54, -54);
+    final tilt = -0.419 + (t == 0 ? 0 : 0.07 * sin(w));
+    void ring(bool front) {
+      canvas.save();
+      canvas.translate(54, 54);
+      canvas.rotate(tilt);
+      final r = Rect.fromCenter(center: Offset.zero, width: 68, height: 20);
+      if (front) {
+        canvas.drawArc(r, 0, pi, false,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 4.6
+              ..color = const Color(0x408B5CF6));
+        canvas.drawArc(r, 0, pi, false,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1.9
+              ..strokeCap = StrokeCap.round
+              ..color = const Color(0xFFEAF4FF));
+      } else {
+        canvas.drawArc(
+            r,
+            pi,
+            pi,
+            false,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1.8
+              ..shader = const LinearGradient(colors: [
+                Color(0xB322D3EE),
+                Color(0xB38B5CF6),
+                Color(0xB3F472B6)
+              ]).createShader(r));
+      }
+      canvas.restore();
+    }
+
+    ring(false);
+    final halo = Rect.fromCircle(center: const Offset(54, 54), radius: 28);
+    canvas.drawCircle(
+        const Offset(54, 54),
+        28,
+        Paint()
+          ..shader = const RadialGradient(
+              colors: [Color(0x00A855F7), Color(0x59A855F7), Color(0x00A855F7)],
+              stops: [0, 0.78, 1]).createShader(halo));
+    const sc = Offset(45.2, 43);
+    canvas.drawCircle(
+        const Offset(54, 54),
+        22,
+        Paint()
+          ..shader = ui.Gradient.radial(sc, 37.4, const [
+            Color(0xFFCFEFFF),
+            Color(0xFF38BDF8),
+            Color(0xFF6366F1),
+            Color(0xFFA855F7),
+            Color(0xFFEC4899)
+          ], const [0, 0.2, 0.5, 0.75, 0.95]));
+    canvas.drawCircle(
+        const Offset(54, 54),
+        22,
+        Paint()
+          ..shader = ui.Gradient.radial(
+              sc,
+              37.4,
+              const [Color(0x00050514), Color(0x00050514), Color(0x99050514)],
+              const [0, 0.55, 1]));
+    canvas.drawCircle(
+        const Offset(44, 42),
+        7,
+        Paint()
+          ..shader = ui.Gradient.radial(const Offset(44, 42), 7,
+              const [Color(0xCCFFFFFF), Color(0x00FFFFFF)]));
+    ring(true);
+    canvas.restore();
+  }
+
+  /// Tapered curved flag of the note, same maths as note_flag() in the script.
+  static Path noteFlag() {
+    const p0 = Offset(55.6, 31), p1 = Offset(57, 43), p2 = Offset(74, 43), p3 = Offset(65, 61);
+    Offset bz(double t) {
+      final u = 1 - t;
+      return p0 * (u * u * u) + p1 * (3 * u * u * t) + p2 * (3 * u * t * t) + p3 * (t * t * t);
+    }
+
+    final left = <Offset>[], right = <Offset>[];
+    const n = 40;
+    for (var i = 0; i <= n; i++) {
+      final t = i / n;
+      final c = bz(t);
+      final d = bz(min(1.0, t + 0.001)) - bz(max(0.0, t - 0.001));
+      final ln = d.distance == 0 ? 1.0 : d.distance;
+      final nrm = Offset(-d.dy / ln, d.dx / ln);
+      final w = (5.6 * (1 - t) + 1.2) / 2;
+      left.add(c + nrm * w);
+      right.add(c - nrm * w);
+    }
+    final pts = [...left, ...right.reversed];
+    return Path()..addPolygon(pts, true);
+  }
+
+  void _paintNote(Canvas canvas) {
+    final w = 2 * pi * t;
+    final lift = t == 0 ? 0.0 : -2.4 * sin(w).abs();
+    final sway = t == 0 ? 0.0 : 0.05 * sin(w);
+    final grow = Curves.easeOutBack.transform(intro.clamp(0.0, 1.0));
+    canvas.save();
+    canvas.translate(54, 54 + lift);
+    canvas.rotate(sway);
+    canvas.scale(grow);
+    canvas.translate(-54 + 4, -54);
+    final white = Paint()
+      ..color = Colors.white
+      ..isAntiAlias = true;
+    canvas.save();
+    canvas.translate(41, 69);
+    canvas.rotate(-20 * pi / 180);
+    canvas.drawOval(Rect.fromCenter(center: Offset.zero, width: 23, height: 16), white);
+    canvas.restore();
+    canvas.drawRect(const Rect.fromLTWH(51, 31, 4.6, 40), white);
+    canvas.drawPath(noteFlag(), white);
+    canvas.restore();
+  }
+
+  void _paintVinyl(Canvas canvas) {
+    final w = 2 * pi * t;
+    final grow = Curves.easeOutBack.transform(intro.clamp(0.0, 1.0));
+    canvas.save();
+    canvas.translate(54, 54);
+    canvas.scale(grow);
+    canvas.translate(-54, -54);
+    const c = Offset(54, 54);
+    canvas.drawCircle(c, 33, Paint()..color = const Color(0xFF0C0D1A));
+    final rot = 0.6 + w;
+    final shader = SweepGradient(
+      transform: GradientRotation(rot),
+      colors: const [
+        Color(0xFF22D3EE),
+        Color(0xFF6366F1),
+        Color(0xFFA855F7),
+        Color(0xFFEC4899),
+        Color(0xFFA855F7),
+        Color(0xFF6366F1),
+        Color(0xFF22D3EE),
+      ],
+    ).createShader(Rect.fromCircle(center: c, radius: 33));
+    for (final r in const [30.0, 26.5, 23.0, 19.5]) {
+      canvas.drawCircle(
+          c,
+          r,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.9
+            ..shader = shader);
+    }
+    for (final a in const [-0.9, 2.24]) {
+      canvas.drawArc(Rect.fromCircle(center: c, radius: 33), a - 0.28, 0.56, true,
+          Paint()..color = const Color(0x1FFFFFFF));
+    }
+    final label = Rect.fromCircle(center: c, radius: 11);
+    canvas.drawCircle(
+        c,
+        11,
+        Paint()
+          ..shader = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF22D3EE), Color(0xFF8B5CF6), Color(0xFFEC4899)],
+          ).createShader(label));
+    canvas.drawCircle(c, 2.7, Paint()..color = const Color(0xFF060710));
+    canvas.restore();
+  }
+
+  void _paintBorealis(Canvas canvas) {
+    const ribbons = [
+      (Color(0xFF22D3EE), Color(0xFF6366F1), 0.0, 0.90),
+      (Color(0xFF8B5CF6), Color(0xFFEC4899), 1.1, 0.80),
+      (Color(0xFF34D399), Color(0xFF22D3EE), 2.2, 0.60),
+    ];
+    const stars = [
+      Offset(36, 34), Offset(48, 30), Offset(62, 32), Offset(74, 36),
+      Offset(30, 42), Offset(80, 44), Offset(54, 38), Offset(68, 28),
+    ];
+    final starP = Paint()..color = const Color(0xB3FFFFFF);
+    for (final s in stars) {
+      canvas.drawCircle(s, 0.8, starP);
+    }
+    final w = 2 * pi * t;
+    final grow = Curves.easeOutCubic.transform(intro.clamp(0.0, 1.0));
+    for (final (c1, c2, ph, op) in ribbons) {
+      final top = <Offset>[], bot = <Offset>[];
+      for (var i = 0; i <= 80; i++) {
+        final u = i / 80;
+        final x = 22 + 64 * u;
+        final env = pow(sin(pi * u), 0.9).toDouble();
+        final y = 56 + 9 * grow * sin(u * pi * 2.2 + ph + w) * env;
+        final th = (3.5 + 6 * env) * grow;
+        top.add(Offset(x, y - th));
+        bot.add(Offset(x, y + th));
+      }
+      final path = Path()..addPolygon([...top, ...bot.reversed], true);
+      canvas.drawPath(
+          path,
+          Paint()
+            ..isAntiAlias = true
+            ..shader = ui.Gradient.linear(const Offset(22, 0), const Offset(86, 0), [
+              c1.withOpacity(0),
+              c1.withOpacity(op),
+              c2.withOpacity(op),
+              c2.withOpacity(0),
+            ], const [0, 0.22, 0.78, 1]));
+    }
   }
 
   @override
@@ -29857,7 +30403,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.2.1';
+const String kAppVersion = '3.3.0';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -36785,6 +37331,14 @@ class _BloomSearchPageState extends State<BloomSearchPage> {
     final history =
         appState.b('search_history_on', true) ? _history : const <String>[];
     return [
+      if (appState.b('ai_search_on', true)) ...[
+        AiPromptChips(
+            accent: c.pri,
+            surface: c.s2,
+            text: c.t1,
+            onTap: (p) => _submit(p)),
+        const SizedBox(height: 18),
+      ],
       if (history.isNotEmpty) ...[
         BloomSection('Recent', action: 'Clear', onAction: () {
           YouTubeMusic.prefs?.remove('search_history');
@@ -36961,6 +37515,32 @@ class _BloomSearchPageState extends State<BloomSearchPage> {
           ],
         ),
       ),
+      if (_filter == 0 && appState.b('ai_search_on', true))
+        AiSearchPanel(
+          key: ValueKey('ai_$q'),
+          query: q,
+          accent: c.pri,
+          surface: c.s2,
+          text: c.t1,
+          subtext: c.t2,
+          onPick: (song) async {
+            final t = await aiResolveYt(song);
+            if (t == null) {
+              appNotice.value = "Couldn't find ${song.title}";
+              return;
+            }
+            _playYt([t], 0);
+          },
+          onPlayAll: (songs) async {
+            appNotice.value = 'Starting AI picks…';
+            final r = await aiPlaySongs(songs);
+            if (mounted) {
+              appNotice.value = r;
+              openPlayer(context);
+            }
+          },
+          onUseQuery: (x) => _submit(x),
+        ),
     ];
 
     switch (_filter) {
@@ -37724,8 +38304,23 @@ class BloomPlayerView extends StatelessWidget {
           ),
         );
 
+    void askAi() => showAiSongInfo(
+          context,
+          title: track.title,
+          artist: track.artist,
+          onPlay: (song) async {
+            final t = await aiResolveYt(song);
+            if (t == null) {
+              appNotice.value = "Couldn't find ${song.title}";
+              return;
+            }
+            await audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+            await audioHandler.playYouTubeList([t], 0);
+          },
+        );
+
     BoxDecoration dockBox(double r) => BoxDecoration(
-          color: c.s2,
+          color: c.s2.withOpacity(0.72),
           borderRadius: BorderRadius.circular(r),
           border: Border.all(color: Colors.white.withOpacity(0.08)),
         );
@@ -37756,6 +38351,8 @@ class BloomPlayerView extends StatelessWidget {
                     ],
                   ),
                 ),
+                round(Icons.auto_awesome_rounded, askAi, 'Ask AI'),
+                const SizedBox(width: 8),
                 round(Icons.more_vert_rounded,
                     () => showAddToPlaylistSheet(context, track), 'More'),
               ],
@@ -37770,12 +38367,24 @@ class BloomPlayerView extends StatelessWidget {
                       scale: playing ? 1.0 : 0.95,
                       duration: const Duration(milliseconds: 380),
                       curve: Curves.easeOutCubic,
-                      child: Hero(
-                        tag: 'now_playing_art',
-                        createRectTween: _arcTween,
-                        flightShuttleBuilder: _artShuttle,
-                        child: SwipeArtCarousel(
-                            track: track, playing: playing, radius: 40),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(44),
+                          boxShadow: [
+                            BoxShadow(
+                                color: seed.withOpacity(0.50),
+                                blurRadius: 70,
+                                spreadRadius: -8,
+                                offset: const Offset(0, 28)),
+                          ],
+                        ),
+                        child: Hero(
+                          tag: 'now_playing_art',
+                          createRectTween: _arcTween,
+                          flightShuttleBuilder: _artShuttle,
+                          child: SwipeArtCarousel(
+                              track: track, playing: playing, radius: 44),
+                        ),
                       ),
                     ),
                   ),
@@ -37793,7 +38402,7 @@ class BloomPlayerView extends StatelessWidget {
                         child: Text(track.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: bloomText(26, weight: FontWeight.w800)),
+                            style: bloomText(28, weight: FontWeight.w800)),
                       ),
                       const SizedBox(height: 2),
                       GestureDetector(
@@ -37851,9 +38460,8 @@ class BloomPlayerView extends StatelessWidget {
             const SizedBox(height: 12),
             // Transport: one rounded dock, like the tab bar.
             Container(
-              height: 84,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: dockBox(42),
+              height: 92,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -37874,12 +38482,18 @@ class BloomPlayerView extends StatelessWidget {
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 340),
                       curve: Curves.easeOutCubic,
-                      width: 70,
-                      height: 70,
+                      width: 82,
+                      height: 82,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         color: c.lc,
-                        borderRadius: BorderRadius.circular(playing ? 35 : 24),
+                        borderRadius: BorderRadius.circular(playing ? 41 : 28),
+                        boxShadow: [
+                          BoxShadow(
+                              color: seed.withOpacity(0.55),
+                              blurRadius: 34,
+                              offset: const Offset(0, 12)),
+                        ],
                       ),
                       child: loading
                           ? SizedBox(
@@ -37897,7 +38511,7 @@ class BloomPlayerView extends StatelessWidget {
                                       : Icons.play_arrow_rounded,
                                   key: ValueKey(playing),
                                   color: c.onLc,
-                                  size: 38),
+                                  size: 42),
                             ),
                     ),
                   ),
@@ -37922,6 +38536,7 @@ class BloomPlayerView extends StatelessWidget {
                 children: [
                   pill(Icons.lyrics_outlined, 'Lyrics',
                       () => showLyricsSheet(context, track)),
+                  pill(Icons.auto_awesome_rounded, 'Ask AI', askAi),
                   pill(Icons.queue_music_rounded, 'Up next',
                       () => showQueueSheet(context)),
                   pill(Icons.graphic_eq_rounded, 'Sound',
@@ -37943,7 +38558,83 @@ class BloomPlayerView extends StatelessWidget {
       ),
     );
 
-    // Flat theme background: no gradients or glow.
-    return Scaffold(backgroundColor: c.bg, body: content);
+    // Soft background tinted by the cover art.
+    return Scaffold(
+      backgroundColor: c.bg,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color.lerp(c.bg, seed, 0.42)!, c.bg],
+                stops: const [0, 0.7],
+              ),
+            ),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(0, -0.3),
+                radius: 0.95,
+                colors: [seed.withOpacity(0.26), seed.withOpacity(0)],
+              ),
+            ),
+          ),
+          content,
+        ],
+      ),
+    );
   }
+}
+
+
+// ───────────────────────────── AI helpers ─────────────────────────────
+
+/// Finds a YouTube Music track for a song the AI suggested.
+Future<TrackItem?> aiResolveYt(AiSong song) async {
+  try {
+    final r = await YouTubeMusic.search(song.query);
+    if (r.isEmpty) return null;
+    final w = song.title.toLowerCase().split(' ').first;
+    return r.firstWhere((t) => t.title.toLowerCase().contains(w),
+        orElse: () => r.first);
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Plays the first findable song now and quietly queues the rest.
+Future<String> aiPlaySongs(List<AiSong> songs) async {
+  if (songs.isEmpty) return "Couldn't find songs for that.";
+  TrackItem? first;
+  var i = 0;
+  while (i < songs.length && first == null) {
+    first = await aiResolveYt(songs[i]);
+    i++;
+  }
+  if (first == null) return "Couldn't find those songs.";
+  await audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+  await audioHandler.playYouTubeList([first], 0);
+  final rest = songs.sublist(i);
+  () async {
+    for (final s in rest) {
+      final t = await aiResolveYt(s);
+      if (t != null) audioHandler.addToQueue([t]);
+    }
+  }();
+  return rest.isEmpty
+      ? 'Now playing: ${first.title}'
+      : 'Playing ${first.title}. Adding ${rest.length} more AI picks to your queue.';
+}
+
+/// Asks the AI for a mix that fits [vibe] and plays it.
+Future<String> aiMixPlay(String vibe) async {
+  final cur = audioHandler.currentTrack;
+  final songs = await AiHelper.mix(vibe,
+      count: 10, nowPlaying: cur == null ? '' : '${cur.title} - ${cur.artist}');
+  if (songs.isEmpty) return AiHelper.problemText();
+  return aiPlaySongs(songs);
 }

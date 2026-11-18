@@ -209,6 +209,123 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity-alias>
+        <activity-alias
+            android:name=".IconPrism"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_prism"
+            android:roundIcon="@mipmap/ic_alt_prism"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconHalo"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_halo"
+            android:roundIcon="@mipmap/ic_alt_halo"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconFrost"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_frost"
+            android:roundIcon="@mipmap/ic_alt_frost"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconRose"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_rose"
+            android:roundIcon="@mipmap/ic_alt_rose"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconMatrix"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_matrix"
+            android:roundIcon="@mipmap/ic_alt_matrix"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconOrb"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_orb"
+            android:roundIcon="@mipmap/ic_alt_orb"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconNote"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_note"
+            android:roundIcon="@mipmap/ic_alt_note"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconVinyl"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_vinyl"
+            android:roundIcon="@mipmap/ic_alt_vinyl"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconBorealis"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_borealis"
+            android:roundIcon="@mipmap/ic_alt_borealis"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <activity
             android:name=".YtLoginActivity"

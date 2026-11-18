@@ -41,6 +41,7 @@ jobs:
           cp custom/main.dart app_build/lib/main.dart
           cp custom/tab_dock.dart app_build/lib/tab_dock.dart
           cp custom/ai_music_chat.dart app_build/lib/ai_music_chat.dart
+          cp custom/ai_features.dart app_build/lib/ai_features.dart
           cp custom/AndroidManifest.xml app_build/android/app/src/main/AndroidManifest.xml
           rm -rf app_build/android/app/src/main/kotlin
           mkdir -p app_build/android/app/src/main/kotlin/com/alexlmp/app
@@ -182,6 +183,11 @@ jobs:
               ("white", ["#FFFFFF"], None, None, ["#111318"]),
               # Default: Material You lilac, dark bars on a purple cookie.
               ("bloom", ["#D8CEF2"], "#7667AA", None, ["#3D3258"]),
+              ("prism", ["#1B0B3B", "#0F4C81"], None, None, ["#FF7AD9", "#7AF0FF"]),
+              ("halo", ["#0A0F1F"], None, ["#7CF7D4", "#5B8CFF", "#C084FC"], ["#FFFFFF"]),
+              ("frost", ["#E8F4FF", "#C7D2FE"], None, None, ["#2563EB", "#7C3AED"]),
+              ("rose", ["#2B0A1E"], "#FF6FA5", None, ["#2B0A1E"]),
+              ("matrix", ["#020B05"], None, None, ["#39FF14", "#00C46A"]),
           ]
           COOKIE = "M78.09,54.00 L77.38,55.02 L76.73,55.99 L76.23,56.93 L75.95,57.87 L75.89,58.85 L76.04,59.91 L76.32,61.04 L76.64,62.24 L76.90,63.48 L76.99,64.72 L76.85,65.90 L76.43,66.95 L75.73,67.84 L74.78,68.55 L73.66,69.09 L72.46,69.49 L71.25,69.81 L70.13,70.13 L69.15,70.53 L68.33,71.07 L67.65,71.79 L67.09,72.69 L66.57,73.74 L66.05,74.87 L65.44,75.98 L64.72,76.99 L63.86,77.80 L62.86,78.34 L61.75,78.57 L60.57,78.51 L59.36,78.20 L58.18,77.73 L57.05,77.20 L55.99,76.73 L54.98,76.40 L54.00,76.29 L53.02,76.40 L52.01,76.73 L50.95,77.20 L49.82,77.73 L48.64,78.20 L47.43,78.51 L46.25,78.57 L45.14,78.34 L44.14,77.80 L43.28,76.99 L42.56,75.98 L41.95,74.87 L41.43,73.74 L40.91,72.69 L40.35,71.79 L39.67,71.07 L38.85,70.53 L37.87,70.13 L36.75,69.81 L35.54,69.49 L34.34,69.09 L33.22,68.55 L32.27,67.84 L31.57,66.95 L31.15,65.90 L31.01,64.72 L31.10,63.48 L31.36,62.24 L31.68,61.04 L31.96,59.91 L32.11,58.85 L32.05,57.87 L31.77,56.93 L31.27,55.99 L30.62,55.02 L29.91,54.00 L29.24,52.92 L28.73,51.79 L28.46,50.64 L28.49,49.50 L28.85,48.42 L29.49,47.43 L30.36,46.55 L31.36,45.76 L32.38,45.04 L33.32,44.36 L34.11,43.65 L34.70,42.86 L35.09,41.95 L35.31,40.91 L35.43,39.75 L35.54,38.51 L35.73,37.26 L36.06,36.06 L36.60,35.01 L37.35,34.16 L38.32,33.56 L39.45,33.22 L40.68,33.10 L41.95,33.13 L43.19,33.24 L44.36,33.32 L45.42,33.28 L46.38,33.06 L47.26,32.61 L48.09,31.96 L48.93,31.15 L49.82,30.27 L50.76,29.43 L51.79,28.73 L52.88,28.26 L54.00,28.10 L55.12,28.26 L56.21,28.73 L57.24,29.43 L58.18,30.27 L59.07,31.15 L59.91,31.96 L60.74,32.61 L61.62,33.06 L62.58,33.28 L63.64,33.32 L64.81,33.24 L66.05,33.13 L67.32,33.10 L68.55,33.22 L69.68,33.56 L70.65,34.16 L71.40,35.01 L71.94,36.06 L72.27,37.26 L72.46,38.51 L72.57,39.75 L72.69,40.91 L72.91,41.95 L73.30,42.86 L73.89,43.65 L74.68,44.36 L75.62,45.04 L76.64,45.76 L77.64,46.55 L78.51,47.43 L79.15,48.42 L79.51,49.50 L79.54,50.64 L79.27,51.79 L78.76,52.92 Z"
           BARS = "M40,50 L40,58 M48,42 L48,66 M56,34 L56,74 M64,48 L64,60 M72,52 L72,56"
@@ -259,6 +265,10 @@ jobs:
               write("%s/%s/styles.xml" % (R, d), STYLES % extra)
           print("App icon + launch screen resources generated")
           PYEOF
+
+          # Drawn-in-code icons: Orb, Note, Vinyl, Borealis
+          python3 custom/make_icons_extra.py app_build/android/app/src/main/res
+          echo "extra icons done"
 
       - name: Configure Gradle for Android SDK 35
         run: |

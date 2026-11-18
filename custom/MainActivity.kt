@@ -19,6 +19,8 @@ class MainActivity : AudioServiceActivity() {
     private val appIcons = listOf(
         "classic", "midnight", "sunset", "aurora", "neon",
         "mint", "ember", "gold", "ocean", "white", "bloom",
+        "prism", "halo", "frost", "rose", "matrix",
+        "orb", "note", "vinyl", "borealis",
     )
 
     private fun iconAlias(key: String) = android.content.ComponentName(

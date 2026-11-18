@@ -1,10 +1,16 @@
 All your music, one player.
 
-AlexLMP 3.2.1 gives the AI tab a full redesign and makes search much nicer.
+AlexLMP 3.3.0 puts AI into search, Home, the player and setup, and redoes the Bloom Home and player.
 
 ## New
-- **AI DJ redone.** Pure AMOLED black background whenever you open it, a ChatGPT-style chat layout, haptic feedback as it answers, and glowing mood colors that shift when you send a message.
-- **Search results redone.** New "All" view with a Top result card, rounded song groups, and scrolling Artists, Albums and Playlists rows, plus rounded filter pills.
+- **AI search help.** Searching now fixes typos, understands moods ("songs for a rainy night"), and shows AI picks you can play in one tap, or play all at once.
+- **AI mixes.** A one-tap AI mix on Home for the time of day, and the AI DJ can build whole playlists ("make me a workout mix").
+- **Ask AI in the player.** What a song is about, plus similar songs.
+- **AI key.** The free AI service now needs a key. Add yours in Setup or Settings > AI (free at enter.pollinations.ai).
+- **New Bloom Home.** Big hero card, quick actions, an AI mix card and a two-column quick picks grid.
+- **New Bloom player.** Colors from the cover art, a glowing cover and a bigger play button.
+- **Setup redone** in the Bloom look. Pick your app icon first, and set up AI at the end.
+- **4 new app icons:** Orb, Note, Vinyl and Borealis, plus Prism, Halo, Frost, Rose and Matrix. Bloom is still the default.
 
 ## From 3.2.0
 AlexLMP 3.2.0 puts the new tab bar and AI DJ in every app style, and redoes the Bloom player, library and settings.
