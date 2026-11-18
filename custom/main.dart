@@ -4387,6 +4387,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         final pal = appState.palette;
         final tracks = audioHandler.tracks;
         final bottomInset = MediaQuery.of(context).padding.bottom;
+        _dockOverlay = true;
 
         if (appState.appStyle == 'bloom') {
           return _bloomScaffold(context, pal, tracks);
@@ -4439,66 +4440,17 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   ),
                 ),
               ),
-              if (appState.community && !appState.liquidGlass)
-                _m3Bottom(context, pal)
-              else
               Positioned(
-                left: 12,
-                right: 12,
-                bottom: bottomInset + 8,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (audioHandler.currentTrack != null)
-                      Reveal(
-                        dy: 40,
-                        child: MiniPlayer(
-                          track: audioHandler.currentTrack!,
-                          palette: pal,
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: appState.liquidGlass
-                              ? LiquidGlassNavBar(
-                                  selected: _tab,
-                                  palette: pal,
-                                  items: const [
-                                    (Icons.home_rounded, 'Home'),
-                                    (Icons.sensors_rounded, 'Mix'),
-                                    (Icons.library_music_rounded, 'Library'),
-                                  ],
-                                  onSelect: (i) => setState(() {
-                                    _dir = i >= _tab ? 1 : -1;
-                                    _tab = i;
-                                  }),
-                                )
-                              : _navBar(pal),
-                        ),
-                        const SizedBox(width: 10),
-                        SquishyGesture(
-                          onTap: () => showSearchSheet(context),
-                          child: LiquidGlassBox(
-                            realBlur: true,
-                            borderRadius: BorderRadius.circular(32),
-                            fallbackColor: pal.surface,
-                            boxShadow: _shadow,
-                            child: const SizedBox(
-                              width: 64,
-                              height: 64,
-                              child: Icon(
-                                Icons.search_rounded,
-                                color: Color(0xFFD5DCE0),
-                                size: 26,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: _unifiedDock(
+                  context,
+                  pal,
+                  items: _stdTabs,
+                  selected: _tab,
+                  onSelect: _stdSelect,
+                  base: pal.bg,
                 ),
               ),
             ],
@@ -4512,6 +4464,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   Widget _plusScaffold(
       BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+    _dockOverlay = false;
     return Scaffold(
       backgroundColor: Colors.black,
       body: Column(
@@ -4528,13 +4481,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               ),
             ),
           ),
-          PlusDock(
-            tab: _tab,
-            onTab: (i) => setState(() {
-              _dir = i >= _tab ? 1 : -1;
-              _tab = i;
-            }),
-          ),
+          _unifiedDock(context, pal,
+              items: _stdTabs, selected: _tab, onSelect: _stdSelect),
         ],
       ),
     );
@@ -4903,6 +4851,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   Widget _signalScaffold(
       BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+    _dockOverlay = false;
     return Scaffold(
       backgroundColor: kSigInk,
       body: Column(
@@ -4920,13 +4869,12 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               ),
             ),
           ),
-          SignalDock(
-            tab: _tab,
-            onTab: (i) => setState(() {
-              _dir = i >= _tab ? 1 : -1;
-              _tab = i;
-            }),
-          ),
+          _unifiedDock(context, pal,
+              items: _stdTabs,
+              selected: _tab,
+              onSelect: _stdSelect,
+              base: kSigInk,
+              signal: true),
         ],
       ),
     );
@@ -5163,6 +5111,127 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   }
 
   // ═══════════════════════ AlexLMP Bloom app style ═══════════════════════
+
+  // ── Shared dock + AI tab for every app style ──────────────────────────
+  // True when the dock floats over the page (the AI chat then reserves room
+  // for it); false when the style puts the dock below the page in a Column.
+  bool _dockOverlay = true;
+
+  static const List<TabItem> _stdTabs = [
+    TabItem(Icons.home_outlined, Icons.home_rounded, 'Home'),
+    TabItem(Icons.sensors_outlined, Icons.sensors_rounded, 'Mix'),
+    TabItem(Icons.library_music_outlined, Icons.library_music_rounded, 'Library'),
+    TabItem(Icons.auto_awesome_outlined, Icons.auto_awesome_rounded, 'AI'),
+    TabItem(Icons.search_rounded, Icons.search_rounded, 'Search'),
+    TabItem(Icons.settings_outlined, Icons.settings_rounded, 'Settings'),
+  ];
+
+  static const List<TabItem> _amTabs = [
+    TabItem(Icons.home_outlined, Icons.home_rounded, 'Home'),
+    TabItem(Icons.new_releases_outlined, Icons.new_releases_rounded, 'New'),
+    TabItem(Icons.sensors_outlined, Icons.sensors_rounded, 'Radio'),
+    TabItem(Icons.library_music_outlined, Icons.library_music_rounded, 'Library'),
+    TabItem(Icons.search_rounded, Icons.search_rounded, 'Search'),
+    TabItem(Icons.auto_awesome_outlined, Icons.auto_awesome_rounded, 'AI'),
+  ];
+
+  static const List<TabItem> _pocketTabs = [
+    TabItem(Icons.library_music_outlined, Icons.library_music_rounded, 'Library'),
+    TabItem(Icons.home_outlined, Icons.home_rounded, 'Home'),
+    TabItem(Icons.sensors_outlined, Icons.sensors_rounded, 'Mix'),
+    TabItem(Icons.auto_awesome_outlined, Icons.auto_awesome_rounded, 'AI'),
+    TabItem(Icons.search_rounded, Icons.search_rounded, 'Search'),
+  ];
+
+  /// Tab taps for the standard styles (Home / Mix / Library / AI + sheets).
+  void _stdSelect(int i) {
+    HapticFeedback.selectionClick();
+    if (i == 4) {
+      showSearchSheet(context);
+    } else if (i == 5) {
+      showSettingsSheet(context);
+    } else {
+      setState(() {
+        _dir = i >= _tab ? 1 : -1;
+        _tab = i;
+      });
+    }
+  }
+
+  /// The floating rounded tab dock (same look as bitFocus) with the mini
+  /// player above it, coloured from the current style.
+  Widget _unifiedDock(
+    BuildContext context,
+    AppPalette pal, {
+    required List<TabItem> items,
+    required int selected,
+    required ValueChanged<int> onSelect,
+    Color base = Colors.black,
+    bool signal = false,
+    bool compact = false,
+  }) {
+    _measureBloomBottom();
+    final accent = pal.accent;
+    final onAccent = ThemeData.estimateBrightnessForColor(accent) == Brightness.dark
+        ? Colors.white
+        : Colors.black;
+    return Column(
+      key: _bloomBottomKey,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ValueListenableBuilder<int>(
+          valueListenable: audioHandler.currentIndex,
+          builder: (context, _, __) {
+            final t = audioHandler.currentTrack;
+            if (t == null) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+              child: MiniPlayer(
+                  track: t, palette: pal, signal: signal, compact: compact),
+            );
+          },
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: TabDock(
+              items: items,
+              index: selected,
+              containerColor: Color.alphaBlend(Colors.white.withOpacity(0.10), base),
+              indicatorColor: accent,
+              selectedColor: onAccent,
+              unselectedColor: Colors.white70,
+              onSelect: onSelect,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// AI DJ page for every style except Bloom (which passes its own colours).
+  Widget _aiPageStd(AppPalette pal) {
+    final accent = pal.accent;
+    final onAccent = ThemeData.estimateBrightnessForColor(accent) == Brightness.dark
+        ? Colors.white
+        : Colors.black;
+    return AiMusicChat(
+      onCommand: _aiCommand,
+      nowPlaying: () {
+        final t = audioHandler.currentTrack;
+        return t == null ? '' : '${t.title} - ${t.artist}';
+      },
+      bg: onAccent,
+      surface: Colors.white.withOpacity(0.09),
+      userBubble: accent,
+      onUserBubble: onAccent,
+      text: Colors.white,
+      subtext: Colors.white60,
+      accent: accent,
+      bottomPad: _dockOverlay ? _bloomBottomH : 0,
+    );
+  }
 
   /// Measures the floating bottom stack (mini player + tab dock) so the AI
   /// chat can keep its input box right above it.
@@ -5834,18 +5903,13 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             ),
           ),
           Positioned(
-            left: 12,
-            right: 12,
-            bottom: bottomInset + 10,
+            left: 0,
+            right: 0,
+            bottom: 0,
             child: Reveal(
               dy: 40,
-              child: PrestigeDock(
-                tab: _tab,
-                onTab: (i) => setState(() {
-                  _dir = i >= _tab ? 1 : -1;
-                  _tab = i;
-                }),
-              ),
+              child: _unifiedDock(context, pal,
+                  items: _stdTabs, selected: _tab, onSelect: _stdSelect),
             ),
           ),
         ],
@@ -6143,23 +6207,27 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   Widget _pocketScaffold(
       BuildContext context, AppPalette pal, List<TrackItem> tracks) {
+    _dockOverlay = false;
     final Widget body = _pocketTab == 0
         ? const PocketLibrary()
         : SafeArea(
             bottom: false,
             child: _tabBody(context, pal, tracks,
-                tab: _pocketTab == 1 ? 0 : 1),
+                tab: _pocketTab == 3 ? 3 : (_pocketTab == 1 ? 0 : 1)),
           );
     return Scaffold(
       backgroundColor: Colors.black,
       body: Column(
         children: [
           Expanded(child: body),
-          const PocketMiniBar(),
-          PocketNav(
+          _unifiedDock(
+            context,
+            pal,
+            items: _pocketTabs,
             selected: _pocketTab,
             onSelect: (i) {
-              if (i == 3) {
+              HapticFeedback.selectionClick();
+              if (i == 4) {
                 showSearchSheet(context);
                 return;
               }
@@ -6242,21 +6310,19 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             ),
           ),
           Positioned(
-            left: 14,
-            right: 14,
-            bottom: bottomInset + 6,
+            left: 0,
+            right: 0,
+            bottom: 0,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (audioHandler.currentTrack != null) ...[
-                  MiniPlayer(
-                      track: audioHandler.currentTrack!,
-                      palette: pal,
-                      compact: true),
-                  const SizedBox(height: 6),
-                ],
-                AmNavBar(
+                _unifiedDock(
+                  context,
+                  pal,
+                  items: _amTabs,
                   selected: _amTab,
+                  base: pal.bg,
+                  compact: true,
                   onSelect: (i) {
                     if (i != _amTab) HapticFeedback.selectionClick();
                     setState(() => _amTab = i);
@@ -6280,6 +6346,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         return _amLibrary(context, pal, d);
       case 4:
         return _amSearch(context, pal, d);
+      case 5:
+        return _aiPageStd(pal);
       default:
         return _amHome(context, pal, d);
     }
@@ -7031,6 +7099,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   Widget _tabBody(BuildContext context, AppPalette pal, List<TrackItem> allTracks,
       {int? tab}) {
     final tabNow = tab ?? _tab;
+    if (tabNow == 3) return _aiPageStd(pal);
     final m3 = appState.community;
     final yt = appState.homeMode == 'youtube';
     // Local mode shows only files on your phone; YouTube mode shows your
@@ -16458,25 +16527,67 @@ class SettingsScreen extends StatelessWidget {
           backgroundColor: pal.bg,
           body: CustomScrollView(
             slivers: [
-              SliverAppBar.large(
-                backgroundColor: pal.bg,
-                surfaceTintColor: Colors.transparent,
-                title: const Text('Settings'),
+              SliverToBoxAdapter(
+                child: SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Material(
+                              color: pal.surface,
+                              shape: CircleBorder(
+                                  side: BorderSide(
+                                      color: Colors.white.withOpacity(0.08))),
+                              child: IconButton(
+                                tooltip: 'Back',
+                                icon: Icon(Icons.arrow_back_rounded,
+                                    color: cs.onSurface),
+                                onPressed: () => Navigator.of(context).maybePop(),
+                              ),
+                            ),
+                            const Spacer(),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: pal.surface,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                    color: Colors.white.withOpacity(0.08)),
+                              ),
+                              child: Text('AlexLMP v$kAppVersion',
+                                  style: TextStyle(
+                                      color: pal.accent,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w700)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 18),
+                        Text('Settings',
+                            style: TextStyle(
+                                color: cs.onSurface,
+                                fontSize: 38,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -1.2)),
+                        const SizedBox(height: 2),
+                        Text('Made by Alex Desrosier',
+                            style: TextStyle(
+                                color: pal.accent,
+                                fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                ),
               ),
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 48),
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 48),
                 sliver: SliverList(
                   delegate: SliverChildListDelegate([
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(4, 0, 4, 14),
-                      child: Text(
-                        'Made by Alex Desrosier',
-                        style: TextStyle(
-                          color: pal.accent,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
                     const SupportCard(),
                     const SizedBox(height: 18),
                     ..._appearance(context, pal, cs),
@@ -16506,18 +16617,26 @@ class SettingsScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),
+            padding: const EdgeInsets.fromLTRB(6, 8, 6, 10),
             child: Row(
               children: [
-                Icon(icon, size: 18, color: pal.accent),
-                const SizedBox(width: 8),
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: pal.container,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, size: 18, color: pal.accent),
+                ),
+                const SizedBox(width: 10),
                 Text(
                   title,
                   style: TextStyle(
-                    color: pal.accent,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.3,
+                    color: appState.scheme.onSurface,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.2,
                   ),
                 ),
                 if (labs) ...[
@@ -16532,9 +16651,11 @@ class SettingsScreen extends StatelessWidget {
               color: appState.community
                   ? appState.scheme.surfaceContainer
                   : pal.surface,
-              borderRadius: BorderRadius.circular(appState.community ? 28 : 24),
+              borderRadius: BorderRadius.circular(32),
+              border: Border.all(color: Colors.white.withOpacity(0.07)),
             ),
-            padding: const EdgeInsets.symmetric(vertical: 6),
+            clipBehavior: Clip.antiAlias,
+            padding: const EdgeInsets.symmetric(vertical: 8),
             child: Column(children: children),
           ),
         ],
@@ -16561,11 +16682,11 @@ class SettingsScreen extends StatelessWidget {
       );
 
   static Widget _lead(AppPalette pal, IconData icon) => Container(
-        width: 40,
-        height: 40,
+        width: 42,
+        height: 42,
         decoration: BoxDecoration(
           color: pal.container,
-          shape: BoxShape.circle,
+          borderRadius: BorderRadius.circular(15),
         ),
         child: Icon(icon, color: pal.accent, size: 21),
       );
@@ -29364,7 +29485,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.1.1';
+const String kAppVersion = '3.2.0';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -36760,6 +36881,40 @@ class _BloomLibraryPageState extends State<BloomLibraryPage> {
     );
   }
 
+  Widget _quick(IconData icon, String label, VoidCallback onTap) {
+    final c = bc;
+    return SquishyGesture(
+      pressedScale: 0.96,
+      onTap: onTap,
+      child: Container(
+        height: 56,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: c.s2,
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(color: c.lc, shape: BoxShape.circle),
+              child: Icon(icon, size: 20, color: c.onLc),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: bloomText(14, weight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _body(BuildContext context, List<YtPlaylistRef> ytPl) {
     final c = bc;
     final top = MediaQuery.of(context).padding.top;
@@ -36884,21 +37039,10 @@ class _BloomLibraryPageState extends State<BloomLibraryPage> {
         ],
       ),
       const SizedBox(height: 12),
-      SizedBox(
-        height: 36,
-        child: ListView(
-          scrollDirection: Axis.horizontal,
-          children: [
-            for (final (l, i) in const [('Playlists', 0), ('Albums', 1), ('Songs', 2)])
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: BloomChip(
-                    label: l,
-                    on: _chip == i,
-                    onTap: () => setState(() => _chip = i)),
-              ),
-          ],
-        ),
+      BloomModeSwitch(
+        labels: const ['Playlists', 'Albums', 'Songs'],
+        index: _chip,
+        onChanged: (i) => setState(() => _chip = i),
       ),
       const SizedBox(height: 14),
       // Liked songs
@@ -36909,10 +37053,10 @@ class _BloomLibraryPageState extends State<BloomLibraryPage> {
             : Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const LikedSongsScreen())),
         child: Container(
-          height: 96,
+          height: 92,
           padding: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
-              color: c.lc, borderRadius: BorderRadius.circular(32)),
+              color: c.lc, borderRadius: BorderRadius.circular(38)),
           child: Row(
             children: [
               BloomShape(
@@ -36964,8 +37108,25 @@ class _BloomLibraryPageState extends State<BloomLibraryPage> {
           ),
         ),
       ),
+      const SizedBox(height: 10),
+      Row(
+        children: [
+          Expanded(
+            child: _quick(Icons.download_done_rounded, 'Downloaded',
+                () => openDownloads(context)),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _quick(Icons.shuffle_rounded, 'Shuffle all', () {
+              if (songs.isEmpty) return;
+              audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
+              audioHandler.playYouTubeList(songs, Random().nextInt(songs.length));
+            }),
+          ),
+        ],
+      ),
       Padding(
-        padding: const EdgeInsets.fromLTRB(4, 14, 0, 8),
+        padding: const EdgeInsets.fromLTRB(4, 16, 0, 8),
         child: Row(
           children: [
             Icon(Icons.sort_rounded, size: 17, color: c.t2),
@@ -37024,7 +37185,7 @@ class _BloomLibraryPageState extends State<BloomLibraryPage> {
                 subtitle: s,
                 size: w,
                 kind: kind,
-                radius: 28,
+                radius: 32,
                 onTap: tap,
                 onLongPress: long,
               ),
@@ -37041,7 +37202,7 @@ class _BloomLibraryPageState extends State<BloomLibraryPage> {
               padding: const EdgeInsets.all(10),
               child: Row(
                 children: [
-                  BloomShape(kind: kind, radius: 14, size: 56, child: art(56)),
+                  BloomShape(kind: kind, radius: 18, size: 56, child: art(56)),
                   const SizedBox(width: 14),
                   Expanded(
                     child: Column(
@@ -37063,7 +37224,7 @@ class _BloomLibraryPageState extends State<BloomLibraryPage> {
               ),
             ),
           ),
-      ]));
+      ], outer: 30, inner: 8));
     }
 
     return RefreshIndicator(
@@ -37089,6 +37250,8 @@ class _BloomLibraryPageState extends State<BloomLibraryPage> {
                 }),
             i,
             songs.length,
+            outer: 30,
+            inner: 8,
           );
         },
       ),
@@ -37128,7 +37291,6 @@ class BloomPlayerView extends StatelessWidget {
 
   Widget _body(BuildContext context, Color seed) {
     final c = bc;
-    final glow = Color.lerp(c.s3, seed, 0.45)!;
     final source = liked
         ? 'Your likes'
         : track.isYouTube
@@ -37137,12 +37299,28 @@ class BloomPlayerView extends StatelessWidget {
 
     Widget round(IconData icon, VoidCallback onTap, String tip) => BloomButton(
           kind: null,
-          size: 42,
-          bg: Colors.white.withOpacity(0.08),
+          size: 46,
+          bg: c.s2,
           icon: icon,
           iconColor: c.t1,
           tooltip: tip,
           onTap: onTap,
+        );
+
+    // A tap target inside the transport dock.
+    Widget dockKey(IconData icon, VoidCallback onTap, String tip,
+            {bool on = false, double size = 24}) =>
+        Tooltip(
+          message: tip,
+          child: SquishyGesture(
+            pressedScale: 0.86,
+            onTap: onTap,
+            child: SizedBox(
+              width: 50,
+              height: 56,
+              child: Icon(icon, size: size, color: on ? c.pri : c.t1),
+            ),
+          ),
         );
 
     Widget pill(IconData icon, String label, VoidCallback onTap,
@@ -37152,7 +37330,8 @@ class BloomPlayerView extends StatelessWidget {
             pressedScale: 0.92,
             onTap: onTap,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutCubic,
               height: 54,
               margin: const EdgeInsets.symmetric(horizontal: 2),
               decoration: BoxDecoration(
@@ -37173,9 +37352,15 @@ class BloomPlayerView extends StatelessWidget {
           ),
         );
 
+    BoxDecoration dockBox(double r) => BoxDecoration(
+          color: c.s2,
+          borderRadius: BorderRadius.circular(r),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+        );
+
     final content = SafeArea(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 22),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Column(
           children: [
             const SizedBox(height: 8),
@@ -37205,33 +37390,20 @@ class BloomPlayerView extends StatelessWidget {
             ),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 20),
+                padding: const EdgeInsets.symmetric(vertical: 18),
                 child: Center(
                   child: AspectRatio(
                     aspectRatio: 1,
                     child: AnimatedScale(
-                      scale: playing ? 1.0 : 0.94,
-                      duration: const Duration(milliseconds: 420),
-                      curve: Curves.easeOutBack,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(48),
-                          boxShadow: [
-                            BoxShadow(
-                              color: seed.withOpacity(playing ? 0.5 : 0.25),
-                              blurRadius: 50,
-                              spreadRadius: -10,
-                              offset: const Offset(0, 24),
-                            ),
-                          ],
-                        ),
-                        child: Hero(
-                          tag: 'now_playing_art',
-                          createRectTween: _arcTween,
-                          flightShuttleBuilder: _artShuttle,
-                          child: SwipeArtCarousel(
-                              track: track, playing: playing, radius: 48),
-                        ),
+                      scale: playing ? 1.0 : 0.95,
+                      duration: const Duration(milliseconds: 380),
+                      curve: Curves.easeOutCubic,
+                      child: Hero(
+                        tag: 'now_playing_art',
+                        createRectTween: _arcTween,
+                        flightShuttleBuilder: _artShuttle,
+                        child: SwipeArtCarousel(
+                            track: track, playing: playing, radius: 40),
                       ),
                     ),
                   ),
@@ -37249,7 +37421,7 @@ class BloomPlayerView extends StatelessWidget {
                         child: Text(track.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: bloomText(27, weight: FontWeight.w800)),
+                            style: bloomText(26, weight: FontWeight.w800)),
                       ),
                       const SizedBox(height: 2),
                       GestureDetector(
@@ -37261,189 +37433,145 @@ class BloomPlayerView extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: bloomText(15,
-                                color: c.pri, weight: FontWeight.w600)),
+                                color: c.t2, weight: FontWeight.w600)),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 10),
                 SquishyGesture(
-                  pressedScale: 0.8,
+                  pressedScale: 0.85,
                   onTap: () {
                     HapticFeedback.lightImpact();
                     appState.toggleLike(track.id);
                   },
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 420),
-                    switchInCurve: Curves.elasticOut,
-                    transitionBuilder: (ch, a) => ScaleTransition(
-                        scale: a,
-                        child: RotationTransition(turns: a, child: ch)),
-                    child: BloomShape(
-                      key: ValueKey(liked),
-                      kind: BloomKind.flower,
-                      size: 52,
-                      color: liked ? c.lc : Colors.white.withOpacity(0.10),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutCubic,
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: liked ? c.lc : c.s2,
+                      borderRadius: BorderRadius.circular(liked ? 26 : 18),
+                    ),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 260),
+                      transitionBuilder: (ch, a) =>
+                          ScaleTransition(scale: a, child: ch),
                       child: Icon(
                           liked
                               ? Icons.favorite_rounded
                               : Icons.favorite_border_rounded,
+                          key: ValueKey(liked),
                           color: liked ? c.onLc : c.t1,
-                          size: 23),
+                          size: 24),
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
             BloomWaveSeek(
               track: track,
               active: c.pri,
-              inactive: Colors.white.withOpacity(0.18),
+              inactive: Colors.white.withOpacity(0.16),
             ),
             const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                IconButton(
-                  tooltip: 'Shuffle',
-                  icon: Icon(Icons.shuffle_rounded,
-                      color: shuffle ? c.pri : c.t2, size: 24),
-                  onPressed: () => audioHandler.setShuffleMode(shuffle
-                      ? AudioServiceShuffleMode.none
-                      : AudioServiceShuffleMode.all),
-                ),
-                BloomButton(
-                  kind: null,
-                  radius: 30,
-                  size: 60,
-                  bg: Colors.white.withOpacity(0.10),
-                  icon: Icons.skip_previous_rounded,
-                  iconColor: c.t1,
-                  iconSize: 32,
-                  tooltip: 'Previous',
-                  onTap: audioHandler.skipToPrevious,
-                ),
-                SquishyGesture(
-                  pressedScale: 0.88,
-                  onTap: () =>
-                      playing ? audioHandler.pause() : audioHandler.play(),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 340),
-                    curve: Curves.easeOutCubic,
-                    width: 92,
-                    height: 92,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: c.lc,
-                      borderRadius: BorderRadius.circular(playing ? 46 : 32),
+            // Transport: one rounded dock, like the tab bar.
+            Container(
+              height: 84,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: dockBox(42),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  dockKey(Icons.shuffle_rounded,
+                      () => audioHandler.setShuffleMode(shuffle
+                          ? AudioServiceShuffleMode.none
+                          : AudioServiceShuffleMode.all),
+                      'Shuffle',
+                      on: shuffle,
+                      size: 22),
+                  dockKey(Icons.skip_previous_rounded, audioHandler.skipToPrevious,
+                      'Previous',
+                      size: 34),
+                  SquishyGesture(
+                    pressedScale: 0.9,
+                    onTap: () =>
+                        playing ? audioHandler.pause() : audioHandler.play(),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 340),
+                      curve: Curves.easeOutCubic,
+                      width: 70,
+                      height: 70,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: c.lc,
+                        borderRadius: BorderRadius.circular(playing ? 35 : 24),
+                      ),
+                      child: loading
+                          ? SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 3, color: c.onLc))
+                          : AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              transitionBuilder: (ch, a) =>
+                                  ScaleTransition(scale: a, child: ch),
+                              child: Icon(
+                                  playing
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  key: ValueKey(playing),
+                                  color: c.onLc,
+                                  size: 38),
+                            ),
                     ),
-                    child: loading
-                        ? SizedBox(
-                            width: 34,
-                            height: 34,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 3.5, color: c.onLc))
-                        : AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 220),
-                            transitionBuilder: (ch, a) =>
-                                ScaleTransition(scale: a, child: ch),
-                            child: Icon(
-                                playing
-                                    ? Icons.pause_rounded
-                                    : Icons.play_arrow_rounded,
-                                key: ValueKey(playing),
-                                color: c.onLc,
-                                size: 44),
-                          ),
                   ),
-                ),
-                BloomButton(
-                  kind: null,
-                  radius: 30,
-                  size: 60,
-                  bg: Colors.white.withOpacity(0.10),
-                  icon: Icons.skip_next_rounded,
-                  iconColor: c.t1,
-                  iconSize: 32,
-                  tooltip: 'Next',
-                  onTap: audioHandler.skipToNext,
-                ),
-                IconButton(
-                  tooltip: 'Repeat',
-                  icon: Icon(
+                  dockKey(Icons.skip_next_rounded, audioHandler.skipToNext, 'Next',
+                      size: 34),
+                  dockKey(
                       repeat == AudioServiceRepeatMode.one
                           ? Icons.repeat_one_rounded
                           : Icons.repeat_rounded,
-                      color: repeat != AudioServiceRepeatMode.none
-                          ? c.pri
-                          : c.t2,
-                      size: 24),
-                  onPressed: () =>
-                      audioHandler.setRepeatMode(_nextRepeat(repeat)),
-                ),
-              ],
+                      () => audioHandler.setRepeatMode(_nextRepeat(repeat)),
+                      'Repeat',
+                      on: repeat != AudioServiceRepeatMode.none,
+                      size: 22),
+                ],
+              ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 10),
             Container(
               padding: const EdgeInsets.all(5),
-              decoration: BoxDecoration(
-                color: c.s2.withOpacity(0.75),
-                borderRadius: BorderRadius.circular(34),
-                border: Border.all(color: Colors.white.withOpacity(0.08)),
-              ),
+              decoration: dockBox(34),
               child: Row(
-              children: [
-                pill(Icons.lyrics_outlined, 'Lyrics',
-                    () => showLyricsSheet(context, track)),
-                pill(Icons.queue_music_rounded, 'Up next',
-                    () => showQueueSheet(context)),
-                pill(Icons.graphic_eq_rounded, 'Sound',
-                    () => showPlaybackSheet(context),
-                    on: soundModified),
-                ValueListenableBuilder<String?>(
-                  valueListenable: audioHandler.sleepLabel,
-                  builder: (_, label, __) => pill(Icons.bedtime_outlined,
-                      label ?? 'Sleep', () => showSleepTimerSheet(context),
-                      on: label != null),
-                ),
-                pill(Icons.ios_share_rounded, 'Share', () => shareTrack(track)),
-              ],
+                children: [
+                  pill(Icons.lyrics_outlined, 'Lyrics',
+                      () => showLyricsSheet(context, track)),
+                  pill(Icons.queue_music_rounded, 'Up next',
+                      () => showQueueSheet(context)),
+                  pill(Icons.graphic_eq_rounded, 'Sound',
+                      () => showPlaybackSheet(context),
+                      on: soundModified),
+                  ValueListenableBuilder<String?>(
+                    valueListenable: audioHandler.sleepLabel,
+                    builder: (_, label, __) => pill(Icons.bedtime_outlined,
+                        label ?? 'Sleep', () => showSleepTimerSheet(context),
+                        on: label != null),
+                  ),
+                  pill(Icons.ios_share_rounded, 'Share', () => shareTrack(track)),
+                ],
+              ),
             ),
-            ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
           ],
         ),
       ),
     );
 
-    return Scaffold(
-      backgroundColor: c.bg,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 600),
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: const Alignment(0, -0.55),
-                radius: 1.0,
-                colors: [glow, c.bg],
-              ),
-            ),
-          ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: const Alignment(1, 1),
-                radius: 1.1,
-                colors: [c.teal.withOpacity(0.8), c.teal.withOpacity(0)],
-              ),
-            ),
-          ),
-          content,
-        ],
-      ),
-    );
+    // Flat theme background: no gradients or glow.
+    return Scaffold(backgroundColor: c.bg, body: content);
   }
 }

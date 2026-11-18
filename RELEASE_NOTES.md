@@ -1,6 +1,14 @@
 All your music, one player.
 
-AlexLMP 3.1.1 smooths out Bloom: a new home, mini player and full player to match the new tab bar.
+AlexLMP 3.2.0 puts the new tab bar and AI DJ in every app style, and redoes the Bloom player, library and settings.
+
+## New
+- **Floating tab bar + AI DJ in every app style** (Bloom, Signal, Apple, Prestige, Plus, Pocket and the default look). Home, Mix, Library, AI, Search and Settings now live in the same rounded dock, colored to match each style.
+- **Bloom player redone.** No more gradient or glow: a clean flat background in your theme color, a rounded transport dock for shuffle / previous / play / next / repeat, and a dock-style row for Lyrics, Up next, Sound, Sleep and Share.
+- **Bloom library redone.** Sliding Playlists / Albums / Songs switch, new Downloaded and Shuffle all shortcuts, and softer rounded cards and lists.
+- **Settings redone.** New header with back button and version, icon badges on each section, and rounded bordered cards.
+
+## From 3.1.1
 
 ## Smoother Bloom
 - **Home:** pill-style switch between YouTube Music and your phone with a sliding highlight, softer rounded cards and song lists, and blocks that glide in when you open it.
