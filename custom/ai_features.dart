@@ -36,23 +36,23 @@ class AiHelper {
 
   static String? lastProblem;
 
-  /// Keyless AI call: tries free text generation first, and if rate-limited or
-  /// offline, uses built-in conversational music intelligence so it NEVER fails
-  /// or asks for an API key.
   static Future<String?> ask(
-    List> messages, {
+    List<Map<String, String>> messages, {
     int maxTokens = 400,
     Duration timeout = const Duration(seconds: 8),
   }) async {
     await AiConfig.load();
     lastProblem = null;
 
-    final sys = messages
-            .firstWhere((m) => m['role'] == 'system', orElse: () => const {})['content'] ??
-        '';
+    var sys = '';
+    for (final m in messages) {
+      if (m['role'] == 'system') {
+        sys = m['content'] ?? '';
+        break;
+      }
+    }
     final usr = messages.isNotEmpty ? (messages.last['content'] ?? '') : '';
 
-    // 1. Try live keyless endpoint with a fast timeout
     final client = http.Client();
     try {
       final prompt = sys.isEmpty ? usr : '$sys\n\nUser:$usr';
@@ -62,8 +62,8 @@ class AiHelper {
       final res = await client.get(uri).timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final body = utf8.decode(res.bodyBytes).trim();
-        if (body.isNotEmpty &&
-            !body.startsWith('<') &&
+        if (!body.startsWith('<') &&
+            body.isNotEmpty &&
             !body.toLowerCase().contains('rate limit') &&
             !body.toLowerCase().contains('enter.pollinations.ai')) {
           return body;
@@ -74,7 +74,6 @@ class AiHelper {
       client.close();
     }
 
-    // 2. Smart on-device conversational fallback (never returns null, never asks for a key)
     return _localBrain(sys, usr);
   }
 
@@ -82,9 +81,8 @@ class AiHelper {
     final q = usr.trim();
     final low = q.toLowerCase();
 
-    // A) Search interpretation JSON
     if (sys.contains('search brain of a music player')) {
-      final picks = >[];
+      final picks = <Map<String, String>>[];
       try {
         final raw = await _ytCh.invokeMethod('ytSearch', {'query': q}) as List? ?? const [];
         for (final item in raw.take(6)) {
@@ -103,9 +101,8 @@ class AiHelper {
       });
     }
 
-    // B) Playlist / Mix JSON array
     if (sys.contains('You build playlists for a music player')) {
-      final out = >[];
+      final out = <Map<String, String>>[];
       try {
         final raw = await _ytCh.invokeMethod('ytSearch', {'query': '$q mix'}) as List? ?? const [];
         for (final item in raw.take(10)) {
@@ -119,7 +116,6 @@ class AiHelper {
       return jsonEncode(out);
     }
 
-    // C) AI DJ Chat tab conversation
     final nowMatch = RegExp(r'Now playing:\s*(.+)\.\$').firstMatch(sys);
     final nowPlaying = nowMatch?.group(1)?.trim() ?? '';
 
@@ -168,17 +164,16 @@ class AiHelper {
       return "Shuffling your rotation.\n[[shuffle]]";
     }
 
-    // Any other message: treat as a song/artist/vibe request and play a matching mix or track
     return "Got you—let's spin some $q right now.\n[[play:$q]]";
   }
 
-  static String problemText() => " Ready to spin—tell me any song, artist, or mood.";
+  static String problemText() => "Ready to spin—tell me any song, artist, or mood.";
 
   static dynamic _json(String s) {
     final text = s.replaceAll(RegExp(r'```(?:json)?'), '').trim();
     for (final pair in const [('{', '}'), ('[', ']')]) {
-      final a = text.indexOf(pair.$1);
-      final b = text.lastIndexOf(pair.$2);
+      final a = text.indexOf(pair.\$1);
+      final b = text.lastIndexOf(pair.\$2);
       if (a >= 0 && b > a) {
         try {
           return jsonDecode(text.substring(a, b + 1));
@@ -236,7 +231,6 @@ class AiHelper {
     return list;
   }
 
-  /// Pulls REAL track/album facts and REAL playable similar songs from YouTube Music.
   static Future<String?> songInfo(String title, String artist) async {
     final cleanT = title.trim();
     final cleanA = (artist.trim().isEmpty || artist == 'Unknown Artist') ? '' : artist.trim();
@@ -252,7 +246,6 @@ class AiHelper {
     final seenTitles = <String>{cleanT.toLowerCase()};
 
     try {
-      // 1. Search YouTube Music for the exact track & related catalog tracks
       final query = cleanA.isEmpty ? cleanT : '$cleanT $cleanA';
       final searchRaw = await _ytCh.invokeMethod('ytSearch', {'query': query}) as List? ?? const [];
       String? videoId;
@@ -270,7 +263,6 @@ class AiHelper {
         }
       }
 
-      // 2. If we need more real songs by the artist/vibe, query artist catalog
       if (realSimilar.length < 3 && cleanA.isNotEmpty) {
         final artistRaw = await _ytCh.invokeMethod('ytSearch', {'query': cleanA}) as List? ?? const [];
         for (final item in artistRaw) {
@@ -283,7 +275,6 @@ class AiHelper {
         }
       }
 
-      // 3. Fetch real album metadata & release description from YouTube Music
       if (videoId != null && videoId.isNotEmpty) {
         final links = await _ytCh.invokeMethod('ytTrackLinks', {'videoId': videoId});
         if (links is Map) {
@@ -307,7 +298,6 @@ class AiHelper {
       }
     } catch (_) {}
 
-    // 4. Build the factual write-up from the real metadata (or live AI if available)
     final facts = <String>[
       if (cleanA.isNotEmpty) 'Artist: $cleanA',
       if (albumTitle != null && albumTitle.isNotEmpty)
