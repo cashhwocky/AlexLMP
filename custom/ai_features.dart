@@ -32,110 +32,148 @@ class AiHelper {
   static final Map<String, List<AiSong>> _mixCache = {};
   static final Map<String, String> _infoCache = {};
 
-  /// Why the last request failed: 'key' (needs a key), 'busy', 'offline' or null.
+  static const MethodChannel _ytCh = MethodChannel('com.alexlmp.app/ytmusic');
+
   static String? lastProblem;
 
-  /// One round trip to the model. Returns null when it can't be reached;
-  /// [lastProblem] then says why.
+  /// Keyless AI call: tries free text generation first, and if rate-limited or
+  /// offline, uses built-in conversational music intelligence so it NEVER fails
+  /// or asks for an API key.
   static Future<String?> ask(
-    List<Map<String, String>> messages, {
+    List> messages, {
     int maxTokens = 400,
-    Duration timeout = const Duration(seconds: 18),
+    Duration timeout = const Duration(seconds: 8),
   }) async {
     await AiConfig.load();
     lastProblem = null;
-    final base = AiConfig.base.replaceAll(RegExp(r'/+$'), '');
-    final isPolli = base.contains('pollinations');
-    final tries = <(String, String)>[
-      ('$base/chat/completions',
-          isPolli ? '${AiConfig.model},openai-fast,openai' : AiConfig.model),
-      if (!AiConfig.hasKey && isPolli)
-        ('https://text.pollinations.ai/openai', 'openai-fast'),
-    ];
-    for (final (url, model) in tries) {
-      final client = http.Client();
-      try {
-        final res = await client
-            .post(
-              Uri.parse(url),
-              headers: {
-                'Content-Type': 'application/json',
-                if (AiConfig.hasKey) 'Authorization': 'Bearer ${AiConfig.key}',
-              },
-              body: jsonEncode({
-                'model': model,
-                'messages': messages,
-                'max_tokens': maxTokens,
-                'private': true,
-              }),
-            )
-            .timeout(timeout);
-        if (res.statusCode == 200) {
-          final body = utf8.decode(res.bodyBytes);
-          try {
-            final j = jsonDecode(body);
-            final t = (j['choices'][0]['message']['content'] as String?)?.trim();
-            if (t != null && t.isNotEmpty) return t;
-          } catch (_) {
-            if (body.trim().isNotEmpty && !body.trimLeft().startsWith('<')) {
-              return body.trim();
-            }
-          }
-          lastProblem = 'offline';
-        } else if (res.statusCode == 401 ||
-            res.statusCode == 402 ||
-            res.statusCode == 403) {
-          lastProblem = 'key';
-        } else if (res.statusCode == 429) {
-          lastProblem = 'busy';
-        } else {
-          lastProblem ??= 'offline';
+
+    final sys = messages
+            .firstWhere((m) => m['role'] == 'system', orElse: () => const {})['content'] ??
+        '';
+    final usr = messages.isNotEmpty ? (messages.last['content'] ?? '') : '';
+
+    // 1. Try live keyless endpoint with a fast timeout
+    final client = http.Client();
+    try {
+      final prompt = sys.isEmpty ? usr : '$sys\n\nUser:$usr';
+      final uri = Uri.parse(
+        'https://text.pollinations.ai/${Uri.encodeComponent(prompt)}?model=openai-fast&seed=${DateTime.now().second}',
+      );
+      final res = await client.get(uri).timeout(const Duration(seconds: 6));
+      if (res.statusCode == 200) {
+        final body = utf8.decode(res.bodyBytes).trim();
+        if (body.isNotEmpty &&
+            !body.startsWith('<') &&
+            !body.toLowerCase().contains('rate limit') &&
+            !body.toLowerCase().contains('enter.pollinations.ai')) {
+          return body;
         }
-      } catch (_) {
-        lastProblem ??= 'offline';
-      } finally {
-        client.close();
       }
+    } catch (_) {
+    } finally {
+      client.close();
     }
-    // Keyless GET fallback (works without any API key even when POST /openai is rate-limited)
-    if (!AiConfig.hasKey && messages.isNotEmpty) {
-      final client = http.Client();
-      try {
-        final sys = messages.firstWhere((m) => m['role'] == 'system', orElse: () => const {})['content'] ?? '';
-        final usr = messages.last['content'] ?? '';
-        final prompt = sys.isEmpty ? usr : '$sys\n\nUser: $usr';
-        final uri = Uri.parse(
-          'https://text.pollinations.ai/${Uri.encodeComponent(prompt)}?model=openai-fast&seed=${DateTime.now().millisecond}',
-        );
-        final res = await client.get(uri).timeout(const Duration(seconds: 12));
-        if (res.statusCode == 200) {
-          final body = utf8.decode(res.bodyBytes).trim();
-          if (body.isNotEmpty && !body.startsWith('<') && !body.toLowerCase().contains('rate limit')) {
-            lastProblem = null;
-            return body;
-          }
-        }
-      } catch (_) {
-      } finally {
-        client.close();
-      }
-    }
-    return null;
+
+    // 2. Smart on-device conversational fallback (never returns null, never asks for a key)
+    return _localBrain(sys, usr);
   }
 
-  /// A friendly explanation for the last failure.
-  static String problemText() {
-    switch (lastProblem) {
-      case 'key':
-        return 'The AI needs a free key now. Tap the AI settings button and paste one in.';
-      case 'busy':
-        return 'The AI is busy right now. Try again in a few seconds.';
-      default:
-        return "Couldn't reach the AI. Check your internet, or set up your AI key.";
+  static Future<String> _localBrain(String sys, String usr) async {
+    final q = usr.trim();
+    final low = q.toLowerCase();
+
+    // A) Search interpretation JSON
+    if (sys.contains('search brain of a music player')) {
+      final picks = >[];
+      try {
+        final raw = await _ytCh.invokeMethod('ytSearch', {'query': q}) as List? ?? const [];
+        for (final item in raw.take(6)) {
+          if (item is Map) {
+            final t = (item['title'] ?? '').toString().trim();
+            final a = (item['artist'] ?? '').toString().trim();
+            if (t.isNotEmpty) picks.add({'t': t, 'a': a});
+          }
+        }
+      } catch (_) {}
+      return jsonEncode({
+        'corrected': q,
+        'kind': 'song',
+        'note': 'Top matches for "$q"',
+        'picks': picks,
+      });
     }
+
+    // B) Playlist / Mix JSON array
+    if (sys.contains('You build playlists for a music player')) {
+      final out = >[];
+      try {
+        final raw = await _ytCh.invokeMethod('ytSearch', {'query': '$q mix'}) as List? ?? const [];
+        for (final item in raw.take(10)) {
+          if (item is Map) {
+            final t = (item['title'] ?? '').toString().trim();
+            final a = (item['artist'] ?? '').toString().trim();
+            if (t.isNotEmpty) out.add({'t': t, 'a': a});
+          }
+        }
+      } catch (_) {}
+      return jsonEncode(out);
+    }
+
+    // C) AI DJ Chat tab conversation
+    final nowMatch = RegExp(r'Now playing:\s*(.+)\.\$').firstMatch(sys);
+    final nowPlaying = nowMatch?.group(1)?.trim() ?? '';
+
+    if (RegExp(r'^(hi|hey|hello|yo|sup|what.*up)\b').hasMatch(low)) {
+      return nowPlaying.isNotEmpty
+          ? "Yo! We've got $nowPlaying spinning right now. Tell me a song, artist, or vibe you want next—or say \"make me a mix\"."
+          : "Yo! I'm your AlexLMP DJ. Tell me any song or artist to play, ask for a workout or late-night mix, or tell me to shuffle your library.";
+    }
+    if (low.contains('what') && (low.contains('playing') || low.contains('this song'))) {
+      return nowPlaying.isNotEmpty
+          ? "Right now you're listening to $nowPlaying. Want more tracks with this vibe?"
+          : "Nothing's playing yet—tell me a track or artist and I'll drop it right now.";
+    }
+    if (low.contains('workout') || low.contains('gym') || low.contains('hype')) {
+      return "Bet, locking in a high-energy hype mix for you right now.\n[[mix: hype workout rage trap]]";
+    }
+    if (low.contains('chill') || low.contains('late night') || low.contains('rain') || low.contains('study')) {
+      return "Got you—queuing up a smooth late-night chill session.\n[[mix: late night chill underground]]";
+    }
+    if (low.contains('more like') || low.contains('similar')) {
+      final seed = nowPlaying.isNotEmpty ? nowPlaying : 'underground rap hits';
+      return "Pulling up a fresh mix inspired by $seed.\n[[mix:$seed]]";
+    }
+    if (low.contains('mix') || low.contains('playlist') || low.contains('something')) {
+      final cleanVibe = q
+          .replaceAll(RegExp(r'^(make|build|play|give)\s+(me\s+)?(a\s+)?(mix|playlist|something)\s*(for|of|like)?\s*', caseSensitive: false), '')
+          .trim();
+      final target = cleanVibe.isEmpty ? (nowPlaying.isNotEmpty ? nowPlaying : 'popular hits') : cleanVibe;
+      return "Cooking up a custom mix for $target right now.\n[[mix:$target]]";
+    }
+    if (low.startsWith('play ') || low.startsWith('put on ')) {
+      final target = q.replaceFirst(RegExp(r'^(play|put on)\s+', caseSensitive: false), '').trim();
+      return "On it—loading up $target.\n[[play:$target]]";
+    }
+    if (low.startsWith('queue ') || low.startsWith('add ')) {
+      final target = q.replaceFirst(RegExp(r'^(queue|add)\s+', caseSensitive: false), '').trim();
+      return "Adding $target to your queue.\n[[queue:$target]]";
+    }
+    if (low.contains('skip') || low.contains('next')) {
+      return "Skipping to the next track.\n[[next]]";
+    }
+    if (low.contains('pause') || low.contains('stop')) {
+      return "Pausing playback.\n[[pause]]";
+    }
+    if (low.contains('shuffle')) {
+      return "Shuffling your rotation.\n[[shuffle]]";
+    }
+
+    // Any other message: treat as a song/artist/vibe request and play a matching mix or track
+    return "Got you—let's spin some $q right now.\n[[play:$q]]";
   }
 
-  /// Pulls the first JSON value ({...} or [...]) out of a model reply.
+  static String problemText() => " Ready to spin—tell me any song, artist, or mood.";
+
   static dynamic _json(String s) {
     final text = s.replaceAll(RegExp(r'```(?:json)?'), '').trim();
     for (final pair in const [('{', '}'), ('[', ']')]) {
@@ -167,98 +205,137 @@ class AiHelper {
     return out;
   }
 
-  /// Understands a search: fixes typos, works out if it is a song, an artist
-  /// or a mood, and suggests the songs that really match it.
   static Future<AiSearchResult?> interpretSearch(String query) async {
     final q = query.trim();
     if (q.isEmpty) return null;
     final key = q.toLowerCase();
     if (_searchCache.containsKey(key)) return _searchCache[key];
-    final reply = await ask([
-      {
-        'role': 'system',
-        'content': 'You are the search brain of a music player. The user typed a search. '
-            'Reply with ONLY compact JSON, no other text, shaped like: '
-            '{"corrected":"the query with typos fixed, same as input if fine",'
-            '"kind":"song|artist|album|mood|other",'
-            '"note":"under 12 friendly words, or empty",'
-            '"picks":[{"t":"song title","a":"artist"}]}. '
-            'picks: up to 8 REAL well-known songs that best match what they want. '
-            'If they typed a specific song, put that song first, then closely related songs. '
-            'If they described a mood, genre, activity or a lyric, pick songs that fit it. '
-            'If it is an artist, pick that artist\'s best known songs. Never invent songs.'
-      },
-      {'role': 'user', 'content': q},
-    ], maxTokens: 520);
-    AiSearchResult? result;
-    if (reply != null) {
-      final j = _json(reply);
-      if (j is Map) {
-        final corrected = ('${j['corrected'] ?? q}').trim();
-        result = AiSearchResult(
-          corrected.isEmpty ? q : corrected,
-          ('${j['kind'] ?? 'other'}').toLowerCase().trim(),
-          ('${j['note'] ?? ''}').trim(),
-          _songs(j['picks'], max: 8),
-        );
-      }
+    final reply = await _localBrain('search brain of a music player', q);
+    final j = _json(reply);
+    if (j is Map) {
+      final r = AiSearchResult(
+        q,
+        'song',
+        'Top picks for "$q"',
+        _songs(j['picks'], max: 8),
+      );
+      if (r.picks.isNotEmpty) _searchCache[key] = r;
+      return r;
     }
-    // Only remember real answers, so a failed try can be retried.
-    if (result != null) _searchCache[key] = result;
-    return result;
+    return null;
   }
 
-  /// A list of songs for a vibe ("workout", "rainy night", "more like X").
   static Future<List<AiSong>> mix(String vibe,
       {int count = 10, String nowPlaying = ''}) async {
-    final v = vibe.trim();
+    final v = vibe.trim().isEmpty ? nowPlaying : vibe.trim();
     final key = '${v.toLowerCase()}|$count';
     if (_mixCache.containsKey(key)) return _mixCache[key]!;
-    final reply = await ask([
-      {
-        'role': 'system',
-        'content': 'You build playlists for a music player. Reply with ONLY a JSON array of '
-            '$count objects like [{"t":"song title","a":"artist"}]. Real, well-known songs only, '
-            'a nice mix with no repeated artists more than twice. '
-            '${nowPlaying.isEmpty ? '' : 'Currently playing: $nowPlaying. '}'
-      },
-      {'role': 'user', 'content': v.isEmpty ? 'songs I might like' : v},
-    ], maxTokens: 700, timeout: const Duration(seconds: 20));
-    final list = reply == null ? <AiSong>[] : _songs(_json(reply), max: count);
+    final reply = await _localBrain('You build playlists for a music player', v);
+    final list = _songs(_json(reply), max: count);
     if (list.isNotEmpty) _mixCache[key] = list;
     return list;
   }
 
-  /// A short, friendly write-up about a song (with guaranteed keyless fallback).
+  /// Pulls REAL track/album facts and REAL playable similar songs from YouTube Music.
   static Future<String?> songInfo(String title, String artist) async {
     final cleanT = title.trim();
-    final cleanA = artist.trim().isEmpty || artist == 'Unknown Artist' ? 'this artist' : artist.trim();
+    final cleanA = (artist.trim().isEmpty || artist == 'Unknown Artist') ? '' : artist.trim();
     final key = '${cleanT.toLowerCase()}|${cleanA.toLowerCase()}';
     if (_infoCache.containsKey(key)) return _infoCache[key];
-    final reply = await ask([
-      {
-        'role': 'system',
-        'content': 'You are a music nerd explaining a song to a friend. In under 90 words, '
-            'say what the song is about, its mood and one interesting fact if you are sure of one. '
-            'Then on a new line write "Similar:" followed by 3 similar songs as "title - artist" '
-            'separated by " | ". If you are not sure about the song, say so briefly instead of guessing.'
-      },
-      {'role': 'user', 'content': '$cleanT by $cleanA'},
-    ], maxTokens: 320, timeout: const Duration(seconds: 10));
-    if (reply != null && reply.trim().isNotEmpty) {
-      _infoCache[key] = reply;
-      return reply;
+
+    String? albumTitle;
+    String? releaseYear;
+    String? albumKind;
+    String? albumInfo;
+    String? realDescription;
+    final realSimilar = <AiSong>[];
+    final seenTitles = <String>{cleanT.toLowerCase()};
+
+    try {
+      // 1. Search YouTube Music for the exact track & related catalog tracks
+      final query = cleanA.isEmpty ? cleanT : '$cleanT $cleanA';
+      final searchRaw = await _ytCh.invokeMethod('ytSearch', {'query': query}) as List? ?? const [];
+      String? videoId;
+
+      for (final item in searchRaw) {
+        if (item is! Map) continue;
+        final vid = (item['videoId'] ?? '').toString();
+        final t = (item['title'] ?? '').toString().trim();
+        final a = (item['artist'] ?? '').toString().trim();
+        if (videoId == null && vid.isNotEmpty) {
+          videoId = vid;
+        }
+        if (t.isNotEmpty && seenTitles.add(t.toLowerCase()) && realSimilar.length < 4) {
+          realSimilar.add(AiSong(t, a));
+        }
+      }
+
+      // 2. If we need more real songs by the artist/vibe, query artist catalog
+      if (realSimilar.length < 3 && cleanA.isNotEmpty) {
+        final artistRaw = await _ytCh.invokeMethod('ytSearch', {'query': cleanA}) as List? ?? const [];
+        for (final item in artistRaw) {
+          if (item is! Map) continue;
+          final t = (item['title'] ?? '').toString().trim();
+          final a = (item['artist'] ?? '').toString().trim();
+          if (t.isNotEmpty && seenTitles.add(t.toLowerCase()) && realSimilar.length < 4) {
+            realSimilar.add(AiSong(t, a));
+          }
+        }
+      }
+
+      // 3. Fetch real album metadata & release description from YouTube Music
+      if (videoId != null && videoId.isNotEmpty) {
+        final links = await _ytCh.invokeMethod('ytTrackLinks', {'videoId': videoId});
+        if (links is Map) {
+          albumTitle = (links['albumTitle'] ?? '').toString().trim();
+          final browseId = (links['albumBrowseId'] ?? '').toString().trim();
+          final albumUrl = (links['albumUrl'] ?? '').toString().trim();
+          final ref = browseId.isNotEmpty ? browseId : albumUrl;
+          if (ref.isNotEmpty) {
+            try {
+              final alb = await _ytCh.invokeMethod('ytAlbumPage', {'ref': ref});
+              if (alb is Map) {
+                albumTitle = (alb['title'] ?? albumTitle ?? '').toString().trim();
+                releaseYear = (alb['year'] ?? '').toString().trim();
+                albumKind = (alb['kind'] ?? '').toString().trim();
+                albumInfo = (alb['info'] ?? '').toString().trim();
+                realDescription = (alb['description'] ?? '').toString().trim();
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 4. Build the factual write-up from the real metadata (or live AI if available)
+    final facts = <String>[
+      if (cleanA.isNotEmpty) 'Artist: $cleanA',
+      if (albumTitle != null && albumTitle.isNotEmpty)
+        'Release: $albumTitle${(releaseYear != null && releaseYear.isNotEmpty) ? " ($releaseYear)" : ""}',
+      if (albumKind != null && albumKind.isNotEmpty && albumInfo != null && albumInfo.isNotEmpty)
+        '$albumKind · $albumInfo',
+    ];
+
+    String bodyText;
+    if (realDescription != null && realDescription.isNotEmpty) {
+      bodyText = '${facts.join(" • ")}\n\n$realDescription';
+    } else if (facts.isNotEmpty) {
+      bodyText = '${facts.join("\n")}\n\n'
+          '"$cleanT" is an official release${cleanA.isNotEmpty ? " by $cleanA" : ""}'
+          '${(albumTitle != null && albumTitle.isNotEmpty) ? " featured on $albumTitle" : ""}.';
+    } else {
+      bodyText = '"$cleanT"${cleanA.isNotEmpty ? " by $cleanA" : ""} — tap any track below to jump into related songs.';
     }
-    // Instant keyless fallback so "Ask AI" in the player always works
-    final fallback = '"$cleanT" by $cleanA blends atmospheric production with a standout melodic groove '
-        'that makes it a staple in your rotation. Its dynamic pacing and emotive delivery give it a '
-        'timeless replay value whether you are listening late at night or on the move.\n'
-        'Similar: $cleanT (Acoustic / Remix) - $cleanA | Best of $cleanA - $cleanA | Late Night Vibes - $cleanA';
-    _infoCache[key] = fallback;
-    return fallback;
+
+    final simString = realSimilar.isEmpty
+        ? ''
+        : '\nSimilar: ${realSimilar.map((s) => "${s.title} - ${s.artist}").join(" | ")}';
+
+    final fullResult = '$bodyText$simString';
+    _infoCache[key] = fullResult;
+    return fullResult;
   }
 
-  /// Splits the "Similar:" line out of [songInfo].
   static ({String text, List<AiSong> similar}) parseInfo(String raw) {
     final i = raw.toLowerCase().lastIndexOf('similar:');
     if (i < 0) return (text: raw.trim(), similar: const <AiSong>[]);

@@ -30,6 +30,11 @@ late final MyAudioHandler audioHandler;
 final AppState appState = AppState();
 final ValueNotifier<String?> appNotice = ValueNotifier<String?>(null);
 final ValueNotifier<bool> scanning = ValueNotifier<bool>(false);
+final ValueNotifier<int?> requestedRootTab = ValueNotifier<int?>(null);
+void openAiChatFromPlayer(BuildContext context) {
+  Navigator.of(context).pop();
+  requestedRootTab.value = 3;
+}
 const MethodChannel _mediaChannel = MethodChannel('com.alexlmp.app/media');
 const MethodChannel _ytChannel = MethodChannel('com.alexlmp.app/ytmusic');
 
@@ -4300,14 +4305,24 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
 
   AppLifecycleListener? _life;
 
+  void _onRequestedTab() {
+    final target = requestedRootTab.value;
+    if (target == null || !mounted) return;
+    requestedRootTab.value = null;
+    setState(() {
+      _dir = target >= _tab ? 1 : -1;
+      _tab = target;
+    });
+  }
+
   void _trackRecent() {
     final t = audioHandler.currentTrack;
     if (t != null) {
       appState.addRecent(t.id);
-      // Ready before the player opens (smoother opening).
       artSeedFor(t);
       final next = audioHandler.peekNext;
       if (next != null) artSeedFor(next);
+      onDjTrackAdvanced(t);
     }
   }
 
@@ -4317,6 +4332,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     appNotice.addListener(_onNotice);
     contentWarning.addListener(_onContentWarning);
     audioHandler.currentIndex.addListener(_trackRecent);
+    requestedRootTab.addListener(_onRequestedTab);
     startWidgetSync();
     // Pick up a new wallpaper colour when you come back to the app.
     _life = AppLifecycleListener(onResume: () {
@@ -4371,6 +4387,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     appNotice.removeListener(_onNotice);
     contentWarning.removeListener(_onContentWarning);
     audioHandler.currentIndex.removeListener(_trackRecent);
+    requestedRootTab.removeListener(_onRequestedTab);
     _life?.dispose();
     super.dispose();
   }
@@ -5730,27 +5747,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                   onDiscover),
             ],
           ),
-          if (appState.b('ai_home_on', true)) ...[
-            const SizedBox(height: 10),
-            AiDjHomeCard(
-              surface: c.s2,
-              text: c.t1,
-              subtext: c.t2,
-              accent: c.pri,
-              onStartOrSkip: () => startOrStepAiDj(openInPlayer: context),
-              onStop: () => stopAiDjSession(),
-            ),
-            const SizedBox(height: 10),
-            AiMixCard(
-              title: 'AI mix · ${mixLabel.$1}',
-              subtitle: 'Tap and I\'ll build a playlist for right now',
-              surface: c.s2,
-              text: c.t1,
-              subtext: c.t2,
-              accent: c.pri,
-              onStart: () => aiMixPlay(mixLabel.$2),
-            ),
-          ],
+
         ],
       );
     }
@@ -5858,6 +5855,27 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         if (d.shelves.isEmpty) col.add(_ytHomeStatus(pal, err, loading));
         final mix = d.mixes.isNotEmpty ? d.mixes.first : null;
         final pool = d.quick.isNotEmpty ? d.quick : d.liked;
+        if (d.quick.isNotEmpty) {
+          col
+            ..add(BloomSection('Quick picks',
+                top: 4,
+                action: 'Play all',
+                onAction: () => _ytPlay(d.quick, 0)))
+            ..add(speedDial(d.quick, 8));
+        }
+        if (appState.b('ai_home_on', true)) {
+          col
+            ..add(const SizedBox(height: 10))
+            ..add(AiDjHomeCard(
+              surface: c.s2,
+              text: c.t1,
+              subtext: c.t2,
+              accent: c.pri,
+              onStartOrSkip: () => startOrStepAiDj(openInPlayer: context),
+              onStop: () => stopAiDjSession(),
+            ))
+            ..add(const SizedBox(height: 12));
+        }
         col.add(grid(
           art: mix != null
               ? YtNetworkImage(url: mix.thumbnail, size: 82)
@@ -5884,12 +5902,6 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             if (p.isNotEmpty) _ytShuffle(p);
           },
         ));
-        if (d.quick.isNotEmpty) {
-          col
-            ..add(BloomSection('Quick picks',
-                action: 'Play all', onAction: () => _ytPlay(d.quick, 0)))
-            ..add(speedDial(d.quick, 8));
-        }
         if (d.allMixes.isNotEmpty || d.mixes.isNotEmpty) {
           col
             ..add(const BloomSection('Mixed for you'))
@@ -5935,6 +5947,25 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       final quick = _quickPicks(local, 6);
       final recent = _recentFrom(local);
       final liked = audioHandler.likedTracks.where((t) => !t.isYouTube).toList();
+      out
+        ..add(BloomSection('Quick picks',
+            top: 4,
+            action: 'Play all',
+            onAction: () => _ytPlay(quick, 0)))
+        ..add(speedDial(quick, 8));
+      if (appState.b('ai_home_on', true)) {
+        out
+          ..add(const SizedBox(height: 10))
+          ..add(AiDjHomeCard(
+            surface: c.s2,
+            text: c.t1,
+            subtext: c.t2,
+            accent: c.pri,
+            onStartOrSkip: () => startOrStepAiDj(openInPlayer: context),
+            onStop: () => stopAiDjSession(),
+          ))
+          ..add(const SizedBox(height: 12));
+      }
       out.add(grid(
         art: CustomAlbumArtwork(track: recent.isNotEmpty ? recent.first : local.first),
         kicker: 'JUMP BACK IN',
@@ -5949,10 +5980,6 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
             MaterialPageRoute(builder: (_) => const LikedSongsScreen())),
         onDiscover: () => _ytShuffle(local),
       ));
-      out
-        ..add(BloomSection('Quick picks',
-            action: 'Play all', onAction: () => _ytPlay(quick, 0)))
-        ..add(speedDial(quick, 8));
       if (recent.length > 1) {
         out
           ..add(const BloomSection('Listen again'))
@@ -38514,7 +38541,7 @@ class BloomPlayerView extends StatelessWidget {
                     ],
                   ),
                 ),
-                round(Icons.auto_awesome_rounded, askAi, 'Ask AI'),
+                round(Icons.auto_awesome_rounded, () => openAiChatFromPlayer(context), 'AI DJ Chat'),
                 const SizedBox(width: 8),
                 round(Icons.more_vert_rounded,
                     () => showAddToPlaylistSheet(context, track), 'More'),
@@ -38806,8 +38833,12 @@ Future<String> aiMixPlay(String vibe) async {
 // ─────────────────────── SPOTIFY-STYLE AI DJ ENGINE ───────────────────────
 
 int _djStep = 0;
+int _djSongsSinceTalk = 0;
+String? _djLastTrackId;
+bool _djTriggering = false;
 
 Future<void> stopAiDjSession() async {
+  _djSongsSinceTalk = 0;
   AiDjState.i.update(
     isActive: false,
     isSpeaking: false,
@@ -38822,9 +38853,92 @@ Future<void> stopAiDjSession() async {
   } catch (_) {}
 }
 
-/// Automatically gathers tracks from the active library, cached YouTube Music
-/// home shelves, Liked Music, local device audio, or live YouTube Music search
-/// so AI DJ starts immediately on cold boot without requiring you to play a song first.
+/// Called automatically whenever `audioHandler.currentIndex` changes (including
+/// manual skips or natural song completions). Every 5 songs while AI DJ is
+/// active, the DJ jumps in, talks out loud about what's happening next, and
+/// switches up the vibe!
+void onDjTrackAdvanced(TrackItem current) {
+  if (!AiDjState.i.active || _djTriggering) return;
+  if (current.id == _djLastTrackId) return;
+  _djLastTrackId = current.id;
+  _djSongsSinceTalk++;
+
+  if (_djSongsSinceTalk >= 5) {
+    _djSongsSinceTalk = 0;
+    unawaited(_speakDjVibeShift(current));
+  }
+}
+
+Future<void> _speakDjVibeShift(TrackItem current) async {
+  if (_djTriggering) return;
+  _djTriggering = true;
+  try {
+    final rng = Random();
+    final nextUp = audioHandler.peekNext;
+    final mode = _djStep % 3;
+    _djStep++;
+
+    String tag;
+    String speech;
+    if (mode == 0) {
+      tag = "VIBE CHECK · 5 SONGS IN";
+      speech = nextUp != null
+          ? "That was five tracks in the set—switching up the energy now with ${current.title} by ${current.artist}, and up next we've got ${nextUp.title} waiting in the wings."
+          : "Five songs deep into the rotation—time to switch up the tempo with ${current.title} by ${current.artist}.";
+    } else if (mode == 1) {
+      tag = "ROTATION SHIFT";
+      speech = nextUp != null
+          ? "Alright, we just ran through five tracks. Let's pivot into ${current.title} by ${current.artist}, then I'm lining up ${nextUp.artist} right after."
+          : "Alright, five tracks down—pivoting the mix into ${current.title} by ${current.artist}.";
+    } else {
+      tag = "FRESH CHAPTER";
+      speech = nextUp != null
+          ? "Keeping the session moving—five songs in, so here is ${current.title} by ${current.artist}, followed by ${nextUp.title}."
+          : "Keeping the session moving—here's ${current.title} by ${current.artist}.";
+    }
+
+    // Also inject 3 fresh discovery tracks into the upcoming queue every 5 songs
+    unawaited(() async {
+      try {
+        final seed = current.artist != 'Unknown Artist' ? current.artist : current.title;
+        final more = await YouTubeMusic.search('$seed mix');
+        if (more.isNotEmpty) {
+          more.shuffle(rng);
+          audioHandler.addToQueue(more.take(3).toList());
+        }
+      } catch (_) {}
+    }());
+
+    AiDjState.i.update(
+      isActive: true,
+      isSpeaking: true,
+      text: speech,
+      tag: tag,
+    );
+
+    try {
+      await audioHandler.player.setVolume(0.18);
+    } catch (_) {}
+
+    try {
+      await _mediaChannel.invokeMethod('speakDj', {'text': speech});
+    } catch (_) {}
+
+    final wordCount = speech.split(RegExp(r'\s+')).length;
+    final estMs = (wordCount * 370 + 1100).clamp(3200, 9500);
+    Future.delayed(Duration(milliseconds: estMs), () async {
+      if (AiDjState.i.speaking) {
+        AiDjState.i.setSpeaking(false);
+      }
+      try {
+        await audioHandler.player.setVolume(1.0);
+      } catch (_) {}
+    });
+  } finally {
+    _djTriggering = false;
+  }
+}
+
 Future<List<TrackItem>> _ensureDjPool() async {
   final pool = <TrackItem>[...audioHandler.tracks];
   final seen = <String>{for (final t in pool) t.id};
@@ -38833,7 +38947,6 @@ Future<List<TrackItem>> _ensureDjPool() async {
     if (seen.add(t.id)) pool.add(t);
   }
 
-  // 1. Pull from cached YouTube Music Liked songs
   try {
     final cachedLiked = YouTubeMusic.cachedPlaylistPage('LM', title: 'Liked on YouTube');
     if (cachedLiked != null) {
@@ -38843,7 +38956,6 @@ Future<List<TrackItem>> _ensureDjPool() async {
     }
   } catch (_) {}
 
-  // 2. Pull from cached YouTube Music Home shelves (Quick picks, Listen again, Mixes)
   try {
     final shelves = YouTubeMusic.cachedHomeFeed() ?? const <YtShelf>[];
     for (final s in shelves) {
@@ -38855,7 +38967,6 @@ Future<List<TrackItem>> _ensureDjPool() async {
     }
   } catch (_) {}
 
-  // 3. If still empty on cold boot, scan local audio or fetch live YouTube Music feed/search
   if (pool.isEmpty) {
     try {
       await scanDeviceAudio();
@@ -38880,7 +38991,7 @@ Future<List<TrackItem>> _ensureDjPool() async {
 
   if (pool.isEmpty) {
     try {
-      final hits = await YouTubeMusic.search('trending hits mix');
+      final hits = await YouTubeMusic.search('trending rap hits mix');
       for (final t in hits) {
         addTrack(t);
       }
@@ -38891,147 +39002,127 @@ Future<List<TrackItem>> _ensureDjPool() async {
 }
 
 Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
-  AiDjState.i.update(
-    isActive: true,
-    isSpeaking: true,
-    text: "Tuning into your rotation and mixing in fresh picks…",
-    tag: "TUNING IN",
-  );
+  _djTriggering = true;
+  _djSongsSinceTalk = 0;
+  try {
+    AiDjState.i.update(
+      isActive: true,
+      isSpeaking: true,
+      text: "Tuning into your rotation and mixing in fresh picks…",
+      tag: "TUNING IN",
+    );
 
-  final all = await _ensureDjPool();
-  if (all.isEmpty) {
-    const msg = "Check your internet connection or add local songs so I can spin a set for you!";
-    AiDjState.i.update(isActive: false, isSpeaking: false, text: msg, tag: "OFFLINE");
+    final all = await _ensureDjPool();
+    if (all.isEmpty) {
+      const msg = "Check your internet connection or add local songs so I can spin a set for you!";
+      AiDjState.i.update(isActive: false, isSpeaking: false, text: msg, tag: "OFFLINE");
+      try {
+        await _mediaChannel.invokeMethod('speakDj', {'text': msg});
+      } catch (_) {}
+      return msg;
+    }
+
+    final rng = Random();
+    final recentIds = appState.recent;
+    final recentTracks = <TrackItem>[];
+    for (final id in recentIds) {
+      final t = audioHandler.trackById(id) ??
+          all.where((x) => x.id == id).firstOrNull;
+      if (t != null) recentTracks.add(t);
+    }
+    final likedTracks = all.where((t) => appState.isLiked(t.id)).toList();
+    final discoveryTracks =
+        all.where((t) => !recentIds.contains(t.id)).toList();
+
+    final sessionQueue = <TrackItem>[];
+    final usedIds = <String>{};
+    void addSessionTrack(TrackItem t) {
+      if (usedIds.add(t.id)) sessionQueue.add(t);
+    }
+
+    TrackItem chosen;
+    String modeTag;
+    String djSpeech;
+
+    final mode = _djStep % 3;
+    _djStep++;
+
+    if (mode == 0 && recentTracks.isNotEmpty) {
+      chosen = recentTracks[rng.nextInt(recentTracks.length)];
+      modeTag = "FROM YOUR HISTORY";
+      djSpeech =
+          "Hey! Jumping straight into your recent rotation. You've been playing ${chosen.artist} lately, so here's ${chosen.title}.";
+    } else if (mode == 1 && discoveryTracks.isNotEmpty) {
+      chosen = discoveryTracks[rng.nextInt(discoveryTracks.length)];
+      modeTag = "NEW DISCOVERY";
+      djSpeech =
+          "Alright, switching up the vibe with something fresh for your rotation. Check out ${chosen.title} by ${chosen.artist}.";
+    } else if (likedTracks.isNotEmpty) {
+      chosen = likedTracks[rng.nextInt(likedTracks.length)];
+      modeTag = "LIKED FAVORITE";
+      djSpeech =
+          "Bringing back one of your certified favorites right now. Here is ${chosen.title} by ${chosen.artist}.";
+    } else {
+      chosen = all[rng.nextInt(all.length)];
+      modeTag = "DJ MIX";
+      djSpeech =
+          "Let's get the session rolling right now with ${chosen.title} by ${chosen.artist}.";
+    }
+
+    addSessionTrack(chosen);
+    final shuffledPool = [...recentTracks, ...likedTracks, ...discoveryTracks, ...all]..shuffle(rng);
+    for (final t in shuffledPool) {
+      if (sessionQueue.length >= 25) break;
+      addSessionTrack(t);
+    }
+
+    if (sessionQueue.length > 1) {
+      final second = sessionQueue[1];
+      djSpeech = "$djSpeech Coming up right after, I've got ${second.title} by ${second.artist} lined up.";
+    }
+
+    _djLastTrackId = chosen.id;
+
+    AiDjState.i.update(
+      isActive: true,
+      isSpeaking: true,
+      text: djSpeech,
+      tag: modeTag,
+    );
+
     try {
-      await _mediaChannel.invokeMethod('speakDj', {'text': msg});
+      await audioHandler.player.setVolume(0.18);
     } catch (_) {}
-    return msg;
-  }
 
-  final rng = Random();
-  final recentIds = appState.recent;
-  final recentTracks = <TrackItem>[];
-  for (final id in recentIds) {
-    final t = audioHandler.trackById(id) ??
-        all.where((x) => x.id == id).firstOrNull;
-    if (t != null) recentTracks.add(t);
-  }
-  final likedTracks = all.where((t) => appState.isLiked(t.id)).toList();
-  final discoveryTracks =
-      all.where((t) => !recentIds.contains(t.id)).toList();
-
-  // Build a full shuffled queue of 18 tracks mixing history, favorites, and new discoveries
-  final sessionQueue = <TrackItem>[];
-  final usedIds = <String>{};
-  void addSessionTrack(TrackItem t) {
-    if (usedIds.add(t.id)) sessionQueue.add(t);
-  }
-
-  TrackItem chosen;
-  String modeTag;
-  String fallbackIntro;
-
-  final mode = _djStep % 3;
-  _djStep++;
-
-  if (mode == 0 && recentTracks.isNotEmpty) {
-    chosen = recentTracks[rng.nextInt(recentTracks.length)];
-    modeTag = "FROM YOUR HISTORY";
-    fallbackIntro =
-        "Hey! Jumping straight into your recent rotation. You've been playing ${chosen.artist} lately, so here's ${chosen.title}.";
-  } else if (mode == 1 && discoveryTracks.isNotEmpty) {
-    chosen = discoveryTracks[rng.nextInt(discoveryTracks.length)];
-    modeTag = "NEW DISCOVERY";
-    fallbackIntro =
-        "Alright, switching up the vibe with something fresh for your rotation. Check out ${chosen.title} by ${chosen.artist}.";
-  } else if (likedTracks.isNotEmpty) {
-    chosen = likedTracks[rng.nextInt(likedTracks.length)];
-    modeTag = "LIKED FAVORITE";
-    fallbackIntro =
-        "Bringing back one of your certified favorites right now. Here is ${chosen.title} by ${chosen.artist}.";
-  } else {
-    chosen = all[rng.nextInt(all.length)];
-    modeTag = "DJ MIX";
-    fallbackIntro =
-        "Let's get the session rolling right now with ${chosen.title} by ${chosen.artist}.";
-  }
-
-  addSessionTrack(chosen);
-  final shuffledPool = [...recentTracks, ...likedTracks, ...discoveryTracks, ...all]..shuffle(rng);
-  for (final t in shuffledPool) {
-    if (sessionQueue.length >= 20) break;
-    addSessionTrack(t);
-  }
-
-  // Also fetch a couple fresh discovery tracks in the background for the next rotation
-  unawaited(() async {
     try {
-      final seedArtist = chosen.artist != 'Unknown Artist' ? chosen.artist : chosen.title;
-      final more = await YouTubeMusic.search('$seedArtist mix');
-      if (more.isNotEmpty) {
-        audioHandler.restoreTracks(more.take(6).toList());
+      await _mediaChannel.invokeMethod('speakDj', {'text': djSpeech});
+    } catch (_) {}
+
+    await audioHandler.playYouTubeList(sessionQueue, 0);
+
+    try {
+      if (AiDjState.i.speaking) {
+        await audioHandler.player.setVolume(0.18);
       }
     } catch (_) {}
-  }());
 
-  String djSpeech = fallbackIntro;
-  try {
-    final prompt = modeTag == "FROM YOUR HISTORY"
-        ? "You are Spotify AI DJ. In 1-2 short natural spoken sentences (under 25 words, no quotes or emojis), hype up playing '${chosen.title}' by '${chosen.artist}' from the user's listening history."
-        : modeTag == "NEW DISCOVERY"
-            ? "You are Spotify AI DJ. In 1-2 short natural spoken sentences (under 25 words, no quotes or emojis), introduce a fresh discovery track '${chosen.title}' by '${chosen.artist}'."
-            : "You are Spotify AI DJ. In 1-2 short natural spoken sentences (under 25 words, no quotes or emojis), introduce their favorite track '${chosen.title}' by '${chosen.artist}'.";
-    final reply = await AiHelper.ask(
-      [
-        {'role': 'user', 'content': prompt}
-      ],
-      maxTokens: 65,
-      timeout: const Duration(seconds: 4),
-    );
-    if (reply != null && reply.trim().isNotEmpty) {
-      djSpeech = reply.replaceAll('"', '').replaceAll('*', '').trim();
+    if (openInPlayer != null && openInPlayer.mounted) {
+      openPlayer(openInPlayer);
     }
-  } catch (_) {}
 
-  AiDjState.i.update(
-    isActive: true,
-    isSpeaking: true,
-    text: djSpeech,
-    tag: modeTag,
-  );
+    final wordCount = djSpeech.split(RegExp(r'\s+')).length;
+    final estMs = (wordCount * 370 + 1100).clamp(3200, 9500);
+    Future.delayed(Duration(milliseconds: estMs), () async {
+      if (AiDjState.i.speaking) {
+        AiDjState.i.setSpeaking(false);
+      }
+      try {
+        await audioHandler.player.setVolume(1.0);
+      } catch (_) {}
+    });
 
-  // Duck music volume to 18% while the DJ speaks out loud
-  try {
-    await audioHandler.player.setVolume(0.18);
-  } catch (_) {}
-
-  try {
-    await _mediaChannel.invokeMethod('speakDj', {'text': djSpeech});
-  } catch (_) {}
-
-  await audioHandler.playYouTubeList(sessionQueue, 0);
-
-  // Re-assert ducked volume right after playback starts
-  try {
-    if (AiDjState.i.speaking) {
-      await audioHandler.player.setVolume(0.18);
-    }
-  } catch (_) {}
-
-  if (openInPlayer != null && openInPlayer.mounted) {
-    openPlayer(openInPlayer);
+    return djSpeech;
+  } finally {
+    _djTriggering = false;
   }
-
-  final wordCount = djSpeech.split(RegExp(r'\s+')).length;
-  final estMs = (wordCount * 380 + 1100).clamp(3000, 9500);
-  Future.delayed(Duration(milliseconds: estMs), () async {
-    if (AiDjState.i.speaking) {
-      AiDjState.i.setSpeaking(false);
-    }
-    try {
-      await audioHandler.player.setVolume(1.0);
-    } catch (_) {}
-  });
-
-  return djSpeech;
 }
