@@ -4367,6 +4367,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         AiDjState.i.setSpeaking(on);
         if (!on) {
           audioHandler.player.setVolume(1.0).catchError((_) {});
+          if (AiDjState.i.active && !audioHandler.player.playing) {
+            audioHandler.player.play().catchError((_) {});
+          }
         }
         return null;
       }
@@ -38678,12 +38681,6 @@ class BloomPlayerView extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: c.lc,
                         borderRadius: BorderRadius.circular(playing ? 41 : 28),
-                        boxShadow: [
-                          BoxShadow(
-                              color: seed.withOpacity(0.55),
-                              blurRadius: 34,
-                              offset: const Offset(0, 12)),
-                        ],
                       ),
                       child: loading
                           ? SizedBox(
@@ -38853,10 +38850,6 @@ Future<void> stopAiDjSession() async {
   } catch (_) {}
 }
 
-/// Called automatically whenever `audioHandler.currentIndex` changes (including
-/// manual skips or natural song completions). Every 5 songs while AI DJ is
-/// active, the DJ jumps in, talks out loud about what's happening next, and
-/// switches up the vibe!
 void onDjTrackAdvanced(TrackItem current) {
   if (!AiDjState.i.active || _djTriggering) return;
   if (current.id == _djLastTrackId) return;
@@ -38874,30 +38867,25 @@ Future<void> _speakDjVibeShift(TrackItem current) async {
   _djTriggering = true;
   try {
     final rng = Random();
-    final nextUp = audioHandler.peekNext;
-    final mode = _djStep % 3;
+    final mode = _djStep % 4;
     _djStep++;
 
     String tag;
     String speech;
     if (mode == 0) {
-      tag = "VIBE CHECK · 5 SONGS IN";
-      speech = nextUp != null
-          ? "That was five tracks in the set—switching up the energy now with ${current.title} by ${current.artist}, and up next we've got ${nextUp.title} waiting in the wings."
-          : "Five songs deep into the rotation—time to switch up the tempo with ${current.title} by ${current.artist}.";
+      tag = "VIBE SHIFT";
+      speech = "That was a solid five-track run. Let's switch up the energy and take the rotation in a fresh direction.";
     } else if (mode == 1) {
-      tag = "ROTATION SHIFT";
-      speech = nextUp != null
-          ? "Alright, we just ran through five tracks. Let's pivot into ${current.title} by ${current.artist}, then I'm lining up ${nextUp.artist} right after."
-          : "Alright, five tracks down—pivoting the mix into ${current.title} by ${current.artist}.";
+      tag = "FROM YOUR HISTORY";
+      speech = "Five songs deep into the set. Diving back into your heavy rotation with some tracks you've had on repeat lately.";
+    } else if (mode == 2) {
+      tag = "NEW DISCOVERY";
+      speech = "Time to flip the vibe for the next stretch. Sneaking in some fresh picks from around your library.";
     } else {
-      tag = "FRESH CHAPTER";
-      speech = nextUp != null
-          ? "Keeping the session moving—five songs in, so here is ${current.title} by ${current.artist}, followed by ${nextUp.title}."
-          : "Keeping the session moving—here's ${current.title} by ${current.artist}.";
+      tag = "CERTIFIED FAVORITES";
+      speech = "Keeping the momentum rolling. Let's bring back a few of your liked favorites for this next block.";
     }
 
-    // Also inject 3 fresh discovery tracks into the upcoming queue every 5 songs
     unawaited(() async {
       try {
         final seed = current.artist != 'Unknown Artist' ? current.artist : current.title;
@@ -38916,8 +38904,9 @@ Future<void> _speakDjVibeShift(TrackItem current) async {
       tag: tag,
     );
 
+    // Pause the track while the DJ speaks the transition line so the song starts right after!
     try {
-      await audioHandler.player.setVolume(0.18);
+      await audioHandler.player.pause();
     } catch (_) {}
 
     try {
@@ -38925,13 +38914,16 @@ Future<void> _speakDjVibeShift(TrackItem current) async {
     } catch (_) {}
 
     final wordCount = speech.split(RegExp(r'\s+')).length;
-    final estMs = (wordCount * 370 + 1100).clamp(3200, 9500);
+    final estMs = (wordCount * 350 + 700).clamp(2400, 6500);
     Future.delayed(Duration(milliseconds: estMs), () async {
       if (AiDjState.i.speaking) {
         AiDjState.i.setSpeaking(false);
       }
       try {
         await audioHandler.player.setVolume(1.0);
+        if (AiDjState.i.active) {
+          audioHandler.player.play();
+        }
       } catch (_) {}
     });
   } finally {
@@ -39005,13 +38997,6 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
   _djTriggering = true;
   _djSongsSinceTalk = 0;
   try {
-    AiDjState.i.update(
-      isActive: true,
-      isSpeaking: true,
-      text: "Tuning into your rotation and mixing in fresh picks…",
-      tag: "TUNING IN",
-    );
-
     final all = await _ensureDjPool();
     if (all.isEmpty) {
       const msg = "Check your internet connection or add local songs so I can spin a set for you!";
@@ -39050,23 +39035,19 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
     if (mode == 0 && recentTracks.isNotEmpty) {
       chosen = recentTracks[rng.nextInt(recentTracks.length)];
       modeTag = "FROM YOUR HISTORY";
-      djSpeech =
-          "Hey! Jumping straight into your recent rotation. You've been playing ${chosen.artist} lately, so here's ${chosen.title}.";
+      djSpeech = "Hey! Jumping straight into your recent rotation with some tracks you've been playing lately.";
     } else if (mode == 1 && discoveryTracks.isNotEmpty) {
       chosen = discoveryTracks[rng.nextInt(discoveryTracks.length)];
       modeTag = "NEW DISCOVERY";
-      djSpeech =
-          "Alright, switching up the vibe with something fresh for your rotation. Check out ${chosen.title} by ${chosen.artist}.";
+      djSpeech = "Alright, switching up the vibe and sneaking in something fresh for your rotation right now.";
     } else if (likedTracks.isNotEmpty) {
       chosen = likedTracks[rng.nextInt(likedTracks.length)];
       modeTag = "LIKED FAVORITE";
-      djSpeech =
-          "Bringing back one of your certified favorites right now. Here is ${chosen.title} by ${chosen.artist}.";
+      djSpeech = "Bringing back some of your certified favorites right now. Let's get into it.";
     } else {
       chosen = all[rng.nextInt(all.length)];
       modeTag = "DJ MIX";
-      djSpeech =
-          "Let's get the session rolling right now with ${chosen.title} by ${chosen.artist}.";
+      djSpeech = "Locking in a fresh mix from your library right now. Let's get the session rolling.";
     }
 
     addSessionTrack(chosen);
@@ -39074,11 +39055,6 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
     for (final t in shuffledPool) {
       if (sessionQueue.length >= 25) break;
       addSessionTrack(t);
-    }
-
-    if (sessionQueue.length > 1) {
-      final second = sessionQueue[1];
-      djSpeech = "$djSpeech Coming up right after, I've got ${second.title} by ${second.artist} lined up.";
     }
 
     _djLastTrackId = chosen.id;
@@ -39090,34 +39066,27 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
       tag: modeTag,
     );
 
+    // Pause current audio, speak the short vibe intro, then drop the track right when the DJ finishes!
     try {
-      await audioHandler.player.setVolume(0.18);
+      await audioHandler.player.pause();
     } catch (_) {}
 
     try {
       await _mediaChannel.invokeMethod('speakDj', {'text': djSpeech});
     } catch (_) {}
 
-    await audioHandler.playYouTubeList(sessionQueue, 0);
-
-    try {
-      if (AiDjState.i.speaking) {
-        await audioHandler.player.setVolume(0.18);
-      }
-    } catch (_) {}
-
-    if (openInPlayer != null && openInPlayer.mounted) {
-      openPlayer(openInPlayer);
-    }
-
     final wordCount = djSpeech.split(RegExp(r'\s+')).length;
-    final estMs = (wordCount * 370 + 1100).clamp(3200, 9500);
+    final estMs = (wordCount * 350 + 600).clamp(2200, 5500);
     Future.delayed(Duration(milliseconds: estMs), () async {
       if (AiDjState.i.speaking) {
         AiDjState.i.setSpeaking(false);
       }
       try {
         await audioHandler.player.setVolume(1.0);
+        await audioHandler.playYouTubeList(sessionQueue, 0);
+        if (openInPlayer != null && openInPlayer.mounted) {
+          openPlayer(openInPlayer);
+        }
       } catch (_) {}
     });
 
