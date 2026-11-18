@@ -1427,3 +1427,63 @@ class AiDjPlayerBanner extends StatelessWidget {
     );
   }
 }
+
+
+/// Colored custom-drawn AI DJ logo icon (cyan-violet-magenta gradient disc + voice wave)
+/// used on the player dock when AI DJ mode is active.
+class AiDjLogoIcon extends StatelessWidget {
+  final double size;
+  const AiDjLogoIcon({super.key, this.size = 22});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(painter: _AiDjLogoPainter()),
+    );
+  }
+}
+
+class _AiDjLogoPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final c = Offset(size.width / 2, size.height / 2);
+    final r = size.width / 2;
+
+    // Vibrant gradient disc
+    final grad = const LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF22D3EE), Color(0xFF6366F1), Color(0xFFEC4899)],
+    ).createShader(rect);
+    canvas.drawCircle(c, r, Paint()..shader = grad);
+
+    // Subtle vinyl outer ring
+    canvas.drawCircle(
+      c,
+      r * 0.80,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = size.width * 0.055
+        ..color = Colors.white.withOpacity(0.32),
+    );
+
+    // 3 equalizer pulse bars in the center
+    final barPaint = Paint()
+      ..color = Colors.white
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = size.width * 0.105;
+
+    final heights = [0.22, 0.36, 0.22];
+    for (int i = -1; i <= 1; i++) {
+      final x = c.dx + i * (size.width * 0.22);
+      final h = size.height * heights[i + 1];
+      canvas.drawLine(Offset(x, c.dy - h), Offset(x, c.dy + h), barPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}

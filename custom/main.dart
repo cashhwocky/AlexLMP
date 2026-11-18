@@ -13358,7 +13358,10 @@ class _SwipeDownDismissState extends State<SwipeDownDismiss>
   void _update(DragUpdateDetails d) {
     if (_dismissing || _openingQueue || _ignoreDrag) return;
     var dy = d.delta.dy;
-    // Pulling up gets heavier the further you go (rubber band).
+    if (AiDjState.i.active && (_c.value + dy) < 0) {
+      _c.value = 0;
+      return;
+    }
     if (_c.value < 0 && dy < 0) dy *= 1 - (-_c.value / _upMax) * 0.7;
     final before = _c.value;
     _c.value = (_c.value + dy).clamp(-_upMax, double.infinity).toDouble();
@@ -38724,8 +38727,57 @@ class BloomPlayerView extends StatelessWidget {
                   pill(Icons.lyrics_outlined, 'Lyrics',
                       () => showLyricsSheet(context, track)),
                   pill(Icons.auto_awesome_rounded, 'Ask AI', askAi),
-                  pill(Icons.queue_music_rounded, 'Up next',
-                      () => showQueueSheet(context)),
+                  ListenableBuilder(
+                    listenable: AiDjState.i,
+                    builder: (context, _) {
+                      if (!AiDjState.i.active) {
+                        return pill(Icons.queue_music_rounded, 'Up next',
+                            () => showQueueSheet(context));
+                      }
+                      return Expanded(
+                        child: SquishyGesture(
+                          pressedScale: 0.92,
+                          onTap: () {
+                            HapticFeedback.mediumImpact();
+                            startOrStepAiDj();
+                          },
+                          child: Container(
+                            height: 54,
+                            margin: const EdgeInsets.symmetric(horizontal: 2),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  const Color(0xFF22D3EE).withOpacity(0.24),
+                                  const Color(0xFF6366F1).withOpacity(0.26),
+                                  const Color(0xFFEC4899).withOpacity(0.24),
+                                ],
+                              ),
+                              borderRadius: BorderRadius.circular(26),
+                              border: Border.all(
+                                color: const Color(0xFF22D3EE).withOpacity(0.55),
+                                width: 1.1,
+                              ),
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const AiDjLogoIcon(size: 21),
+                                const SizedBox(height: 3),
+                                Text(
+                                  'AI DJ',
+                                  style: bloomText(10.5,
+                                      color: const Color(0xFF67E8F9),
+                                      weight: FontWeight.w800),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
                   pill(Icons.graphic_eq_rounded, 'Sound',
                       () => showPlaybackSheet(context),
                       on: soundModified),
