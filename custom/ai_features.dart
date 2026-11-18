@@ -172,8 +172,8 @@ class AiHelper {
   static dynamic _json(String s) {
     final text = s.replaceAll(RegExp(r'```(?:json)?'), '').trim();
     for (final pair in const [('{', '}'), ('[', ']')]) {
-      final a = text.indexOf(pair.\$1);
-      final b = text.lastIndexOf(pair.\$2);
+      final a = text.indexOf(pair.$1);
+      final b = text.lastIndexOf(pair.$2);
       if (a >= 0 && b > a) {
         try {
           return jsonDecode(text.substring(a, b + 1));
