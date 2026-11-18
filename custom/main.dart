@@ -18279,7 +18279,7 @@ class _SearchScreenState extends State<SearchScreen> {
   String? _submitted; // results mode when set
   // YouTube Music first (like YouTube Music clients); Local is one tap away.
   int _source = appState.b('search_yt_default', true) ? 1 : 0; // 0 local, 1 YouTube
-  int _filter = 0; // 0 songs, 1 albums, 2 artists, 3 videos
+  int _filter = 5; // 5 all, 0 songs, 1 albums, 2 artists, 3 videos, 4 playlists
 
   // YouTube results for the submitted query (cached per filter).
   Future<List<TrackItem>>? _ytSongs;
@@ -18291,6 +18291,9 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
+    _focus.addListener(() {
+      if (mounted) setState(() {});
+    });
     final q = widget.initialQuery;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -18412,7 +18415,9 @@ class _SearchScreenState extends State<SearchScreen> {
         decoration: BoxDecoration(
           color: community ? appState.scheme.surfaceContainerHigh : pal.surface,
           borderRadius: BorderRadius.circular(28),
-          border: community ? null : Border.all(color: Colors.white10),
+          border: Border.all(
+              color: _focus.hasFocus ? pal.accent.withOpacity(0.7) : Colors.white10,
+              width: _focus.hasFocus ? 1.6 : 1),
         ),
         child: Row(
           children: [
@@ -18578,62 +18583,427 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _results(AppPalette pal) {
     final q = _submitted!;
+    final yt = Platform.isAndroid;
+    final chips = <(String, IconData, int)>[
+      if (yt) ('All', Icons.auto_awesome_rounded, 5),
+      if (yt) ('Songs', Icons.music_note_rounded, 0),
+      if (yt) ('Playlists', Icons.queue_music_rounded, 4),
+      if (yt) ('Albums', Icons.album_rounded, 1),
+      if (yt) ('Artists', Icons.person_rounded, 2),
+      if (yt) ('Videos', Icons.smart_display_rounded, 3),
+      ('On this phone', Icons.phone_android_rounded, 6),
+    ];
+    final selected = _source == 0 ? 6 : _filter;
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
-          child: SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<int>(
-              segments: [
-                const ButtonSegment(
-                  value: 0,
-                  icon: Icon(Icons.library_music_rounded),
-                  label: Text('Local'),
+        SizedBox(
+          height: 52,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            children: [
+              for (final (label, icon, v) in chips)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: _pill(pal, label, icon, selected == v, () {
+                    HapticFeedback.selectionClick();
+                    setState(() {
+                      if (v == 6) {
+                        _source = 0;
+                      } else {
+                        _source = 1;
+                        _filter = v;
+                      }
+                    });
+                  }),
                 ),
-                if (Platform.isAndroid)
-                  const ButtonSegment(
-                    value: 1,
-                    icon: Icon(Icons.play_circle_fill_rounded),
-                    label: Text('YouTube Music'),
-                  ),
-              ],
-              selected: {_source},
-              showSelectedIcon: false,
-              onSelectionChanged: (v) => setState(() => _source = v.first),
+            ],
+          ),
+        ),
+        Expanded(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            child: KeyedSubtree(
+              key: ValueKey('res_${_source}_$_filter'),
+              child: _source == 0 ? _localResults(pal, q) : _ytResults(pal, q),
             ),
           ),
         ),
-        if (_source == 1)
+      ],
+    );
+  }
+
+  /// Rounded filter pill that matches the other designs.
+  Widget _pill(AppPalette pal, String label, IconData icon, bool on,
+      VoidCallback onTap) {
+    final fg = on ? pal.onAccent : Colors.white70;
+    return SquishyGesture(
+      pressedScale: 0.94,
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          color: on ? pal.accent : pal.surface,
+          borderRadius: BorderRadius.circular(22),
+          border: on ? null : Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 17, color: fg),
+            const SizedBox(width: 6),
+            Text(label,
+                style: TextStyle(
+                    color: fg, fontSize: 13.5, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Fades and slides a block in, so results feel alive instead of popping.
+  Widget _in(Widget child, {int ms = 0}) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(milliseconds: 380 + ms),
+      curve: Curves.easeOutCubic,
+      builder: (context, v, c) => Opacity(
+        opacity: v,
+        child: Transform.translate(offset: Offset(0, 14 * (1 - v)), child: c),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _fb<T>(Future<List<T>>? f, Widget Function(List<T>) build,
+      {Widget? loading}) {
+    return FutureBuilder<List<T>>(
+      future: f,
+      builder: (context, snap) {
+        if (snap.hasError) return const SizedBox.shrink();
+        if (!snap.hasData) return loading ?? const SizedBox.shrink();
+        if (snap.data!.isEmpty) return const SizedBox.shrink();
+        return build(snap.data!);
+      },
+    );
+  }
+
+  void _playYtList(List<TrackItem> list, int i) {
+    audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+    audioHandler.playYouTubeList(list, i);
+    openPlayer(context);
+  }
+
+  Widget _group(AppPalette pal, List<Widget> rows) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        decoration: BoxDecoration(
+          color: pal.surface,
+          borderRadius: BorderRadius.circular(26),
+        ),
+        child: Column(children: rows),
+      );
+
+  Widget _topCard(AppPalette pal,
+      {required Widget art,
+      required String title,
+      required String subtitle,
+      required VoidCallback onTap,
+      required VoidCallback onPlay,
+      VoidCallback? onShuffle}) {
+    return SquishyGesture(
+      pressedScale: 0.98,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: pal.container,
+          borderRadius: BorderRadius.circular(30),
+        ),
+        child: Row(
+          children: [
+            art,
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 21,
+                          height: 1.15,
+                          fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  Text(subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white60, fontSize: 13)),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      SquishyGesture(
+                        pressedScale: 0.94,
+                        onTap: onPlay,
+                        child: Container(
+                          height: 40,
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                          decoration: BoxDecoration(
+                            color: pal.accent,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.play_arrow_rounded,
+                                  color: pal.onAccent, size: 22),
+                              const SizedBox(width: 4),
+                              Text('Play',
+                                  style: TextStyle(
+                                      color: pal.onAccent,
+                                      fontWeight: FontWeight.w800)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (onShuffle != null) ...[
+                        const SizedBox(width: 8),
+                        SquishyGesture(
+                          pressedScale: 0.92,
+                          onTap: onShuffle,
+                          child: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: const BoxDecoration(
+                                color: Colors.white12, shape: BoxShape.circle),
+                            child: const Icon(Icons.shuffle_rounded,
+                                color: Colors.white, size: 19),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _allResults(AppPalette pal, String q) {
+    _ytSongs ??= YouTubeMusic.search(q);
+    _ytArtists ??= YouTubeMusic.searchArtists(q);
+    _ytAlbums ??= YouTubeMusic.searchAlbums(q);
+    _ytPlaylists ??= YouTubeMusic.searchPlaylists(q);
+    final firstWord = q.toLowerCase().split(' ').first;
+
+    Widget songTop(List<TrackItem> songs) {
+      final t = songs.first;
+      return _topCard(
+        pal,
+        art: ClipRRect(
+          borderRadius: BorderRadius.circular(22),
+          child: SizedBox(
+              width: 96,
+              height: 96,
+              child: CustomAlbumArtwork(track: t)),
+        ),
+        title: t.title,
+        subtitle: 'Song · ${t.artist}',
+        onTap: () => _playYtList(songs, 0),
+        onPlay: () => _playYtList(songs, 0),
+        onShuffle: () {
+          audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
+          audioHandler.playYouTubeList(songs, Random().nextInt(songs.length));
+          openPlayer(context);
+        },
+      );
+    }
+
+    final top = FutureBuilder<List<YtArtist>>(
+      future: _ytArtists,
+      builder: (context, snap) {
+        final artists = snap.data;
+        if (artists != null &&
+            artists.isNotEmpty &&
+            artists.first.name.toLowerCase().contains(firstWord)) {
+          final a = artists.first;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ytSectionHeader('Top result'),
+              _topCard(
+                pal,
+                art: YtNetworkImage(
+                    url: a.thumbnail,
+                    size: 96,
+                    circle: true,
+                    fallbackIcon: Icons.person_rounded),
+                title: a.name,
+                subtitle: a.subscribers >= 0
+                    ? 'Artist · ${formatCompactCount(a.subscribers)} subscribers'
+                    : 'Artist',
+                onTap: () => openYtArtist(context, a.url, a.name,
+                    thumbnail: a.thumbnail),
+                onPlay: () async {
+                  final s = await _ytSongs;
+                  if (s != null && s.isNotEmpty) _playYtList(s, 0);
+                },
+                onShuffle: () async {
+                  final s = await _ytSongs;
+                  if (s == null || s.isEmpty) return;
+                  audioHandler.setShuffleMode(AudioServiceShuffleMode.all);
+                  audioHandler.playYouTubeList(s, Random().nextInt(s.length));
+                  if (mounted) openPlayer(context);
+                },
+              ),
+            ],
+          );
+        }
+        if (snap.connectionState != ConnectionState.done) {
+          return const SizedBox.shrink();
+        }
+        return _fb<TrackItem>(
+          _ytSongs,
+          (songs) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [ytSectionHeader('Top result'), songTop(songs)],
+          ),
+        );
+      },
+    );
+
+    final songs = _fb<TrackItem>(
+      _ytSongs,
+      (l) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ytSectionHeader('Songs', onSeeAll: () => setState(() => _filter = 0)),
+          _group(pal, [
+            for (var i = 0; i < l.length && i < 5; i++)
+              YtTrackRow(track: l[i], onPlay: () => _playYtList(l, i)),
+          ]),
+        ],
+      ),
+      loading: _loading(pal),
+    );
+
+    final artists = _fb<YtArtist>(
+      _ytArtists,
+      (l) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ytSectionHeader('Artists', onSeeAll: () => setState(() => _filter = 2)),
           SizedBox(
-            height: 48,
+            height: 126,
             child: ListView(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               children: [
-                for (final (i, label, icon) in const [
-                  (0, 'Songs', Icons.music_note_rounded),
-                  (4, 'Playlists', Icons.queue_music_rounded),
-                  (1, 'Albums', Icons.album_rounded),
-                  (2, 'Artists', Icons.person_rounded),
-                  (3, 'Videos', Icons.smart_display_rounded),
-                ])
+                for (final a in l.take(10))
                   Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: FilterChip(
-                      selected: _filter == i,
-                      showCheckmark: false,
-                      avatar: Icon(icon, size: 18),
-                      label: Text(label),
-                      onSelected: (_) => setState(() => _filter = i),
+                    padding: const EdgeInsets.only(right: 14),
+                    child: SquishyGesture(
+                      onTap: () => openYtArtist(context, a.url, a.name,
+                          thumbnail: a.thumbnail),
+                      child: SizedBox(
+                        width: 88,
+                        child: Column(
+                          children: [
+                            YtNetworkImage(
+                                url: a.thumbnail,
+                                size: 84,
+                                circle: true,
+                                fallbackIcon: Icons.person_rounded),
+                            const SizedBox(height: 7),
+                            Text(a.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
               ],
             ),
           ),
-        Expanded(
-          child: _source == 0 ? _localResults(pal, q) : _ytResults(pal, q),
-        ),
+        ],
+      ),
+    );
+
+    final albums = _fb<YtAlbum>(
+      _ytAlbums,
+      (l) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ytSectionHeader('Albums', onSeeAll: () => setState(() => _filter = 1)),
+          SizedBox(
+            height: 196,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final a in l.take(10))
+                  Padding(
+                    padding: const EdgeInsets.only(right: 14),
+                    child: MediaCard(
+                      width: 138,
+                      cover: YtNetworkImage(url: a.thumbnail, size: 138),
+                      title: a.title,
+                      subtitle: a.artist,
+                      onTap: () => openYtAlbum(context, a),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final playlists = _fb<YtPlaylistRef>(
+      _ytPlaylists,
+      (l) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ytSectionHeader('Playlists', onSeeAll: () => setState(() => _filter = 4)),
+          SizedBox(
+            height: 196,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final pl in l.take(10))
+                  Padding(
+                    padding: const EdgeInsets.only(right: 14),
+                    child: MediaCard(
+                      width: 138,
+                      cover: YtNetworkImage(url: pl.thumbnail, size: 138),
+                      title: pl.title,
+                      subtitle: pl.subtitle,
+                      onTap: () => openYtPlaylistRef(context, pl),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+      children: [
+        _in(top),
+        _in(songs, ms: 80),
+        _in(artists, ms: 160),
+        _in(albums, ms: 240),
+        _in(playlists, ms: 320),
       ],
     );
   }
@@ -18765,6 +19135,8 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _ytResults(AppPalette pal, String q) {
     switch (_filter) {
+      case 5:
+        return _allResults(pal, q);
       case 4:
         _ytPlaylists ??= YouTubeMusic.searchPlaylists(q);
         return FutureBuilder<List<YtPlaylistRef>>(
