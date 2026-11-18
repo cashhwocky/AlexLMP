@@ -1070,9 +1070,9 @@ class AiDjState extends ChangeNotifier {
 
   String get voiceTitle {
     for (final v in voices) {
-      if (v.\$1 == voice) return v.\$2;
+      if (v.$1 == voice) return v.$2;
     }
-    return voices.first.\$2;
+    return voices.first.$2;
   }
 
   Future<void> _loadVoicePref() async {
@@ -1163,38 +1163,38 @@ Future<void> showAiDjVoicePicker(
                   style: TextStyle(color: Colors.white60, fontSize: 13.5),
                 ),
                 const SizedBox(height: 14),
-                for (final v in AiDjState.i.voices)
+                for (final v in AiDjState.voices)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(20),
                       onTap: () async {
                         HapticFeedback.selectionClick();
-                        await AiDjState.i.setVoice(v.\$1);
-                        await onPreview(v.\$1);
+                        await AiDjState.i.setVoice(v.$1);
+                        await onPreview(v.$1);
                       },
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 16, vertical: 13),
                         decoration: BoxDecoration(
-                          color: current == v.\$1
+                          color: current == v.$1
                               ? const Color(0xFF22D3EE).withOpacity(0.16)
                               : Colors.white.withOpacity(0.05),
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
-                            color: current == v.\$1
+                            color: current == v.$1
                                 ? const Color(0xFF22D3EE)
                                 : Colors.white12,
-                            width: current == v.\$1 ? 1.4 : 1.0,
+                            width: current == v.$1 ? 1.4 : 1.0,
                           ),
                         ),
                         child: Row(
                           children: [
                             Icon(
-                              current == v.\$1
+                              current == v.$1
                                   ? Icons.radio_button_checked_rounded
                                   : Icons.radio_button_off_rounded,
-                              color: current == v.\$1
+                              color: current == v.$1
                                   ? const Color(0xFF22D3EE)
                                   : Colors.white54,
                               size: 22,
@@ -1205,7 +1205,7 @@ Future<void> showAiDjVoicePicker(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    v.\$2,
+                                    v.$2,
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 15.5,
@@ -1214,7 +1214,7 @@ Future<void> showAiDjVoicePicker(
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    v.\$3,
+                                    v.$3,
                                     style: const TextStyle(
                                       color: Colors.white60,
                                       fontSize: 12.5,
