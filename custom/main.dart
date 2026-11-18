@@ -38719,7 +38719,7 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
   }
 
   final rng = Random();
-  final recentIds = appState.recents;
+  final recentIds = appState.recent;
   final recentTracks = <TrackItem>[];
   for (final id in recentIds) {
     final t = audioHandler.trackById(id);
