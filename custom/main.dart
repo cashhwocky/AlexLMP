@@ -1443,7 +1443,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         if (smooth) {
           await player.setVolume(0);
           player.play();
-          unawaited(_fadeVolume(_userVolume, 450, seq));
+          unawaited(_fadeVolume(AiDjState.i.speaking ? 0.18 : _userVolume, 450, seq));
         } else {
           player.play();
         }
@@ -38822,15 +38822,86 @@ Future<void> stopAiDjSession() async {
   } catch (_) {}
 }
 
-/// Picks from listening history (heavy rotation), liked favorites, or unplayed
-/// discovery tracks ("hiding new stuff"), generates a natural DJ intro (using
-/// keyless AI with instant on-device fallback), ducks volume, speaks out loud,
-/// and drops the track.
+/// Automatically gathers tracks from the active library, cached YouTube Music
+/// home shelves, Liked Music, local device audio, or live YouTube Music search
+/// so AI DJ starts immediately on cold boot without requiring you to play a song first.
+Future<List<TrackItem>> _ensureDjPool() async {
+  final pool = <TrackItem>[...audioHandler.tracks];
+  final seen = <String>{for (final t in pool) t.id};
+
+  void addTrack(TrackItem t) {
+    if (seen.add(t.id)) pool.add(t);
+  }
+
+  // 1. Pull from cached YouTube Music Liked songs
+  try {
+    final cachedLiked = YouTubeMusic.cachedPlaylistPage('LM', title: 'Liked on YouTube');
+    if (cachedLiked != null) {
+      for (final t in cachedLiked.tracks) {
+        addTrack(t);
+      }
+    }
+  } catch (_) {}
+
+  // 2. Pull from cached YouTube Music Home shelves (Quick picks, Listen again, Mixes)
+  try {
+    final shelves = YouTubeMusic.cachedHomeFeed() ?? const <YtShelf>[];
+    for (final s in shelves) {
+      for (final it in s.items) {
+        if (it.kind == 'song' || it.kind == 'video') {
+          addTrack(YouTubeMusic.trackFromShelf(it, it.subtitle));
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 3. If still empty on cold boot, scan local audio or fetch live YouTube Music feed/search
+  if (pool.isEmpty) {
+    try {
+      await scanDeviceAudio();
+      for (final t in audioHandler.tracks) {
+        addTrack(t);
+      }
+    } catch (_) {}
+  }
+
+  if (pool.isEmpty) {
+    try {
+      final liveShelves = await YouTubeMusic.homeFeed(refresh: true);
+      for (final s in liveShelves) {
+        for (final it in s.items) {
+          if (it.kind == 'song' || it.kind == 'video') {
+            addTrack(YouTubeMusic.trackFromShelf(it, it.subtitle));
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (pool.isEmpty) {
+    try {
+      final hits = await YouTubeMusic.search('trending hits mix');
+      for (final t in hits) {
+        addTrack(t);
+      }
+    } catch (_) {}
+  }
+
+  return pool;
+}
+
 Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
-  final all = audioHandler.tracks;
+  AiDjState.i.update(
+    isActive: true,
+    isSpeaking: true,
+    text: "Tuning into your rotation and mixing in fresh picks…",
+    tag: "TUNING IN",
+  );
+
+  final all = await _ensureDjPool();
   if (all.isEmpty) {
-    const msg = "Load or scan some music first so I can spin a set for you!";
-    AiDjState.i.update(isActive: true, text: msg, tag: "WAITING");
+    const msg = "Check your internet connection or add local songs so I can spin a set for you!";
+    AiDjState.i.update(isActive: false, isSpeaking: false, text: msg, tag: "OFFLINE");
     try {
       await _mediaChannel.invokeMethod('speakDj', {'text': msg});
     } catch (_) {}
@@ -38841,12 +38912,20 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
   final recentIds = appState.recent;
   final recentTracks = <TrackItem>[];
   for (final id in recentIds) {
-    final t = audioHandler.trackById(id);
+    final t = audioHandler.trackById(id) ??
+        all.where((x) => x.id == id).firstOrNull;
     if (t != null) recentTracks.add(t);
   }
-  final likedTracks = audioHandler.likedTracks;
-  final unplayedTracks =
+  final likedTracks = all.where((t) => appState.isLiked(t.id)).toList();
+  final discoveryTracks =
       all.where((t) => !recentIds.contains(t.id)).toList();
+
+  // Build a full shuffled queue of 18 tracks mixing history, favorites, and new discoveries
+  final sessionQueue = <TrackItem>[];
+  final usedIds = <String>{};
+  void addSessionTrack(TrackItem t) {
+    if (usedIds.add(t.id)) sessionQueue.add(t);
+  }
 
   TrackItem chosen;
   String modeTag;
@@ -38859,12 +38938,12 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
     chosen = recentTracks[rng.nextInt(recentTracks.length)];
     modeTag = "FROM YOUR HISTORY";
     fallbackIntro =
-        "Alright, jumping into your recent rotation. You've been rinsing ${chosen.artist} lately, so here's ${chosen.title}.";
-  } else if (mode == 1 && unplayedTracks.isNotEmpty) {
-    chosen = unplayedTracks[rng.nextInt(unplayedTracks.length)];
+        "Hey! Jumping straight into your recent rotation. You've been playing ${chosen.artist} lately, so here's ${chosen.title}.";
+  } else if (mode == 1 && discoveryTracks.isNotEmpty) {
+    chosen = discoveryTracks[rng.nextInt(discoveryTracks.length)];
     modeTag = "NEW DISCOVERY";
     fallbackIntro =
-        "Time to switch it up and sneak in something fresh you haven't spun in a minute. Check out ${chosen.title} by ${chosen.artist}.";
+        "Alright, switching up the vibe with something fresh for your rotation. Check out ${chosen.title} by ${chosen.artist}.";
   } else if (likedTracks.isNotEmpty) {
     chosen = likedTracks[rng.nextInt(likedTracks.length)];
     modeTag = "LIKED FAVORITE";
@@ -38872,31 +38951,41 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
         "Bringing back one of your certified favorites right now. Here is ${chosen.title} by ${chosen.artist}.";
   } else {
     chosen = all[rng.nextInt(all.length)];
-    modeTag = "DJ PICK";
+    modeTag = "DJ MIX";
     fallbackIntro =
-        "Keeping the vibe moving right now with ${chosen.title} by ${chosen.artist}. Let's get into it.";
+        "Let's get the session rolling right now with ${chosen.title} by ${chosen.artist}.";
   }
 
-  AiDjState.i.update(
-    isActive: true,
-    isSpeaking: true,
-    text: "Cooking up your next transition…",
-    tag: modeTag,
-  );
+  addSessionTrack(chosen);
+  final shuffledPool = [...recentTracks, ...likedTracks, ...discoveryTracks, ...all]..shuffle(rng);
+  for (final t in shuffledPool) {
+    if (sessionQueue.length >= 20) break;
+    addSessionTrack(t);
+  }
 
-  // Ask keyless AI for a short Spotify-DJ voiceover; fall back immediately if offline
+  // Also fetch a couple fresh discovery tracks in the background for the next rotation
+  unawaited(() async {
+    try {
+      final seedArtist = chosen.artist != 'Unknown Artist' ? chosen.artist : chosen.title;
+      final more = await YouTubeMusic.search('$seedArtist mix');
+      if (more.isNotEmpty) {
+        audioHandler.restoreTracks(more.take(6).toList());
+      }
+    } catch (_) {}
+  }());
+
   String djSpeech = fallbackIntro;
   try {
     final prompt = modeTag == "FROM YOUR HISTORY"
-        ? "You are Spotify AI DJ. In 1-2 short punchy spoken sentences (under 28 words, no quotes or emojis), hype up playing '${chosen.title}' by '${chosen.artist}' from the user's listening history."
+        ? "You are Spotify AI DJ. In 1-2 short natural spoken sentences (under 25 words, no quotes or emojis), hype up playing '${chosen.title}' by '${chosen.artist}' from the user's listening history."
         : modeTag == "NEW DISCOVERY"
-            ? "You are Spotify AI DJ. In 1-2 short punchy spoken sentences (under 28 words, no quotes or emojis), tell the listener you're sneaking in a fresh hidden gem they haven't played yet: '${chosen.title}' by '${chosen.artist}'."
-            : "You are Spotify AI DJ. In 1-2 short punchy spoken sentences (under 28 words, no quotes or emojis), introduce their favorite track '${chosen.title}' by '${chosen.artist}'.";
+            ? "You are Spotify AI DJ. In 1-2 short natural spoken sentences (under 25 words, no quotes or emojis), introduce a fresh discovery track '${chosen.title}' by '${chosen.artist}'."
+            : "You are Spotify AI DJ. In 1-2 short natural spoken sentences (under 25 words, no quotes or emojis), introduce their favorite track '${chosen.title}' by '${chosen.artist}'.";
     final reply = await AiHelper.ask(
       [
         {'role': 'user', 'content': prompt}
       ],
-      maxTokens: 70,
+      maxTokens: 65,
       timeout: const Duration(seconds: 4),
     );
     if (reply != null && reply.trim().isNotEmpty) {
@@ -38911,33 +39000,30 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
     tag: modeTag,
   );
 
-  // Start the song at ducked volume so the DJ talks over the intro like Spotify AI DJ
+  // Duck music volume to 18% while the DJ speaks out loud
   try {
-    await audioHandler.player.setVolume(0.22);
+    await audioHandler.player.setVolume(0.18);
   } catch (_) {}
 
-  if (chosen.isYouTube) {
-    await audioHandler.playYouTubeList([chosen], 0);
-  } else {
-    await audioHandler.playTrackById(chosen.id);
-  }
+  try {
+    await _mediaChannel.invokeMethod('speakDj', {'text': djSpeech});
+  } catch (_) {}
+
+  await audioHandler.playYouTubeList(sessionQueue, 0);
+
+  // Re-assert ducked volume right after playback starts
+  try {
+    if (AiDjState.i.speaking) {
+      await audioHandler.player.setVolume(0.18);
+    }
+  } catch (_) {}
 
   if (openInPlayer != null && openInPlayer.mounted) {
     openPlayer(openInPlayer);
   }
 
-  try {
-    await _mediaChannel.invokeMethod('speakDj', {'text': djSpeech});
-  } catch (_) {
-    AiDjState.i.setSpeaking(false);
-    try {
-      await audioHandler.player.setVolume(1.0);
-    } catch (_) {}
-  }
-
-  // Safety timer to restore full volume once speech finishes
   final wordCount = djSpeech.split(RegExp(r'\s+')).length;
-  final estMs = (wordCount * 390 + 900).clamp(2500, 9500);
+  final estMs = (wordCount * 380 + 1100).clamp(3000, 9500);
   Future.delayed(Duration(milliseconds: estMs), () async {
     if (AiDjState.i.speaking) {
       AiDjState.i.setSpeaking(false);
