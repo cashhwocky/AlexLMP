@@ -60,6 +60,7 @@ const List<ColorStopSet> kArtPalettes = [
 ];
 
 Future<void> main() async {
+  AiHelper.taste = aiTasteSummary;
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(
@@ -4373,12 +4374,10 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     _mediaChannel.setMethodCallHandler((call) async {
       if (call.method == 'djSpeaking') {
         final on = call.arguments == true;
-        AiDjState.i.setSpeaking(on);
-        if (!on) {
-          audioHandler.player.setVolume(1.0).catchError((_) {});
-          if (AiDjState.i.active && !audioHandler.player.playing) {
-            audioHandler.player.play().catchError((_) {});
-          }
+        if (on) {
+          AiDjState.i.setSpeaking(true);
+        } else {
+          unawaited(runDjPendingDrop());
         }
         return null;
       }
@@ -5513,6 +5512,76 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         return 'Shuffle is on';
       case 'mix':
         return aiMixPlay(query);
+      case 'like':
+      case 'unlike':
+        final cur = audioHandler.currentTrack;
+        if (cur == null) return 'Nothing is playing';
+        final want = action == 'like';
+        if (appState.isLiked(cur.id) != want) appState.toggleLike(cur.id);
+        return want ? 'Liked ${cur.title}' : 'Removed ${cur.title} from your likes';
+      case 'repeat':
+        final q = query.toLowerCase();
+        final mode = q.contains('one') || q.contains('song')
+            ? AudioServiceRepeatMode.one
+            : (q.contains('off') || q.contains('no'))
+                ? AudioServiceRepeatMode.none
+                : AudioServiceRepeatMode.all;
+        await audioHandler.setRepeatMode(mode);
+        return mode == AudioServiceRepeatMode.none
+            ? 'Repeat is off'
+            : mode == AudioServiceRepeatMode.one
+                ? 'Repeating this song'
+                : 'Repeating the queue';
+      case 'unshuffle':
+        await audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
+        return 'Shuffle is off';
+      case 'sleep':
+        final q = query.toLowerCase();
+        if (q.contains('off') || q.contains('cancel')) {
+          audioHandler.setSleepTimer(null);
+          return 'Sleep timer off';
+        }
+        if (q.contains('end') || q.contains('song')) {
+          audioHandler.setSleepTimer(null, endOfSong: true);
+          return 'Stopping after this song';
+        }
+        final n = int.tryParse(RegExp(r'\d+').firstMatch(q)?.group(0) ?? '') ?? 30;
+        final mins = q.contains('hour') ? n * 60 : n;
+        audioHandler.setSleepTimer(Duration(minutes: mins.clamp(1, 600)));
+        return 'Sleep timer: $mins min';
+      case 'volume':
+        final n = int.tryParse(RegExp(r'\d+').firstMatch(query)?.group(0) ?? '');
+        if (n == null) return 'Tell me a volume from 0 to 100';
+        await audioHandler.player.setVolume((n.clamp(0, 100)) / 100);
+        return 'Volume $n%';
+      case 'dj':
+        if (query.toLowerCase().contains('stop') ||
+            query.toLowerCase().contains('off')) {
+          await stopAiDjSession();
+          return 'AI DJ is off';
+        }
+        await startOrStepAiDj();
+        return 'AI DJ is on';
+      case 'playlist':
+        // "Name | Song - Artist; Song - Artist; ..."
+        final parts = query.split('|');
+        final name = parts.first.trim().isEmpty ? 'AI playlist' : parts.first.trim();
+        final songs = parts.length > 1
+            ? parts.sublist(1).join('|').split(RegExp(r'[;\n]'))
+            : <String>[];
+        final pl = appState.createPlaylist(name);
+        var added = 0;
+        for (final raw in songs.take(40)) {
+          final q = raw.trim().replaceAll(' - ', ' ');
+          if (q.isEmpty) continue;
+          TrackItem? t = _aiFindLocal(q);
+          t ??= await _aiFindYt(q);
+          if (t == null) continue;
+          final lib = audioHandler.ensureInLibrary(t);
+          appState.addToPlaylist(pl.id, lib.id);
+          added++;
+        }
+        return 'Made the playlist "$name" with $added ${added == 1 ? 'song' : 'songs'}';
       case 'play':
       case 'queue':
         if (query.trim().isEmpty) return 'Tell me which song to play';
@@ -14862,6 +14931,25 @@ class NowPlayingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // While the AI DJ talks, it takes over the whole player (like a radio
+    // host on screen): moving voice, live captions, tap to skip.
+    return Stack(
+      children: [
+        Positioned.fill(child: _player(context)),
+        Positioned.fill(
+          child: AiDjSpeakingOverlay(
+            accent: appState.palette.accent,
+            track: audioHandler.currentTrack == null
+                ? ''
+                : '${audioHandler.currentTrack!.title} · ${audioHandler.currentTrack!.artist}',
+            onSkip: skipAiDjTalk,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _player(BuildContext context) {
     return ListenableBuilder(
       listenable: Listenable.merge([
         appState,
@@ -14885,20 +14973,7 @@ class NowPlayingScreen extends StatelessWidget {
             final repeat = state.repeatMode;
             final liked = appState.isLiked(track.id);
 
-            Widget wrapDjOverlay(Widget p) => Stack(
-              children: [
-                p,
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  top: MediaQuery.of(context).padding.top + 56,
-                  child: AiDjPlayerBanner(
-                    accent: pal.accent,
-                    onNextVibe: () => startOrStepAiDj(),
-                  ),
-                ),
-              ],
-            );
+            Widget wrapDjOverlay(Widget p) => p;
 
             if (appState.playerStyle == 'bloom') {
               return SwipeDownDismiss(
@@ -30613,7 +30688,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.5.2';
+const String kAppVersion = '3.6.0';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -38919,12 +38994,134 @@ Future<String> aiMixPlay(String vibe) async {
 }
 
 
-// ─────────────────────── SPOTIFY-STYLE AI DJ ENGINE ───────────────────────
+/// What the AI knows about you: what's playing, what's next, what you've
+/// been playing, your likes, top artists and playlists. Sent with every AI
+/// request so answers fit your taste.
+String aiTasteSummary() {
+  final out = StringBuffer();
+  final h = DateTime.now().hour;
+  out.writeln('Time: ${h < 5 ? 'late night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 21 ? 'evening' : 'night'} (${DateTime.now().weekday >= 6 ? 'weekend' : 'weekday'}).');
+  final cur = audioHandler.currentTrack;
+  if (cur != null) out.writeln('Now playing: ${cur.title} - ${cur.artist}.');
+  final next = <TrackItem>[...audioHandler.upNext];
+  final idx = cur == null ? -1 : audioHandler.tracks.indexWhere((t) => t.id == cur.id);
+  if (idx >= 0) next.addAll(audioHandler.tracks.skip(idx + 1).take(4));
+  if (next.isNotEmpty) {
+    out.writeln('Up next: ${next.take(4).map((t) => '${t.title} - ${t.artist}').join('; ')}.');
+  }
+  final recent = <TrackItem>[];
+  for (final id in appState.recent.take(25)) {
+    final t = audioHandler.trackById(id);
+    if (t != null) recent.add(t);
+  }
+  if (recent.isNotEmpty) {
+    out.writeln('Recently played: ${recent.take(12).map((t) => '${t.title} - ${t.artist}').join('; ')}.');
+  }
+  final counts = <String, int>{};
+  void count(TrackItem t, int w) {
+    final a = t.artist.trim();
+    if (a.isEmpty || a == 'Unknown Artist') return;
+    for (final one in a.split(RegExp(r',|&| x | feat\.? ', caseSensitive: false))) {
+      final k = one.trim();
+      if (k.isNotEmpty) counts[k] = (counts[k] ?? 0) + w;
+    }
+  }
+  for (final t in recent) {
+    count(t, 2);
+  }
+  final liked = audioHandler.likedTracks;
+  for (final t in liked) {
+    count(t, 1);
+  }
+  final top = counts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+  if (top.isNotEmpty) {
+    out.writeln('Favourite artists: ${top.take(10).map((e) => e.key).join(', ')}.');
+  }
+  if (liked.isNotEmpty) {
+    final sample = [...liked]..shuffle(Random());
+    out.writeln('Some liked songs: ${sample.take(10).map((t) => '${t.title} - ${t.artist}').join('; ')}.');
+  }
+  if (appState.playlists.isNotEmpty) {
+    out.writeln('Their playlists: ${appState.playlists.take(8).map((p) => p.name).join(', ')}.');
+  }
+  return out.toString().trim();
+}
+
+// ─────────────────────────────── AI DJ ENGINE ───────────────────────────────
 
 int _djStep = 0;
 int _djSongsSinceTalk = 0;
 String? _djLastTrackId;
 bool _djTriggering = false;
+DateTime _djTrackStarted = DateTime.now();
+int _djQuickSkips = 0;
+TrackItem? _djPrevTrack;
+
+/// What to do when the DJ finishes talking (start the set / resume).
+Future<void> Function()? _djPendingDrop;
+
+/// Runs the waiting "drop" once: when the voice ends, or when you skip it.
+Future<void> runDjPendingDrop() async {
+  final f = _djPendingDrop;
+  _djPendingDrop = null;
+  if (AiDjState.i.speaking) AiDjState.i.setSpeaking(false);
+  try {
+    await audioHandler.player.setVolume(1.0);
+  } catch (_) {}
+  if (f != null) {
+    await f();
+  } else if (AiDjState.i.active && !audioHandler.player.playing) {
+    try {
+      await audioHandler.player.play();
+    } catch (_) {}
+  }
+}
+
+/// "Tap to skip the talk" on the DJ screen.
+Future<void> skipAiDjTalk() async {
+  try {
+    await _mediaChannel.invokeMethod('stopDj');
+  } catch (_) {}
+  await runDjPendingDrop();
+}
+
+/// The DJ says [speech] (on screen and out loud), then runs [drop].
+Future<void> _djSay(String speech, String tag,
+    {required Future<void> Function() drop}) async {
+  _djPendingDrop = drop;
+  AiDjState.i.update(isActive: true, isSpeaking: true, text: speech, tag: tag);
+  try {
+    await audioHandler.player.pause();
+  } catch (_) {}
+  try {
+    await _mediaChannel
+        .invokeMethod('speakDj', {'text': speech, 'voice': AiDjState.i.voice});
+  } catch (_) {}
+  // Backup in case the voice never reports that it finished.
+  final words = speech.split(RegExp(r'\s+')).length;
+  final ms = (words * 420 + 2500).clamp(4000, 16000);
+  Future.delayed(Duration(milliseconds: ms), () {
+    if (identical(_djPendingDrop, drop)) runDjPendingDrop();
+  });
+}
+
+/// Asks the AI for songs that keep the set flowing and queues them.
+void _djQueueAiPicks(String direction, {int count = 8}) {
+  unawaited(() async {
+    try {
+      final cur = audioHandler.currentTrack;
+      final songs = await AiHelper.mix(direction,
+          count: count,
+          nowPlaying: cur == null ? '' : '${cur.title} - ${cur.artist}',
+          fresh: true);
+      for (final s in songs) {
+        if (!AiDjState.i.active) return;
+        final t = await aiResolveYt(s);
+        if (t != null) audioHandler.addToQueue([t]);
+      }
+    } catch (_) {}
+  }());
+}
 
 Future<void> stopAiDjSession() async {
   _djSongsSinceTalk = 0;
@@ -38945,78 +39142,78 @@ Future<void> stopAiDjSession() async {
 void onDjTrackAdvanced(TrackItem current) {
   if (!AiDjState.i.active || _djTriggering) return;
   if (current.id == _djLastTrackId) return;
+  final quick = DateTime.now().difference(_djTrackStarted).inSeconds < 30;
+  _djTrackStarted = DateTime.now();
+  final prev = _djPrevTrack;
+  _djPrevTrack = current;
   _djLastTrackId = current.id;
   _djSongsSinceTalk++;
 
-  if (_djSongsSinceTalk >= 5) {
+  // Skipping songs fast tells the DJ it's the wrong vibe.
+  _djQuickSkips = quick ? _djQuickSkips + 1 : 0;
+  if (_djQuickSkips >= 2) {
+    _djQuickSkips = 0;
     _djSongsSinceTalk = 0;
-    unawaited(_speakDjVibeShift(current));
+    unawaited(_speakDjSkipReaction(current, prev));
+    return;
+  }
+
+  if (_djSongsSinceTalk >= 4) {
+    _djSongsSinceTalk = 0;
+    unawaited(_speakDjVibeShift(current, prev));
   }
 }
 
-Future<void> _speakDjVibeShift(TrackItem current) async {
+Future<void> _speakDjSkipReaction(TrackItem current, TrackItem? prev) async {
   if (_djTriggering) return;
   _djTriggering = true;
   try {
-    final rng = Random();
+    final line = await AiHelper.djLine(
+      'skip',
+      justPlayed: prev == null ? '' : '${prev.title} - ${prev.artist}',
+      next: '${current.title} - ${current.artist}',
+      taste: aiTasteSummary(),
+    );
+    _djQueueAiPicks(
+        'a clearly different direction from ${prev?.artist ?? current.artist}, still their taste',
+        count: 6);
+    await _djSay(line ?? "Not feeling those? Say less. Switching the whole vibe up for you.",
+        'SWITCHING IT UP', drop: () async {
+      if (AiDjState.i.active) await audioHandler.player.play();
+    });
+  } finally {
+    _djTriggering = false;
+  }
+}
+
+Future<void> _speakDjVibeShift(TrackItem current, [TrackItem? prev]) async {
+  if (_djTriggering) return;
+  _djTriggering = true;
+  try {
     final mode = _djStep % 4;
     _djStep++;
-
-    String tag;
-    String speech;
-    if (mode == 0) {
-      tag = "VIBE SHIFT";
-      speech = "That was a solid five-track run. Let's switch up the energy and take the rotation in a fresh direction.";
-    } else if (mode == 1) {
-      tag = "FROM YOUR HISTORY";
-      speech = "Five songs deep into the set. Diving back into your heavy rotation with some tracks you've had on repeat lately.";
-    } else if (mode == 2) {
-      tag = "NEW DISCOVERY";
-      speech = "Time to flip the vibe for the next stretch. Sneaking in some fresh picks from around your library.";
-    } else {
-      tag = "CERTIFIED FAVORITES";
-      speech = "Keeping the momentum rolling. Let's bring back a few of your liked favorites for this next block.";
-    }
-
-    unawaited(() async {
-      try {
-        final seed = current.artist != 'Unknown Artist' ? current.artist : current.title;
-        final more = await YouTubeMusic.search('$seed mix');
-        if (more.isNotEmpty) {
-          more.shuffle(rng);
-          audioHandler.addToQueue(more.take(3).toList());
-        }
-      } catch (_) {}
-    }());
-
-    AiDjState.i.update(
-      isActive: true,
-      isSpeaking: true,
-      text: speech,
-      tag: tag,
+    const tags = ['VIBE SHIFT', 'FROM YOUR HISTORY', 'NEW DISCOVERY', 'CERTIFIED FAVORITES'];
+    const fallback = [
+      "That was a solid run. Let's switch up the energy and take it somewhere fresh.",
+      "Diving back into your heavy rotation with some tracks you've had on repeat lately.",
+      "Time to flip the vibe. Sneaking in some fresh picks I think you'll love.",
+      "Keeping the momentum rolling with a few of your liked favorites.",
+    ];
+    const directions = [
+      'switch the energy, same overall taste',
+      'songs from their recent heavy rotation and favourite artists',
+      'new discoveries they have probably never heard, matching their taste',
+      'their all-time favourites and liked songs',
+    ];
+    final line = await AiHelper.djLine(
+      tags[mode].toLowerCase(),
+      justPlayed: prev == null ? '' : '${prev.title} - ${prev.artist}',
+      next: '${current.title} - ${current.artist}',
+      taste: aiTasteSummary(),
     );
-
-    // Pause the track while the DJ speaks the transition line so the song starts right after!
-    try {
-      await audioHandler.player.pause();
-    } catch (_) {}
-
-    try {
-      await _mediaChannel.invokeMethod('speakDj', {'text': speech, 'voice': AiDjState.i.voice});
-    } catch (_) {}
-
-    final wordCount = speech.split(RegExp(r'\s+')).length;
-    final estMs = (wordCount * 350 + 700).clamp(2400, 6500);
-    Future.delayed(Duration(milliseconds: estMs), () async {
-      if (AiDjState.i.speaking) {
-        AiDjState.i.setSpeaking(false);
-      }
-      try {
-        await audioHandler.player.setVolume(1.0);
-        if (AiDjState.i.active) {
-          audioHandler.player.play();
-        }
-      } catch (_) {}
+    _djQueueAiPicks(directions[mode], count: 4);
+    await _djSay(line ?? fallback[mode], tags[mode], drop: () async {
+      if (AiDjState.i.active) await audioHandler.player.play();
     });
   } finally {
     _djTriggering = false;
@@ -39150,36 +39347,32 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
     }
 
     _djLastTrackId = chosen.id;
+    _djPrevTrack = chosen;
+    _djTrackStarted = DateTime.now();
+    _djQuickSkips = 0;
 
+    // A personal intro from the AI (falls back to the line above).
     AiDjState.i.update(
-      isActive: true,
-      isSpeaking: true,
-      text: djSpeech,
-      tag: modeTag,
+        isActive: true, isSpeaking: false, text: 'Warming up...', tag: modeTag);
+    final ai = await AiHelper.djLine(
+      'intro',
+      justPlayed: '',
+      next: '${chosen.title} - ${chosen.artist}',
+      taste: aiTasteSummary(),
     );
+    if (ai != null) djSpeech = ai;
 
-    // Pause current audio, speak the short vibe intro, then drop the track right when the DJ finishes!
-    try {
-      await audioHandler.player.pause();
-    } catch (_) {}
-
-    try {
-      await _mediaChannel.invokeMethod('speakDj', {'text': djSpeech, 'voice': AiDjState.i.voice});
-    } catch (_) {}
-
-    final wordCount = djSpeech.split(RegExp(r'\s+')).length;
-    final estMs = (wordCount * 350 + 600).clamp(2200, 5500);
-    Future.delayed(Duration(milliseconds: estMs), () async {
-      if (AiDjState.i.speaking) {
-        AiDjState.i.setSpeaking(false);
-      }
+    // Open the player now so you see the DJ talking.
+    if (openInPlayer != null && openInPlayer.mounted) {
+      openPlayer(openInPlayer);
+    }
+    await _djSay(djSpeech, modeTag, drop: () async {
       try {
-        await audioHandler.player.setVolume(1.0);
         await audioHandler.playYouTubeList(sessionQueue, 0, fromDj: true);
-        if (openInPlayer != null && openInPlayer.mounted) {
-          openPlayer(openInPlayer);
-        }
       } catch (_) {}
+      // Then let the AI plan the rest of the set so it flows.
+      _djQueueAiPicks('a DJ set that flows naturally from ${chosen.title} by ${chosen.artist}, mixing favourites and discoveries',
+          count: 10);
     });
 
     return djSpeech;

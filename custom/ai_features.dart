@@ -36,14 +36,112 @@ class AiHelper {
 
   static String? lastProblem;
 
+  /// What the app knows about your listening (set in main.dart).
+  static String Function()? taste;
+
+  static String tasteText() {
+    try {
+      return taste?.call() ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Sends a whole conversation to the AI and returns its reply.
+  ///
+  /// Tries, in order: your own AI service and key (Settings > AI), the free
+  /// Pollinations endpoint, the older Pollinations endpoint, and finally a
+  /// small built-in fallback so commands still work offline.
   static Future<String?> ask(
     List<Map<String, String>> messages, {
-    int maxTokens = 400,
-    Duration timeout = const Duration(seconds: 8),
+    int maxTokens = 700,
+    Duration timeout = const Duration(seconds: 30),
+    bool json = false,
+    double temperature = 0.8,
+    bool allowLocal = true,
   }) async {
     await AiConfig.load();
     lastProblem = null;
+    final problems = <String>[];
 
+    Future<String?> post(String url, String? key, String model,
+        {bool jsonMode = false}) async {
+      final client = http.Client();
+      try {
+        final body = <String, dynamic>{
+          'model': model,
+          'messages': messages,
+          'max_tokens': maxTokens,
+          'temperature': temperature,
+          if (jsonMode) 'response_format': {'type': 'json_object'},
+        };
+        final res = await client
+            .post(
+              Uri.parse(url),
+              headers: {
+                'Content-Type': 'application/json',
+                if (key != null && key.isNotEmpty) 'Authorization': 'Bearer $key',
+              },
+              body: jsonEncode(body),
+            )
+            .timeout(timeout);
+        final text = utf8.decode(res.bodyBytes);
+        if (res.statusCode != 200) {
+          problems.add('$url -> HTTP ${res.statusCode}: '
+              '${text.length > 220 ? text.substring(0, 220) : text}');
+          // Some models don't support JSON mode: try once without it.
+          if (jsonMode && res.statusCode == 400) {
+            return post(url, key, model);
+          }
+          return null;
+        }
+        final j = jsonDecode(text);
+        final out = (j['choices']?[0]?['message']?['content'] ?? '')
+            .toString()
+            .trim();
+        if (out.isEmpty) {
+          problems.add('$url -> empty reply');
+          return null;
+        }
+        return out;
+      } catch (e) {
+        problems.add('$url -> $e');
+        return null;
+      } finally {
+        client.close();
+      }
+    }
+
+    final base = AiConfig.base.replaceAll(RegExp(r'/+$'), '');
+    final key = AiConfig.key;
+
+    // 1. Your service + key.
+    var r = await post('$base/chat/completions', key, AiConfig.model,
+        jsonMode: json);
+    // 2. The free Pollinations gateway with a standard model.
+    if (r == null && (key.isEmpty || !base.contains('pollinations'))) {
+      r = await post('https://gen.pollinations.ai/v1/chat/completions',
+          base.contains('pollinations') ? key : null, 'openai',
+          jsonMode: json);
+    }
+    if (r == null && AiConfig.model != 'openai' && base.contains('pollinations')) {
+      r = await post('$base/chat/completions', key, 'openai', jsonMode: json);
+    }
+    // 3. The older free endpoint (no key).
+    r ??= await post('https://text.pollinations.ai/openai', null, 'openai');
+    if (r != null) {
+      final low = r.toLowerCase();
+      if (r.startsWith('<') ||
+          low.contains('rate limit') ||
+          low.contains('enter.pollinations.ai')) {
+        problems.add('AI service answered: ${r.length > 160 ? r.substring(0, 160) : r}');
+        r = null;
+      }
+    }
+    if (r != null) return r;
+
+    lastProblem = problems.join('\n');
+    if (!allowLocal) return null;
     var sys = '';
     for (final m in messages) {
       if (m['role'] == 'system') {
@@ -52,29 +150,46 @@ class AiHelper {
       }
     }
     final usr = messages.isNotEmpty ? (messages.last['content'] ?? '') : '';
-
-    final client = http.Client();
-    try {
-      final prompt = sys.isEmpty ? usr : '$sys\n\nUser:$usr';
-      final uri = Uri.parse(
-        'https://text.pollinations.ai/${Uri.encodeComponent(prompt)}?model=openai-fast&seed=${DateTime.now().second}',
-      );
-      final res = await client.get(uri).timeout(const Duration(seconds: 6));
-      if (res.statusCode == 200) {
-        final body = utf8.decode(res.bodyBytes).trim();
-        if (!body.startsWith('<') &&
-            body.isNotEmpty &&
-            !body.toLowerCase().contains('rate limit') &&
-            !body.toLowerCase().contains('enter.pollinations.ai')) {
-          return body;
-        }
-      }
-    } catch (_) {
-    } finally {
-      client.close();
-    }
-
     return _localBrain(sys, usr);
+  }
+
+  /// A short spoken DJ line (no tags), or null if the AI isn't reachable.
+  static Future<String?> djLine(
+    String kind, {
+    required String justPlayed,
+    required String next,
+    String taste = '',
+  }) async {
+    final sys =
+        'You are the AI DJ inside AlexLMP, a music player. You talk to ONE listener like a real radio host: '
+        'warm, confident, natural, a little playful. Write ONE spoken line, 14 to 34 words, no emojis, '
+        'no hashtags, no quotes, no stage directions, nothing in brackets. Mention the artist (and song if it '
+        'sounds natural) of what plays next, and say something real and specific about it or why it fits right now '
+        '(the mood, the time of day, their taste). Never invent fake facts; if unsure, talk about the vibe.';
+    final usr = [
+      'Moment: $kind.',
+      if (justPlayed.isNotEmpty) 'Just played: $justPlayed.',
+      'Next song: $next.',
+      if (kind == 'skip') 'They just skipped two songs fast, so acknowledge it and promise a different direction.',
+      if (kind == 'intro') 'This is the very start of their DJ session: greet them first.',
+      if (taste.isNotEmpty) 'About the listener:\n$taste',
+    ].join('\n');
+    final r = await ask(
+      [
+        {'role': 'system', 'content': sys},
+        {'role': 'user', 'content': usr},
+      ],
+      maxTokens: 120,
+      temperature: 0.95,
+      timeout: const Duration(seconds: 9),
+      allowLocal: false,
+    );
+    if (r == null) return null;
+    final clean = r
+        .replaceAll(RegExp(r'\[\[.*?\]\]'), '')
+        .replaceAll(RegExp(r'[*_#"“”]'), '')
+        .trim();
+    return clean.isEmpty ? null : clean;
   }
 
   static Future<String> _localBrain(String sys, String usr) async {
@@ -167,7 +282,9 @@ class AiHelper {
     return "Got you—let's spin some $q right now.\n[[play:$q]]";
   }
 
-  static String problemText() => "Ready to spin—tell me any song, artist, or mood.";
+  static String problemText() => lastProblem == null || lastProblem!.isEmpty
+      ? "Ready to spin, tell me any song, artist, or mood."
+      : "Couldn't reach the AI right now.\n\nDetails: $lastProblem";
 
   static dynamic _json(String s) {
     final text = s.replaceAll(RegExp(r'```(?:json)?'), '').trim();
@@ -205,29 +322,75 @@ class AiHelper {
     if (q.isEmpty) return null;
     final key = q.toLowerCase();
     if (_searchCache.containsKey(key)) return _searchCache[key];
-    final reply = await _localBrain('search brain of a music player', q);
-    final j = _json(reply);
+    final taste = tasteText();
+    final reply = await ask([
+      {
+        'role': 'system',
+        'content':
+            'You are the search brain of a music player. Read what the user typed and reply with JSON only: '
+                '{"corrected": "<the search with typos fixed>", "kind": "song|artist|album|playlist|mood", '
+                '"note": "<one short friendly line about what you found, max 12 words>", '
+                '"picks": [{"t": "<real song title>", "a": "<real artist>"}]}. '
+                'Give 8 real, existing songs that best match: exact songs if they named one, otherwise songs '
+                'for the mood, genre, era or activity. Prefer songs that fit the listener below. '
+                'Never invent songs.${taste.isEmpty ? '' : '\n\nListener:\n$taste'}'
+      },
+      {'role': 'user', 'content': q},
+    ], maxTokens: 600, json: true, temperature: 0.4, timeout: const Duration(seconds: 15));
+    final j = reply == null ? null : _json(reply);
     if (j is Map) {
       final r = AiSearchResult(
-        q,
-        'song',
-        'Top picks for "$q"',
+        ('${j['corrected'] ?? q}').trim().isEmpty ? q : '${j['corrected']}',
+        '${j['kind'] ?? 'song'}',
+        ('${j['note'] ?? ''}').trim().isEmpty ? 'Top picks for "$q"' : '${j['note']}',
         _songs(j['picks'], max: 8),
       );
-      if (r.picks.isNotEmpty) _searchCache[key] = r;
-      return r;
+      if (r.picks.isNotEmpty) {
+        _searchCache[key] = r;
+        return r;
+      }
+    }
+    // Fallback: plain YouTube Music matches.
+    final local = _json(await _localBrain('search brain of a music player', q));
+    if (local is Map) {
+      return AiSearchResult(q, 'song', 'Top picks for "$q"', _songs(local['picks'], max: 8));
     }
     return null;
   }
 
+  /// Real songs for a vibe, a request, or "more like this". Uses what the
+  /// listener likes and avoids what they just heard.
   static Future<List<AiSong>> mix(String vibe,
-      {int count = 10, String nowPlaying = ''}) async {
+      {int count = 10, String nowPlaying = '', bool fresh = false}) async {
     final v = vibe.trim().isEmpty ? nowPlaying : vibe.trim();
     final key = '${v.toLowerCase()}|$count';
-    if (_mixCache.containsKey(key)) return _mixCache[key]!;
-    final reply = await _localBrain('You build playlists for a music player', v);
-    final list = _songs(_json(reply), max: count);
-    if (list.isNotEmpty) _mixCache[key] = list;
+    if (!fresh && _mixCache.containsKey(key)) return _mixCache[key]!;
+    final taste = tasteText();
+    final reply = await ask([
+      {
+        'role': 'system',
+        'content':
+            'You build playlists for a music player like a great human DJ. Reply with JSON only: '
+                '{"songs": [{"t": "<real song title>", "a": "<real artist>"}]}. '
+                'Give exactly $count real, existing songs (no duplicates, no made-up titles) in an order that flows: '
+                'smooth energy, tempo and mood changes, varied artists (max 2 per artist). '
+                'Fit the request first, then the listener\'s taste. Do not repeat songs they just played or that are up next.'
+                '${taste.isEmpty ? '' : '\n\nListener:\n$taste'}'
+      },
+      {
+        'role': 'user',
+        'content': nowPlaying.isEmpty ? 'Request: $v' : 'Request: $v\nCurrently playing: $nowPlaying'
+      },
+    ], maxTokens: 900, json: true, temperature: fresh ? 1.0 : 0.8, timeout: const Duration(seconds: 25));
+    var list = <AiSong>[];
+    if (reply != null) {
+      final j = _json(reply);
+      list = _songs(j is Map ? (j['songs'] ?? j['picks'] ?? j['playlist']) : j, max: count);
+    }
+    if (list.isEmpty) {
+      list = _songs(_json(await _localBrain('You build playlists for a music player', v)), max: count);
+    }
+    if (list.isNotEmpty && !fresh) _mixCache[key] = list;
     return list;
   }
 
@@ -316,6 +479,39 @@ class AiHelper {
     } else {
       bodyText = '"$cleanT"${cleanA.isNotEmpty ? " by $cleanA" : ""} — tap any track below to jump into related songs.';
     }
+
+    // Ask the AI what the song is about, using the real facts above.
+    try {
+      final reply = await ask([
+        {
+          'role': 'system',
+          'content':
+              'You are a music expert inside a music player. Reply with JSON only: '
+                  '{"about": "<3 to 5 sentences: what the song is about, its sound, where it fits in the artist\'s '
+                  'work, and one interesting real detail. Only say things you are confident are true; if you do '
+                  'not know the song, describe its likely mood from the title and artist and say so.>", '
+                  '"similar": [{"t": "<real song>", "a": "<real artist>"}]} with 4 similar real songs.'
+        },
+        {
+          'role': 'user',
+          'content': 'Song: $cleanT${cleanA.isEmpty ? '' : ' by $cleanA'}\nFacts: ${facts.join('; ')}'
+              '${(realDescription ?? '').isEmpty ? '' : '\nAlbum notes: ${realDescription!.length > 600 ? realDescription.substring(0, 600) : realDescription}'}'
+        },
+      ], maxTokens: 500, json: true, temperature: 0.5, timeout: const Duration(seconds: 18), allowLocal: false);
+      final j = reply == null ? null : _json(reply);
+      if (j is Map) {
+        final about = ('${j['about'] ?? ''}').trim();
+        if (about.isNotEmpty) {
+          bodyText = facts.isEmpty ? about : '${facts.join(" • ")}\n\n$about';
+        }
+        final sim = _songs(j['similar'], max: 4);
+        if (sim.isNotEmpty) {
+          realSimilar
+            ..clear()
+            ..addAll(sim);
+        }
+      }
+    } catch (_) {}
 
     final simString = realSimilar.isEmpty
         ? ''
@@ -905,9 +1101,9 @@ class _AiSongInfoSheet extends StatelessWidget {
 class AiConfig {
   static String key = '';
   static String base = 'https://gen.pollinations.ai/v1';
-  static String model = 'openai/gpt-5.4-nano';
+  static String model = 'openai';
   static bool _loaded = false;
-  static bool get hasKey => true;
+  static bool get hasKey => key.isNotEmpty;
 
   static Future<void> load({bool force = false}) async {
     if (_loaded && !force) return;
@@ -917,7 +1113,8 @@ class AiConfig {
       final b = (p.getString('ai_base') ?? '').trim();
       final m = (p.getString('ai_model') ?? '').trim();
       if (b.isNotEmpty) base = b;
-      if (m.isNotEmpty) model = m;
+      // The old default model name doesn't exist on the free service.
+      if (m.isNotEmpty && m != 'openai/gpt-5.4-nano') model = m;
     } catch (_) {}
     _loaded = true;
   }
@@ -925,7 +1122,7 @@ class AiConfig {
   static Future<void> save(String k, String b, String m) async {
     key = k.trim();
     base = b.trim().isEmpty ? 'https://gen.pollinations.ai/v1' : b.trim();
-    model = m.trim().isEmpty ? 'openai/gpt-5.4-nano' : m.trim();
+    model = m.trim().isEmpty ? 'openai' : m.trim();
     _loaded = true;
     try {
       final p = await SharedPreferences.getInstance();
@@ -1047,7 +1244,7 @@ Future<void> showAiSetup(BuildContext context) async {
 }
 
 
-// ═══════════════════════════ SPOTIFY-STYLE AI DJ ═══════════════════════════
+// ═══════════════════════════════ AI DJ ═══════════════════════════════
 
 class AiDjState extends ChangeNotifier {
   static final AiDjState i = AiDjState._();
@@ -1353,7 +1550,7 @@ extension _TrigExt on double {
   }
 }
 
-/// Flush Spotify-style AI DJ Home Banner (NO voice picker button here).
+/// AI DJ Home banner (no voice picker button here).
 class AiDjHomeCard extends StatelessWidget {
   final VoidCallback onStartOrSkip;
   final VoidCallback onStop;
@@ -1430,7 +1627,7 @@ class AiDjHomeCard extends StatelessWidget {
                               child: Text(
                                 st.speaking
                                     ? 'LIVE ON AIR'
-                                    : (st.active ? st.modeTag : 'SPOTIFY AI DJ'),
+                                    : (st.active ? st.modeTag : 'AI DJ'),
                                 style: const TextStyle(
                                   color: Color(0xFF67E8F9),
                                   fontSize: 9.5,
@@ -1662,4 +1859,264 @@ class _AiDjLogoPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// ═══════════════════════ AI DJ: talking screen ═══════════════════════
+
+/// Covers the whole player while the AI DJ is talking: a big moving voice,
+/// the words appearing as they're spoken, and a tap to skip the talk.
+class AiDjSpeakingOverlay extends StatefulWidget {
+  final Color accent;
+  final String track;
+  final VoidCallback onSkip;
+  const AiDjSpeakingOverlay({
+    super.key,
+    required this.accent,
+    required this.track,
+    required this.onSkip,
+  });
+
+  @override
+  State<AiDjSpeakingOverlay> createState() => _AiDjSpeakingOverlayState();
+}
+
+class _AiDjSpeakingOverlayState extends State<AiDjSpeakingOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _t = AnimationController(
+      vsync: this, duration: const Duration(seconds: 6))
+    ..repeat();
+  DateTime? _since;
+  bool _was = false;
+
+  @override
+  void initState() {
+    super.initState();
+    AiDjState.i.addListener(_changed);
+    _changed();
+  }
+
+  void _changed() {
+    final now = AiDjState.i.speaking;
+    if (now && !_was) _since = DateTime.now();
+    _was = now;
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    AiDjState.i.removeListener(_changed);
+    _t.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final st = AiDjState.i;
+    final show = st.speaking && st.active;
+    final a = widget.accent;
+    final top = MediaQuery.of(context).padding.top;
+    final bottom = MediaQuery.of(context).padding.bottom;
+    return IgnorePointer(
+      ignoring: !show,
+      child: AnimatedOpacity(
+        opacity: show ? 1 : 0,
+        duration: Duration(milliseconds: show ? 320 : 520),
+        curve: Curves.easeOutCubic,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onSkip,
+          child: AnimatedBuilder(
+            animation: _t,
+            builder: (context, _) {
+              final v = _t.value * 2 * 3.141592653589793;
+              final words = st.line.split(RegExp(r'\s+'));
+              final elapsed = _since == null
+                  ? 0.0
+                  : DateTime.now().difference(_since!).inMilliseconds / 1000;
+              // About 2.7 words a second, like the voice.
+              final shown =
+                  (elapsed * 2.7 + 1).floor().clamp(0, words.length).toInt();
+              return Container(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment(0.3 * (v * 0.5).sin(), -0.35),
+                    radius: 1.25,
+                    colors: [
+                      Color.lerp(a, const Color(0xFF06B6D4), 0.35)!
+                          .withOpacity(0.55),
+                      const Color(0xF20A0A12),
+                    ],
+                  ),
+                ),
+                padding: EdgeInsets.fromLTRB(28, top + 24, 28, bottom + 28),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        AiDjLogoIcon(size: 26),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            st.modeTag.isEmpty ? 'YOUR DJ' : st.modeTag,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.6,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          AiDjState.i.voiceTitle.split(' ').first,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    SizedBox(
+                      width: 240,
+                      height: 240,
+                      child: CustomPaint(
+                        painter: _DjVoicePainter(phase: v, accent: a),
+                      ),
+                    ),
+                    const SizedBox(height: 34),
+                    // Live captions: the words appear as the DJ says them.
+                    Text.rich(
+                      TextSpan(children: [
+                        for (var i = 0; i < words.length; i++)
+                          TextSpan(
+                            text: '${words[i]} ',
+                            style: TextStyle(
+                              color: i < shown
+                                  ? Colors.white
+                                  : Colors.white.withOpacity(0.18),
+                            ),
+                          ),
+                      ]),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 25,
+                        height: 1.3,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (widget.track.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: Text(
+                          'Up next: ${widget.track}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 18, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.skip_next_rounded,
+                              color: Colors.white, size: 18),
+                          SizedBox(width: 6),
+                          Text('Tap to skip the talk',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A soft glowing orb with wavy rings that move like a voice.
+class _DjVoicePainter extends CustomPainter {
+  final double phase;
+  final Color accent;
+  _DjVoicePainter({required this.phase, required this.accent});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(size.width / 2, size.height / 2);
+    final r0 = size.width * 0.26;
+    final colors = [
+      accent,
+      const Color(0xFF06B6D4),
+      const Color(0xFF6366F1),
+      const Color(0xFF10B981),
+    ];
+    // Glow.
+    canvas.drawCircle(
+      c,
+      r0 * 1.9,
+      Paint()
+        ..shader = RadialGradient(colors: [
+          accent.withOpacity(0.45),
+          accent.withOpacity(0),
+        ]).createShader(Rect.fromCircle(center: c, radius: r0 * 1.9)),
+    );
+    // Wavy rings.
+    for (var k = 0; k < 4; k++) {
+      final path = Path();
+      final amp = r0 * (0.10 + 0.05 * k) *
+          (0.65 + 0.35 * (phase * 3 + k).sin().abs());
+      final base = r0 * (1.0 + 0.16 * k);
+      for (var i = 0; i <= 120; i++) {
+        final t = i / 120 * 6.283185307179586;
+        final wob = (t * (4 + k) + phase * (2 + k * 0.7)).sin() * amp +
+            (t * (7 - k) - phase * 1.6).sin() * amp * 0.45;
+        final r = base + wob;
+        final p = c + Offset(r * _cos(t), r * (t).sin());
+        i == 0 ? path.moveTo(p.dx, p.dy) : path.lineTo(p.dx, p.dy);
+      }
+      path.close();
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3.2 - k * 0.5
+          ..color = colors[k].withOpacity(0.85 - k * 0.15),
+      );
+    }
+    // Core.
+    canvas.drawCircle(
+      c,
+      r0 * (0.78 + 0.06 * (phase * 4).sin()),
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [colors[1], colors[2], accent],
+        ).createShader(Rect.fromCircle(center: c, radius: r0)),
+    );
+  }
+
+  static double _cos(double t) => (t + 1.5707963267948966).sin();
+
+  @override
+  bool shouldRepaint(_DjVoicePainter o) => o.phase != phase;
 }

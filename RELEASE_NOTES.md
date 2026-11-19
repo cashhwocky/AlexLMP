@@ -1,9 +1,18 @@
 All your music, one player.
 
-AlexLMP 3.5.2 fixes the version number.
+AlexLMP 3.6.0 makes the AI a lot smarter and gives the AI DJ a voice on screen.
 
-## Fixed
-- **Settings shows the right version again.** It was stuck on 3.3.0 since then, which also made the update checker think you were behind. It now says 3.5.2.
+## New
+- **A real AI brain.** The AI now remembers the whole conversation, uses your own AI key and model from Settings > AI, waits long enough for proper answers, and tries a backup service before giving up. If it still can't connect, it shows the exact error.
+- **It knows your taste.** Every answer, mix and search pick takes into account what's playing, what's up next, what you've played lately, your liked songs, your favorite artists and your playlists.
+- **The AI can run the app.** Just ask: play or queue songs, build and play a mix, save a whole new playlist to your library, like or unlike the song, skip, pause, shuffle, repeat, set a sleep timer, change the volume, or start and stop the AI DJ. It can do a few of these in one go.
+- **Smarter search and song info.** AI search understands moods and typos and picks real songs for you. "Ask AI" in the player explains what a song is about and suggests similar ones.
+- **A smarter AI DJ.** It talks about the actual artists and songs it's about to play, plans the set so it flows, keeps adding AI picks that fit, and if you skip two songs fast it notices and switches direction.
+- **The DJ takes over the player while it talks.** A big moving voice, the words appearing as they're spoken, and "Tap to skip the talk". The set starts right when the DJ finishes speaking.
+- The "Spotify AI DJ" label is gone. It's just the AI DJ.
+
+## From 3.5.2
+- Settings shows the right version again.
 
 ## From 3.3.0
 AlexLMP 3.3.0 puts AI into search, Home, the player and setup, and redoes the Bloom Home and player.
