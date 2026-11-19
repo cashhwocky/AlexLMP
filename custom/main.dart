@@ -30688,7 +30688,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.6.0';
+const String kAppVersion = '3.6.1';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -38854,36 +38854,27 @@ class BloomPlayerView extends StatelessWidget {
                           pressedScale: 0.92,
                           onTap: () {
                             HapticFeedback.mediumImpact();
-                            startOrStepAiDj();
+                            startOrStepAiDj(openInPlayer: context);
                           },
                           child: Container(
                             height: 54,
                             margin: const EdgeInsets.symmetric(horizontal: 2),
                             decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  const Color(0xFF22D3EE).withOpacity(0.24),
-                                  const Color(0xFF6366F1).withOpacity(0.26),
-                                  const Color(0xFFEC4899).withOpacity(0.24),
-                                ],
-                              ),
+                              color: c.lc,
                               borderRadius: BorderRadius.circular(26),
-                              border: Border.all(
-                                color: const Color(0xFF22D3EE).withOpacity(0.55),
-                                width: 1.1,
-                              ),
                             ),
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                const AiDjLogoIcon(size: 21),
+                                AiDjLogoIcon(
+                                    size: 22,
+                                    background: c.onLc,
+                                    foreground: c.lc),
                                 const SizedBox(height: 3),
                                 Text(
                                   'AI DJ',
                                   style: bloomText(10.5,
-                                      color: const Color(0xFF67E8F9),
+                                      color: c.onLc,
                                       weight: FontWeight.w800),
                                 ),
                               ],
@@ -39064,15 +39055,31 @@ Future<void> Function()? _djPendingDrop;
 Future<void> runDjPendingDrop() async {
   final f = _djPendingDrop;
   _djPendingDrop = null;
-  if (AiDjState.i.speaking) AiDjState.i.setSpeaking(false);
+  // The DJ screen fades away while the song slowly fades in.
   try {
-    await audioHandler.player.setVolume(1.0);
+    await audioHandler.player.setVolume(0);
   } catch (_) {}
+  if (AiDjState.i.speaking) AiDjState.i.setSpeaking(false);
   if (f != null) {
     await f();
   } else if (AiDjState.i.active && !audioHandler.player.playing) {
     try {
       await audioHandler.player.play();
+    } catch (_) {}
+  }
+  unawaited(_djFadeIn());
+}
+
+int _djFadeSeq = 0;
+Future<void> _djFadeIn() async {
+  final seq = ++_djFadeSeq;
+  const steps = 30;
+  for (var i = 1; i <= steps; i++) {
+    await Future.delayed(const Duration(milliseconds: 90));
+    if (seq != _djFadeSeq) return;
+    final v = Curves.easeInCubic.transform(i / steps);
+    try {
+      await audioHandler.player.setVolume(v);
     } catch (_) {}
   }
 }
@@ -39351,9 +39358,16 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
     _djTrackStarted = DateTime.now();
     _djQuickSkips = 0;
 
-    // A personal intro from the AI (falls back to the line above).
-    AiDjState.i.update(
-        isActive: true, isSpeaking: false, text: 'Warming up...', tag: modeTag);
+    // Open the player with the DJ screen up right away, then write the
+    // personal intro (falls back to the line above).
+    AiDjState.i.update(isActive: true, isSpeaking: true, text: '', tag: modeTag);
+    try {
+      await audioHandler.player.pause();
+    } catch (_) {}
+    if (openInPlayer != null && openInPlayer.mounted) {
+      openPlayer(openInPlayer);
+      openInPlayer = null;
+    }
     final ai = await AiHelper.djLine(
       'intro',
       justPlayed: '',

@@ -1809,56 +1809,71 @@ class AiDjPlayerBanner extends StatelessWidget {
 
 class AiDjLogoIcon extends StatelessWidget {
   final double size;
-  const AiDjLogoIcon({super.key, this.size = 22});
+  final Color? background;
+  final Color? foreground;
+  const AiDjLogoIcon(
+      {super.key, this.size = 22, this.background, this.foreground});
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: size,
       height: size,
-      child: CustomPaint(painter: _AiDjLogoPainter()),
+      child: CustomPaint(
+        painter: _AiDjLogoPainter(
+          background ?? const Color(0xFFD3C5F6),
+          foreground ?? const Color(0xFF271D40),
+        ),
+      ),
     );
   }
 }
 
+/// The AI DJ mark: a soft scalloped disc with a "voice" of three bars and a
+/// small spark, in the Bloom colours.
 class _AiDjLogoPainter extends CustomPainter {
+  final Color bg;
+  final Color fg;
+  const _AiDjLogoPainter(this.bg, this.fg);
+
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
     final c = Offset(size.width / 2, size.height / 2);
     final r = size.width / 2;
-
-    final grad = const LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [Color(0xFF10B981), Color(0xFF06B6D4), Color(0xFF6366F1)],
-    ).createShader(rect);
-    canvas.drawCircle(c, r, Paint()..shader = grad);
-
-    canvas.drawCircle(
-      c,
-      r * 0.80,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = size.width * 0.055
-        ..color = Colors.white.withOpacity(0.32),
-    );
-
-    final barPaint = Paint()
-      ..color = Colors.white
-      ..strokeCap = StrokeCap.round
-      ..strokeWidth = size.width * 0.105;
-
-    final heights = [0.22, 0.36, 0.22];
-    for (int i = -1; i <= 1; i++) {
-      final x = c.dx + i * (size.width * 0.22);
-      final h = size.height * heights[i + 1];
-      canvas.drawLine(Offset(x, c.dy - h), Offset(x, c.dy + h), barPaint);
+    // Scalloped disc (9 soft bumps).
+    final path = Path();
+    for (var i = 0; i <= 90; i++) {
+      final t = i / 90 * 6.283185307179586;
+      final rr = r / 1.07 * (1 + 0.07 * (9 * t + 1.5707963267948966).sin());
+      final p = c + Offset(rr * (t + 1.5707963267948966).sin(), rr * t.sin());
+      i == 0 ? path.moveTo(p.dx, p.dy) : path.lineTo(p.dx, p.dy);
     }
+    canvas.drawPath(path..close(), Paint()..color = bg);
+    final bar = Paint()
+      ..color = fg
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = size.width * 0.11;
+    const hs = [0.14, 0.27, 0.19];
+    for (var i = -1; i <= 1; i++) {
+      final x = c.dx + i * size.width * 0.19 - size.width * 0.04;
+      final h = size.height * hs[i + 1];
+      canvas.drawLine(Offset(x, c.dy - h), Offset(x, c.dy + h), bar);
+    }
+    // Spark.
+    final sx = c.dx + size.width * 0.27, sy = c.dy - size.height * 0.2;
+    final k = size.width * 0.09;
+    final spark = Path()
+      ..moveTo(sx, sy - k)
+      ..quadraticBezierTo(sx, sy, sx + k, sy)
+      ..quadraticBezierTo(sx, sy, sx, sy + k)
+      ..quadraticBezierTo(sx, sy, sx - k, sy)
+      ..quadraticBezierTo(sx, sy, sx, sy - k)
+      ..close();
+    canvas.drawPath(spark, Paint()..color = fg);
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _AiDjLogoPainter o) => o.bg != bg || o.fg != fg;
 }
 
 // ═══════════════════════ AI DJ: talking screen ═══════════════════════
@@ -1895,9 +1910,13 @@ class _AiDjSpeakingOverlayState extends State<AiDjSpeakingOverlay>
     _changed();
   }
 
+  String _line = '';
   void _changed() {
     final now = AiDjState.i.speaking;
-    if (now && !_was) _since = DateTime.now();
+    final line = AiDjState.i.line;
+    // Captions restart when the DJ starts talking or gets a new line.
+    if ((now && !_was) || line != _line) _since = DateTime.now();
+    _line = line;
     _was = now;
     if (mounted) setState(() {});
   }
@@ -1920,8 +1939,12 @@ class _AiDjSpeakingOverlayState extends State<AiDjSpeakingOverlay>
       ignoring: !show,
       child: AnimatedOpacity(
         opacity: show ? 1 : 0,
-        duration: Duration(milliseconds: show ? 320 : 520),
-        curve: Curves.easeOutCubic,
+        // Quick to appear, slow fade away into the song.
+        duration: Duration(milliseconds: show ? 250 : 1400),
+        curve: show ? Curves.easeOut : Curves.easeInOutCubic,
+        child: Material(
+        type: MaterialType.canvas,
+        color: const Color(0xFF0B0A12),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onSkip,
@@ -1937,14 +1960,15 @@ class _AiDjSpeakingOverlayState extends State<AiDjSpeakingOverlay>
               final shown =
                   (elapsed * 2.7 + 1).floor().clamp(0, words.length).toInt();
               return Container(
+                // Solid (no see-through): the DJ has the whole screen.
                 decoration: BoxDecoration(
                   gradient: RadialGradient(
                     center: Alignment(0.3 * (v * 0.5).sin(), -0.35),
                     radius: 1.25,
                     colors: [
-                      Color.lerp(a, const Color(0xFF06B6D4), 0.35)!
-                          .withOpacity(0.55),
-                      const Color(0xF20A0A12),
+                      Color.lerp(const Color(0xFF0B0A12),
+                          Color.lerp(a, const Color(0xFF06B6D4), 0.3)!, 0.42)!,
+                      const Color(0xFF0B0A12),
                     ],
                   ),
                 ),
@@ -1953,7 +1977,7 @@ class _AiDjSpeakingOverlayState extends State<AiDjSpeakingOverlay>
                   children: [
                     Row(
                       children: [
-                        AiDjLogoIcon(size: 26),
+                        const AiDjLogoIcon(size: 30),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
@@ -1986,6 +2010,16 @@ class _AiDjSpeakingOverlayState extends State<AiDjSpeakingOverlay>
                     ),
                     const SizedBox(height: 34),
                     // Live captions: the words appear as the DJ says them.
+                    if (st.line.trim().isEmpty)
+                      Text('Getting your set ready...',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(
+                                0.45 + 0.35 * (v * 2).sin().abs()),
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                          ))
+                    else
                     Text.rich(
                       TextSpan(children: [
                         for (var i = 0; i < words.length; i++)
@@ -2047,6 +2081,7 @@ class _AiDjSpeakingOverlayState extends State<AiDjSpeakingOverlay>
               );
             },
           ),
+        ),
         ),
       ),
     );
