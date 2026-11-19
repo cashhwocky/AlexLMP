@@ -1,5 +1,11 @@
 All your music, one player.
 
+AlexLMP 3.5.2 fixes the version number.
+
+## Fixed
+- **Settings shows the right version again.** It was stuck on 3.3.0 since then, which also made the update checker think you were behind. It now says 3.5.2.
+
+## From 3.3.0
 AlexLMP 3.3.0 puts AI into search, Home, the player and setup, and redoes the Bloom Home and player.
 
 ## New
