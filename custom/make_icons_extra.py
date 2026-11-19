@@ -194,7 +194,46 @@ def borealis():
     return bg, fg, mono
 
 
-ICONS = {"orb": orb, "note": note, "vinyl": vinyl, "borealis": borealis}
+# ───────────────────────── Liquid Glass (default) ─────────────────────────
+GLASS_BARS = [(40, 50, 58), (48, 42, 66), (56, 34, 74), (64, 48, 60), (72, 52, 56)]
+
+
+def rrect(x, y, w, h, r):
+    return ("M%.2f,%.2f h%.2f a%.2f,%.2f 0 0 1 %.2f,%.2f v%.2f a%.2f,%.2f 0 0 1 -%.2f,%.2f "
+            "h-%.2f a%.2f,%.2f 0 0 1 -%.2f,-%.2f v-%.2f a%.2f,%.2f 0 0 1 %.2f,-%.2f Z") % (
+        x + r, y, w - 2 * r, r, r, r, r, h - 2 * r, r, r, r, r, w - 2 * r, r, r, r, r, h - 2 * r, r, r, r, r)
+
+
+def glass_pills():
+    out = []
+    for x, a, b in GLASS_BARS:
+        x2 = 54 + (x - 54) * 1.25
+        a2 = 54 + (a - 54) * 1.25
+        b2 = 54 + (b - 54) * 1.25
+        w = 8.6
+        out.append((x2 - w / 2, a2 - w / 2, w, b2 - a2 + w))
+    return out
+
+
+def glass():
+    bg = '<path android:pathData="M0,0h108v108h-108z">%s</path>' % lin(
+        "android:fillColor", [(0, "#FFFF5E7E"), (0.5, "#FFA770EF"), (1, "#FF5B86E5")], 0, 0, 108, 108)
+    bg += '<path android:pathData="M0,0h108v108h-108z">%s</path>' % rad(
+        "android:fillColor", [(0, "#4DFFFFFF"), (1, "#00FFFFFF")], 30, 22, 70)
+    fg = ""
+    mono = ""
+    for x, y, w, h in glass_pills():
+        d = rrect(x, y, w, h, w / 2)
+        fg += '<path android:pathData="%s" android:strokeWidth="0.9">%s%s</path>' % (
+            d,
+            lin("android:fillColor", [(0, "#8CFFFFFF"), (1, "#38FFFFFF")], 0, 30, 0, 80),
+            lin("android:strokeColor", [(0, "#FFFFFFFF"), (1, "#59FFFFFF")], 0, 28, 0, 82))
+        fg += '<path android:pathData="%s" android:fillColor="#8CFFFFFF"/>' % rrect(x + 1.6, y + 1.4, 2.2, h * 0.55, 1.1)
+        mono += '<path android:pathData="%s" android:fillColor="#FF000000"/>' % d
+    return bg, fg, mono
+
+
+ICONS = {"orb": orb, "note": note, "vinyl": vinyl, "borealis": borealis, "glass": glass}
 
 for key, fn in ICONS.items():
     bg, fg, mono = fn()
@@ -210,5 +249,13 @@ for key, fn in ICONS.items():
           '<layer-list xmlns:android="http://schemas.android.com/apk/res/android">'
           '<item android:drawable="@drawable/ic_alt_%s_bg"/>'
           '<item android:drawable="@drawable/ic_alt_%s_fg"/></layer-list>\n' % (key, key))
+
+# Liquid Glass is the main launcher icon too.
+for name in ("ic_launcher", "ic_launcher_round"):
+    write("%s/mipmap-anydpi-v26/%s.xml" % (R, name), HEAD +
+          '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">'
+          '<background android:drawable="@drawable/ic_alt_glass_bg"/>'
+          '<foreground android:drawable="@drawable/ic_alt_glass_fg"/>'
+          '<monochrome android:drawable="@drawable/ic_alt_glass_mono"/></adaptive-icon>\n')
 
 print("Extra app icons generated:", ", ".join(ICONS))

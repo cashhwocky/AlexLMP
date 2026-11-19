@@ -198,12 +198,25 @@
             </intent-filter>
         </activity-alias>
         <activity-alias
+            android:name=".IconGlass"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_glass"
+            android:roundIcon="@mipmap/ic_alt_glass"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
             android:name=".IconBloom"
             android:targetActivity=".MainActivity"
             android:label="AlexLMP"
             android:icon="@mipmap/ic_alt_bloom"
             android:roundIcon="@mipmap/ic_alt_bloom"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -28,7 +28,7 @@ class MainActivity : AudioServiceActivity() {
     // Launcher icons (activity-aliases in AndroidManifest.xml).
     private val appIcons = listOf(
         "classic", "midnight", "sunset", "aurora", "neon",
-        "mint", "ember", "gold", "ocean", "white", "bloom",
+        "mint", "ember", "gold", "ocean", "white", "bloom", "glass",
         "prism", "halo", "frost", "rose", "matrix",
         "orb", "note", "vinyl", "borealis",
     )
@@ -41,15 +41,15 @@ class MainActivity : AudioServiceActivity() {
     private fun currentAppIcon(): String {
         val pm = packageManager
         for (k in appIcons) {
-            if (k == "bloom") continue
+            if (k == "glass") continue
             val st = pm.getComponentEnabledSetting(iconAlias(k))
             if (st == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return k
         }
-        return "bloom"
+        return "glass"
     }
 
     /**
-     * Bloom (Material You lilac) is the default icon now. Anyone who picked
+     * Liquid Glass is the default icon now. Anyone who picked
      * an icon before keeps it: turn the default Bloom entry off so they
      * don't get two icons.
      */
@@ -58,9 +58,9 @@ class MainActivity : AudioServiceActivity() {
             val pm = packageManager
             val enabled = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             val chosen = appIcons.any {
-                it != "bloom" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
+                it != "glass" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
             }
-            val bloom = iconAlias("bloom")
+            val bloom = iconAlias("glass")
             if (chosen && pm.getComponentEnabledSetting(bloom) ==
                 android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
             ) {
@@ -360,7 +360,7 @@ class MainActivity : AudioServiceActivity() {
                     }
                     "getAppIcon" -> result.success(currentAppIcon())
                     "setAppIcon" -> {
-                        val key = call.argument<String>("key") ?: "bloom"
+                        val key = call.argument<String>("key") ?: "glass"
                         if (key !in appIcons) {
                             result.error("ICON", "Unknown icon: $key", null)
                         } else {

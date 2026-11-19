@@ -23956,7 +23956,7 @@ class _SetupScreenState extends State<SetupScreen> {
     HapticFeedback.mediumImpact();
     appState.setB('setup_done', true);
     final k = _pickedIcon;
-    if (k != null && k != 'bloom') {
+    if (k != null && k != 'glass') {
       Future.delayed(const Duration(milliseconds: 600), () async {
         try {
           appState.setStr('app_icon', k);
@@ -24154,7 +24154,7 @@ class _SetupScreenState extends State<SetupScreen> {
           child: Reveal(
             child: AnimatedAppIcon(
               style: kAppIcons.firstWhere(
-                  (e) => e.key == (_pickedIcon ?? appState.str('app_icon', 'bloom')),
+                  (e) => e.key == (_pickedIcon ?? appState.str('app_icon', 'glass')),
                   orElse: () => kAppIcons.first),
               size: 150,
             ),
@@ -24217,7 +24217,7 @@ class _SetupScreenState extends State<SetupScreen> {
       ];
 
   List<Widget> _icons(Color accent) {
-    final current = _pickedIcon ?? appState.str('app_icon', 'bloom');
+    final current = _pickedIcon ?? appState.str('app_icon', 'glass');
     return [
       _heading(Icons.apps_rounded, 'Step 1 · Icon', 'Pick your icon',
           'Choose how AlexLMP looks on your home screen. Each one has its own launch animation.',
@@ -28319,6 +28319,10 @@ const List<AppIconStyle> kAppIcons = [
   // Full-bleed: the colour fills the whole icon (no circle inside a
   // square), so it looks right in any launcher shape.
   // Default: Material You lilac, dark bars on a purple cookie.
+  // Default: AlexLMP Liquid Glass, glass bars on a pink-to-blue glow.
+  AppIconStyle('glass', 'Liquid Glass',
+      [Color(0xFFFF5E7E), Color(0xFFA770EF), Color(0xFF5B86E5)], null, null,
+      [Colors.white], 'wave', 'Wave', custom: 'glass'),
   AppIconStyle('bloom', 'Bloom', [Color(0xFFD8CEF2)], Color(0xFF7667AA), null,
       [Color(0xFF3D3258)], 'wave', 'Wave',
       cookie: true, barScale: 1.08),
@@ -28368,7 +28372,7 @@ const List<AppIconStyle> kAppIcons = [
 const double kIconBarScale = 1.35;
 
 AppIconStyle appIconStyle([String? key]) {
-  final k = key ?? appState.str('app_icon', 'bloom');
+  final k = key ?? appState.str('app_icon', 'glass');
   return kAppIcons.firstWhere((e) => e.key == k, orElse: () => kAppIcons.first);
 }
 
@@ -28545,8 +28549,58 @@ class AppIconPainter extends CustomPainter {
         return _paintNote(canvas);
       case 'vinyl':
         return _paintVinyl(canvas);
+      case 'glass':
+        return _paintGlass(canvas);
       default:
         return _paintBorealis(canvas);
+    }
+  }
+
+  /// Liquid Glass: the five bars as glass pills over a soft shine.
+  void _paintGlass(Canvas canvas) {
+    const full = Rect.fromLTWH(0, 0, 108, 108);
+    canvas.drawRect(
+        full,
+        Paint()
+          ..shader = RadialGradient(
+            center: const Alignment(-24 / 54, -32 / 54),
+            radius: 70 / 54,
+            colors: [Colors.white.withOpacity(0.30), Colors.white.withOpacity(0)],
+          ).createShader(full));
+    for (var i = 0; i < 5; i++) {
+      final m = t == 0 ? 1.0 : _mult(i);
+      final introI = Curves.easeOutBack
+          .transform(((intro * 1.4) - i * 0.08).clamp(0.0, 1.0));
+      final h = max(0.5, _half[i] * 1.25 * m * introI);
+      final x = 54 + (_xs[i] - 54) * 1.25;
+      const w = 8.6;
+      final r = RRect.fromRectAndRadius(
+          Rect.fromLTRB(x - w / 2, 54 - h - w / 2, x + w / 2, 54 + h + w / 2),
+          const Radius.circular(w / 2));
+      final box = r.outerRect;
+      canvas.drawRRect(
+          r,
+          Paint()
+            ..shader = LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.white.withOpacity(0.55), Colors.white.withOpacity(0.22)],
+            ).createShader(box));
+      canvas.drawRRect(
+          r,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.9
+            ..shader = LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.white, Colors.white.withOpacity(0.35)],
+            ).createShader(box));
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromLTWH(box.left + 1.6, box.top + 1.4, 2.2, box.height * 0.55),
+              const Radius.circular(1.1)),
+          Paint()..color = Colors.white.withOpacity(0.55));
     }
   }
 
@@ -28985,7 +29039,7 @@ Future<void> showAppIconPicker(BuildContext context) async {
     builder: (ctx) => ListenableBuilder(
       listenable: appState,
       builder: (ctx, _) {
-        final current = appState.str('app_icon', 'bloom');
+        final current = appState.str('app_icon', 'glass');
         final maxH = MediaQuery.of(ctx).size.height * 0.82;
         return SafeArea(
           child: ConstrainedBox(
@@ -31101,7 +31155,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.7.0';
+const String kAppVersion = '3.7.1';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});

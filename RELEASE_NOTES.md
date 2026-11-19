@@ -1,8 +1,11 @@
 All your music, one player.
 
-AlexLMP 3.7.0 is a whole new look: AlexLMP Liquid Glass.
+AlexLMP 3.7.1 gets a Liquid Glass app icon to match the new look.
 
 ## New
+- **New Liquid Glass app icon.** The AlexLMP sound bars are now made of glass, on a bright pink-to-blue glow. It's the new default icon. If you picked a different icon before, you keep it, and you can switch any time in Settings > App icon.
+
+## From 3.7.0
 - **AlexLMP Liquid Glass.** The whole app is redesigned with frosted glass floating over soft colored light: big titles, clean grouped lists and glass buttons everywhere. It's now the only app style.
 - **A tab bar you can drag.** Slide your finger along the tab bar and the glass bubble follows you, stretches and squishes, then springs onto the tab you let go on. The round search button sits next to it.
 - **Floating glass mini player** above the tab bar. Swipe it sideways to skip, or up to open the player.
@@ -14,7 +17,6 @@ AlexLMP 3.7.0 is a whole new look: AlexLMP Liquid Glass.
 - **AlexLMP Liquid Glass Player.** The album art fills the whole screen with one clear glass panel at the bottom for the controls. Drag the panel up and it stretches into live lyrics or Up Next. Swipe the art sideways to change songs. It's now the only player style.
 - **Download over Wi-Fi only** (on by default). Downloads wait until you're off mobile data.
 
-## Changed
 - All the other app styles and player styles were removed.
 
 ## From 3.6.3
