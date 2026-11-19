@@ -15481,7 +15481,7 @@ class NowPlayingScreen extends StatelessWidget {
             // AlexLMP Liquid Glass Player is the only player style now.
             if (glassLook) {
               return SwipeDownDismiss(
-                child: GlassPlayerView(
+                child: BloomPlayerView(
                   track: track,
                   playing: playing,
                   loading: loading,
@@ -31155,7 +31155,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.7.1';
+const String kAppVersion = '3.7.2';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -37571,13 +37571,7 @@ Widget bloomGroupItem(Widget row, int i, int n,
       borderRadius: r,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.085),
-          border: Border(
-            left: BorderSide(color: Colors.white.withOpacity(0.16), width: 0.7),
-            right: BorderSide(color: Colors.white.withOpacity(0.16), width: 0.7),
-            top: i == 0 ? BorderSide(color: Colors.white.withOpacity(0.22), width: 0.7) : BorderSide.none,
-            bottom: i == n - 1 ? BorderSide(color: Colors.white.withOpacity(0.16), width: 0.7) : BorderSide.none,
-          ),
+          color: Colors.white.withOpacity(0.09),
         ),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           row,
@@ -39332,15 +39326,8 @@ class BloomPlayerView extends StatelessWidget {
             ? 'YouTube Music'
             : 'On this phone';
 
-    Widget round(IconData icon, VoidCallback onTap, String tip) => BloomButton(
-          kind: null,
-          size: 46,
-          bg: c.s2,
-          icon: icon,
-          iconColor: c.t1,
-          tooltip: tip,
-          onTap: onTap,
-        );
+    Widget round(IconData icon, VoidCallback onTap, String tip) =>
+        GlassCircle(icon: icon, size: 46, tooltip: tip, onTap: onTap);
 
     // A tap target inside the transport dock.
     Widget dockKey(IconData icon, VoidCallback onTap, String tip,
@@ -39606,9 +39593,18 @@ class BloomPlayerView extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
-            Container(
+            // Tinted liquid glass dock (same look as the tab bar).
+            ClipRRect(
+              borderRadius: BorderRadius.circular(34),
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+                child: Container(
               padding: const EdgeInsets.all(5),
-              decoration: dockBox(34),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(34),
+                border: Border.all(color: Colors.white.withOpacity(0.14), width: 0.6),
+              ),
               child: Row(
                 children: [
                   pill(Icons.lyrics_outlined, 'Lyrics',
@@ -39668,7 +39664,7 @@ class BloomPlayerView extends StatelessWidget {
                   pill(Icons.ios_share_rounded, 'Share', () => shareTrack(track)),
                 ],
               ),
-            ),
+            ))),
             const SizedBox(height: 12),
           ],
         ),
@@ -39681,13 +39677,17 @@ class BloomPlayerView extends StatelessWidget {
       body: Stack(
         fit: StackFit.expand,
         children: [
+          // Liquid glass: the cover art, heavily frosted, behind everything.
+          ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(sigmaX: 60, sigmaY: 60),
+            child: Transform.scale(scale: 1.3, child: CustomAlbumArtwork(track: track)),
+          ),
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color.lerp(c.bg, seed, 0.58)!, Color.lerp(c.bg, Colors.black, 0.45)!],
-                stops: const [0, 0.7],
+                colors: [Colors.black.withOpacity(0.30), Colors.black.withOpacity(0.62)],
               ),
             ),
           ),
@@ -40298,38 +40298,20 @@ class Glass extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final r = BorderRadius.circular(radius);
+    // Same tinted, frosted look as the tab bar (no shiny streak on top).
     final body = Container(
       padding: padding,
       decoration: BoxDecoration(
         borderRadius: r,
-        color: tint ??
-            Colors.white.withOpacity(strong ? 0.13 : (blur ? 0.10 : 0.075)),
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.white.withOpacity(strong ? 0.20 : 0.13),
-            Colors.white.withOpacity(strong ? 0.09 : 0.05),
-          ],
-        ),
-        border: Border.all(color: Colors.white.withOpacity(0.20), width: 0.7),
-      ),
-      foregroundDecoration: BoxDecoration(
-        borderRadius: r,
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: const Alignment(0, -0.6),
-          colors: [Colors.white.withOpacity(0.22), Colors.white.withOpacity(0)],
-          stops: const [0, 0.08],
-        ),
+        color: tint ?? Colors.white.withOpacity(strong ? 0.12 : 0.09),
+        border: Border.all(color: Colors.white.withOpacity(0.14), width: 0.6),
       ),
       child: child,
     );
-    if (!blur) return ClipRRect(borderRadius: r, child: body);
     return ClipRRect(
       borderRadius: r,
       child: glassBlur(
-        filter: ui.ImageFilter.blur(sigmaX: 26, sigmaY: 26),
+        filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
         child: body,
       ),
     );

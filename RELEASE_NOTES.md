@@ -1,8 +1,12 @@
 All your music, one player.
 
-AlexLMP 3.7.1 gets a Liquid Glass app icon to match the new look.
+AlexLMP 3.7.2 brings back the player layout you know, now with Liquid Glass.
 
 ## New
+- **New default player.** The familiar AlexLMP player layout is back, with Liquid Glass touches: the cover art glows through a frosted background, glass buttons up top, and the bottom controls sit on tinted glass.
+- **Cleaner glass everywhere.** Song lists, Settings and cards now use the same tinted, frosted glass as the tab bar, without the shiny streak on top.
+
+## From 3.7.1
 - **New Liquid Glass app icon.** The AlexLMP sound bars are now made of glass, on a bright pink-to-blue glow. It's the new default icon. If you picked a different icon before, you keep it, and you can switch any time in Settings > App icon.
 
 ## From 3.7.0
