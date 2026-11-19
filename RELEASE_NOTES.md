@@ -1,12 +1,25 @@
 All your music, one player.
 
-AlexLMP 3.6.3 shows an artist's full discography and real release dates.
+AlexLMP 3.7.0 is a whole new look: AlexLMP Liquid Glass.
 
 ## New
+- **AlexLMP Liquid Glass.** The whole app is redesigned with frosted glass floating over soft colored light: big titles, clean grouped lists and glass buttons everywhere. It's now the only app style.
+- **A tab bar you can drag.** Slide your finger along the tab bar and the glass bubble follows you, stretches and squishes, then springs onto the tab you let go on. The round search button sits next to it.
+- **Floating glass mini player** above the tab bar. Swipe it sideways to skip, or up to open the player.
+- **New Home.** Jump Back In with Play and Shuffle, Quick Picks, Made For You and more.
+- **New Search.** A glass search bar with voice search, your recent searches, colorful Browse Categories, and results with Top Results, Songs, Albums, Artists and Playlists.
+- **New Library.** Playlists, Artists, Albums, Songs and Downloaded, plus everything you added recently.
+- **New AI page.** Start the AI DJ from the top card, chat in glass bubbles, tap a suggestion, or ask with your voice.
+- **New Settings** with a simple, grouped layout. Every older setting is still under All Settings.
+- **AlexLMP Liquid Glass Player.** The album art fills the whole screen with one clear glass panel at the bottom for the controls. Drag the panel up and it stretches into live lyrics or Up Next. Swipe the art sideways to change songs. It's now the only player style.
+- **Download over Wi-Fi only** (on by default). Downloads wait until you're off mobile data.
+
+## Changed
+- All the other app styles and player styles were removed.
+
+## From 3.6.3
 - **Every album and single, newest first.** "See all" on an artist's Albums or Singles now lists everything they have out on YouTube Music, straight from the artist's own page, sorted from newest to oldest.
 - **Exact release dates.** Album and single pages show the full date it came out (like "Released March 15, 2024"), not just the year.
-
-## Fixed
 - **The AI DJ sounds like a real DJ.** No more cheesy "good morning sunshine" lines. It's calm and talks about the music.
 
 ## From 3.6.2

@@ -117,6 +117,10 @@ class AiMusicChat extends StatefulWidget {
   final Color subtext;
   final Color accent;
   final double bottomPad;
+  /// AlexLMP Liquid Glass look (see-through, iOS style).
+  final bool glass;
+  /// Starts the AI DJ (shown as a card at the top in the glass look).
+  final VoidCallback? onDj;
 
   const AiMusicChat({
     super.key,
@@ -130,6 +134,8 @@ class AiMusicChat extends StatefulWidget {
     required this.subtext,
     required this.accent,
     this.bottomPad = 120,
+    this.glass = false,
+    this.onDj,
   });
 
   @override
@@ -174,10 +180,10 @@ class _AiMusicChatState extends State<AiMusicChat>
     _pulse = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 1100));
     // Whenever the AI tab opens, make the system bars AMOLED black too.
-    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: _black,
+      systemNavigationBarColor: widget.glass ? Colors.transparent : _black,
       systemNavigationBarIconBrightness: Brightness.light,
     ));
     _load();
@@ -426,6 +432,7 @@ class _AiMusicChatState extends State<AiMusicChat>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.glass) return _glassBuild(context);
     final top = MediaQuery.of(context).padding.top;
     final kb = MediaQuery.of(context).viewInsets.bottom;
     final bottom = (kb > 0 ? kb : widget.bottomPad) + 8;
@@ -458,6 +465,341 @@ class _AiMusicChatState extends State<AiMusicChat>
           ),
         ],
       ),
+    );
+  }
+
+  // ───────────────────────── Liquid Glass look ─────────────────────────
+
+  static const Color _gAccent = Color(0xFF6E8BFF);
+  static const Color _gSub = Color(0x9EEBEBF5);
+
+  Widget _gGlass({required Widget child, double r = 22, EdgeInsets? pad, bool strong = false}) =>
+      ClipRRect(
+        borderRadius: BorderRadius.circular(r),
+        child: Container(
+          padding: pad,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(r),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.white.withOpacity(strong ? 0.20 : 0.13),
+                Colors.white.withOpacity(strong ? 0.09 : 0.05),
+              ],
+            ),
+            border: Border.all(color: Colors.white.withOpacity(0.20), width: 0.7),
+          ),
+          child: child,
+        ),
+      );
+
+  Widget _gCircle(IconData icon, VoidCallback onTap, String tip) => Tooltip(
+        message: tip,
+        child: GestureDetector(
+          onTap: onTap,
+          child: _gGlass(
+            r: 19,
+            strong: true,
+            child: SizedBox(
+                width: 38, height: 38, child: Icon(icon, color: Colors.white, size: 20)),
+          ),
+        ),
+      );
+
+  Future<void> _listen() async {
+    try {
+      final t = await const MethodChannel('com.alexlmp.app/media')
+          .invokeMethod<String>('listen', {'prompt': 'Ask anything about music'});
+      if (t != null && t.trim().isNotEmpty) _send(t);
+    } catch (_) {}
+  }
+
+  void _history() {
+    final asks = [
+      for (final m in _msgs.reversed)
+        if (m.user) m.text
+    ].toSet().take(12).toList();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A22),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(26))),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(22, 20, 22, 8),
+              child: Text('Recent',
+                  style: TextStyle(
+                      color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
+            ),
+            if (asks.isEmpty)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(22, 4, 22, 24),
+                child: Text('Nothing asked yet.', style: TextStyle(color: _gSub)),
+              ),
+            for (final a in asks)
+              ListTile(
+                leading: const Icon(Icons.history_rounded, color: _gSub),
+                title: Text(a,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _send(a);
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _gDjCard() => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+        child: _gGlass(
+          pad: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF6E8BFF), Color(0xFFA770EF), Color(0xFFFF5E7E)],
+                  ),
+                ),
+                child: const Icon(Icons.graphic_eq_rounded, color: Colors.white, size: 26),
+              ),
+              const SizedBox(width: 13),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('AI DJ',
+                        style: TextStyle(
+                            color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+                    SizedBox(height: 2),
+                    Text('Talks between songs and picks what plays next',
+                        style: TextStyle(color: _gSub, fontSize: 13, height: 1.25)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: widget.onDj,
+                child: Container(
+                  height: 34,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                      color: Colors.white, borderRadius: BorderRadius.circular(17)),
+                  child: const Text('Start',
+                      style: TextStyle(
+                          color: Colors.black, fontSize: 14.5, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _gBubble(_Msg m) {
+    final w = MediaQuery.of(context).size.width;
+    if (m.action) {
+      // Result of something the AI did (a mix, a queue): a glass card.
+      return Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 10, right: 30),
+        child: _gGlass(
+          r: 18,
+          pad: const EdgeInsets.all(10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF5B86E5), Color(0xFFA770EF)],
+                  ),
+                ),
+                child: const Icon(Icons.queue_music_rounded, color: Colors.white, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Text(m.text,
+                    style: const TextStyle(
+                        color: Colors.white, fontSize: 14.5, fontWeight: FontWeight.w600)),
+              ),
+              const SizedBox(width: 6),
+            ],
+          ),
+        ),
+      );
+    }
+    final typing = identical(m, _typing);
+    final shown = typing ? m.text.substring(0, _shown.clamp(0, m.text.length)) : m.text;
+    final text = Text(shown + (typing ? ' ▍' : ''),
+        style: const TextStyle(color: Colors.white, fontSize: 15.5, height: 1.38));
+    return Align(
+      alignment: m.user ? Alignment.centerRight : Alignment.centerLeft,
+      child: Padding(
+        padding: EdgeInsets.only(top: 5, bottom: 5, left: m.user ? 50 : 0, right: m.user ? 0 : 40),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: w * 0.8),
+          child: m.user
+              ? Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+                  decoration: BoxDecoration(
+                      color: _gAccent, borderRadius: BorderRadius.circular(20)),
+                  child: text,
+                )
+              : _gGlass(
+                  r: 20,
+                  pad: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+                  child: text),
+        ),
+      ),
+    );
+  }
+
+  Widget _gChips() => SizedBox(
+        height: 40,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          children: [
+            for (final c in _chips)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: GestureDetector(
+                  onTap: () => _send(c),
+                  child: _gGlass(
+                    r: 20,
+                    pad: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+                    child: Text(c,
+                        style: const TextStyle(color: Colors.white, fontSize: 14)),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+
+  Widget _gComposer(double bottom) {
+    final canSend = !_busy && _input.text.trim().isNotEmpty;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, 8, 16, bottom),
+      child: _gGlass(
+        r: 26,
+        strong: true,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 18, right: 4),
+                child: TextField(
+                  controller: _input,
+                  minLines: 1,
+                  maxLines: 5,
+                  textInputAction: TextInputAction.send,
+                  onChanged: (_) => setState(() {}),
+                  onSubmitted: (_) => _send(),
+                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                  cursorColor: _gAccent,
+                  decoration: const InputDecoration(
+                    hintText: 'Ask anything about music',
+                    hintStyle: TextStyle(color: _gSub),
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 15),
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Speak',
+              onPressed: _busy ? null : _listen,
+              icon: const Icon(Icons.mic_rounded, color: _gSub, size: 23),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(0, 6, 6, 6),
+              child: GestureDetector(
+                onTap: canSend ? _send : null,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: canSend ? _gAccent : _gAccent.withOpacity(0.45),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.arrow_upward_rounded, size: 22, color: Colors.white),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _glassBuild(BuildContext context) {
+    final top = MediaQuery.of(context).padding.top;
+    final kb = MediaQuery.of(context).viewInsets.bottom;
+    final bottom = (kb > 0 ? kb : widget.bottomPad) + 8;
+    final items = _msgs.length + (_busy ? 1 : 0);
+    return Column(
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(20, top + 10, 16, 8),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text('AI',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 34,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.6)),
+              ),
+              _gCircle(Icons.schedule_rounded, _history, 'Recent'),
+              const SizedBox(width: 10),
+              _gCircle(Icons.add_rounded, _clear, 'New chat'),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            controller: _scroll,
+            padding: const EdgeInsets.fromLTRB(0, 4, 0, 12),
+            itemCount: items + 1,
+            itemBuilder: (context, i) {
+              if (i == 0) return _gDjCard();
+              final k = i - 1;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: k >= _msgs.length ? _thinking() : _gBubble(_msgs[k]),
+              );
+            },
+          ),
+        ),
+        _gChips(),
+        _gComposer(bottom),
+      ],
     );
   }
 

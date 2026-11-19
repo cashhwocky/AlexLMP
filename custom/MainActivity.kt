@@ -103,6 +103,18 @@ class MainActivity : AudioServiceActivity() {
     private var mediaChannel: MethodChannel? = null
     private var updateTapped = false
     private var tts: TextToSpeech? = null
+    private var pendingListen: MethodChannel.Result? = null
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 7301) {
+            val text = data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            pendingListen?.success(if (resultCode == RESULT_OK) text else null)
+            pendingListen = null
+        }
+    }
     private var ttsReady = false
     private var djPlayer: MediaPlayer? = null
     private var djVoiceStyle: String = "nova"
@@ -327,6 +339,24 @@ class MainActivity : AudioServiceActivity() {
                         } else {
                             result.success(0)
                         }
+                    }
+                    "listen" -> {
+                        try {
+                            pendingListen?.success(null)
+                            pendingListen = result
+                            val i = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                                .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, call.argument<String>("prompt") ?: "Speak")
+                            @Suppress("DEPRECATION")
+                            startActivityForResult(i, 7301)
+                        } catch (e: Exception) {
+                            pendingListen = null
+                            result.success(null)
+                        }
+                    }
+                    "isMetered" -> {
+                        val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                        result.success(cm.isActiveNetworkMetered)
                     }
                     "getAppIcon" -> result.success(currentAppIcon())
                     "setAppIcon" -> {
