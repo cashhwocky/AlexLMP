@@ -19,21 +19,32 @@ typedef MusicCommand = Future<String> Function(String action, String query);
 const String _prefsKey = 'ai_dj_chat_v1';
 
 const String _greeting =
-    "Hey! I'm your DJ. Tell me what to play, like \"play Blinding Lights by The Weeknd\", "
-    "and I'll find it and start it. I can also queue songs, skip, pause and shuffle.";
+    "Hey! I'm your DJ, and I know what you've been listening to. Ask me to play anything, "
+    "build a mix or a whole playlist, explain a song, set a sleep timer, or start the AI DJ.";
 
-String _system(String nowPlaying) =>
-    "You are DJ, the assistant inside AlexLMP, a music player app. Be short, warm and casual "
-    "(under 50 words). You CAN control the player by writing a command tag on its own line at the very "
-    "end of your reply. Tags: [[play: song title - artist]] plays a song, [[queue: song title - artist]] "
-    "adds a song to the queue, [[mix: vibe or artist]] builds and plays a whole AI playlist (use it for \"make me a mix\", workout playlists, more songs like this), and [[pause]] [[resume]] [[next]] [[previous]] [[shuffle]]. "
-    "Only add a tag when the user asked for that action, and write only one tag. If the user names a "
-    "song vaguely, use your best guess of the real title and artist. If they just want to chat or want "
-    "recommendations, answer normally with no tag (you may suggest songs by name). "
-    "${nowPlaying.isEmpty ? 'Nothing is playing right now.' : 'Now playing: $nowPlaying.'}";
+String _system(String nowPlaying) {
+  final taste = AiHelper.tasteText();
+  return "You are DJ, the AI inside AlexLMP, a music player app. You know music deeply (genres, eras, scenes, "
+      "producers, samples, lyrics' meaning, similar artists) and you know this listener (below). Talk like a sharp, "
+      "warm friend: natural and specific, usually under 80 words, longer only when they ask to explain something. "
+      "Recommend REAL songs and artists only, never invent titles.\n\n"
+      "You can control the app. Put command tags at the very end of your reply, each on its own line, up to 4:\n"
+      "[[play: song - artist]] play a song now\n"
+      "[[queue: song - artist]] add a song to the queue\n"
+      "[[mix: description]] build and play a whole AI playlist (moods, activities, 'more like this', an artist's style)\n"
+      "[[playlist: Name | song - artist; song - artist; ...]] save a new playlist to their library (8 to 25 real songs)\n"
+      "[[like]] [[unlike]] the current song\n"
+      "[[pause]] [[resume]] [[next]] [[previous]] [[shuffle]] [[unshuffle]]\n"
+      "[[repeat: one|all|off]] [[sleep: 30 minutes|end of song|off]] [[volume: 0-100]]\n"
+      "[[dj: start|stop]] start or stop the AI DJ\n"
+      "Only use tags for things the user actually asked for. For questions or chat, just answer. "
+      "If they name a song vaguely, use your best guess of the real title and artist. Don't describe the tags.\n\n"
+      "${nowPlaying.isEmpty ? 'Nothing is playing right now.' : 'Now playing: $nowPlaying.'}"
+      "${taste.isEmpty ? '' : '\n\nAbout the listener:\n$taste'}";
+}
 
 final RegExp _tag = RegExp(
-    r'\[\[\s*(play|queue|mix|pause|resume|next|previous|shuffle)\s*(?::\s*([^\]]*?))?\s*\]\]',
+    r'\[\[\s*(play|queue|mix|playlist|like|unlike|pause|resume|next|previous|shuffle|unshuffle|repeat|sleep|volume|dj)\s*(?::\s*([^\]]*?))?\s*\]\]',
     caseSensitive: false);
 
 class _Msg {
@@ -350,13 +361,19 @@ class _AiMusicChatState extends State<AiMusicChat>
       return;
     }
 
-    final m = _tag.firstMatch(reply);
+    final tags = _tag.allMatches(reply).take(4).toList();
     final shown = reply.replaceAll(_tag, '').trim();
     String? result;
-    if (m != null) {
-      final act = m.group(1)!.toLowerCase();
-      var q = (m.group(2) ?? '').trim().replaceAll(' - ', ' ');
-      result = await _runCommand(act, q);
+    if (tags.isNotEmpty) {
+      final lines = <String>[];
+      for (final m in tags) {
+        final act = m.group(1)!.toLowerCase();
+        var q = (m.group(2) ?? '').trim();
+        if (act == 'play' || act == 'queue') q = q.replaceAll(' - ', ' ');
+        final r = await _runCommand(act, q);
+        if (r.isNotEmpty) lines.add(r);
+      }
+      result = lines.join('\n');
     } else if (direct != null) {
       result = await _runCommand(direct.action, direct.query);
     }
@@ -397,12 +414,12 @@ class _AiMusicChatState extends State<AiMusicChat>
 
   Future<String?> _ask() async {
     final recent = _msgs.where((m) => !m.action).toList();
-    final tail = recent.length > 8 ? recent.sublist(recent.length - 8) : recent;
+    final tail = recent.length > 20 ? recent.sublist(recent.length - 20) : recent;
     final messages = <Map<String, String>>[
       {'role': 'system', 'content': _system(widget.nowPlaying())},
       for (final m in tail) {'role': m.user ? 'user' : 'assistant', 'content': m.text},
     ];
-    return AiHelper.ask(messages, maxTokens: 260);
+    return AiHelper.ask(messages, maxTokens: 900);
   }
 
   // ── UI ────────────────────────────────────────────────────────────────
