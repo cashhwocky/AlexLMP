@@ -1449,7 +1449,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         if (smooth) {
           await player.setVolume(0);
           player.play();
-          unawaited(_fadeVolume(AiDjState.i.speaking ? 0.18 : _userVolume, 450, seq));
+          final fadeMs = nextFadeInMs;
+          nextFadeInMs = 450;
+          unawaited(_fadeVolume(AiDjState.i.speaking ? 0.18 : _userVolume, fadeMs, seq));
         } else {
           player.play();
         }
@@ -2059,6 +2061,21 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   // ── Extras used by Settings ───────────────────────────────────────────
 
   double _userVolume = 1.0;
+
+  /// How long the next song takes to fade in (the AI DJ uses a slow one).
+  int nextFadeInMs = 450;
+
+  /// Starts (or resumes) the current song from silence with one smooth fade.
+  Future<void> fadeInSlow(int ms) async {
+    final seq = _loadSeq;
+    _fadeSeq++; // stops any other fade
+    _fadeSeq = 0;
+    try {
+      await player.setVolume(0);
+      if (!player.playing) unawaited(player.play());
+    } catch (_) {}
+    await _fadeVolume(_userVolume, ms, seq);
+  }
 
   /// Bumped by every fade; a running fade stops when a newer one starts.
   int _fadeSeq = 0;
@@ -4193,6 +4210,7 @@ class AlexLmpApp extends StatelessWidget {
               );
         final textScale = appState.d('text_scale', 1.0);
         return MaterialApp(
+          navigatorKey: appNavKey,
           title: 'AlexLMP',
           debugShowCheckedModeBanner: false,
           themeMode: ThemeMode.dark,
@@ -4262,8 +4280,21 @@ class AlexLmpApp extends StatelessWidget {
   }
 }
 
-void openPlayer(BuildContext context) {
-  if (audioHandler.tracks.isEmpty) {
+/// The app's navigator, so the AI DJ can bring up the player by itself.
+final GlobalKey<NavigatorState> appNavKey = GlobalKey<NavigatorState>();
+
+/// Brings up the full-screen player for the AI DJ (even before anything is
+/// playing), from anywhere in the app.
+void openPlayerForDj([BuildContext? context]) {
+  final ctx = (context != null && context.mounted)
+      ? context
+      : appNavKey.currentContext;
+  if (ctx == null) return;
+  openPlayer(ctx, force: true);
+}
+
+void openPlayer(BuildContext context, {bool force = false}) {
+  if (audioHandler.tracks.isEmpty && !force) {
     showAddMusicSheet(context);
     return;
   }
@@ -30688,7 +30719,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.6.1';
+const String kAppVersion = '3.6.2';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -39055,32 +39086,13 @@ Future<void> Function()? _djPendingDrop;
 Future<void> runDjPendingDrop() async {
   final f = _djPendingDrop;
   _djPendingDrop = null;
-  // The DJ screen fades away while the song slowly fades in.
-  try {
-    await audioHandler.player.setVolume(0);
-  } catch (_) {}
+  // The DJ screen fades away while the song slowly fades in (one smooth
+  // fade, done by the player itself so nothing fights over the volume).
   if (AiDjState.i.speaking) AiDjState.i.setSpeaking(false);
   if (f != null) {
     await f();
   } else if (AiDjState.i.active && !audioHandler.player.playing) {
-    try {
-      await audioHandler.player.play();
-    } catch (_) {}
-  }
-  unawaited(_djFadeIn());
-}
-
-int _djFadeSeq = 0;
-Future<void> _djFadeIn() async {
-  final seq = ++_djFadeSeq;
-  const steps = 30;
-  for (var i = 1; i <= steps; i++) {
-    await Future.delayed(const Duration(milliseconds: 90));
-    if (seq != _djFadeSeq) return;
-    final v = Curves.easeInCubic.transform(i / steps);
-    try {
-      await audioHandler.player.setVolume(v);
-    } catch (_) {}
+    await audioHandler.fadeInSlow(2800);
   }
 }
 
@@ -39097,6 +39109,8 @@ Future<void> _djSay(String speech, String tag,
     {required Future<void> Function() drop}) async {
   _djPendingDrop = drop;
   AiDjState.i.update(isActive: true, isSpeaking: true, text: speech, tag: tag);
+  // Whenever the DJ talks, the player comes up with the DJ screen.
+  openPlayerForDj();
   try {
     await audioHandler.player.pause();
   } catch (_) {}
@@ -39186,7 +39200,7 @@ Future<void> _speakDjSkipReaction(TrackItem current, TrackItem? prev) async {
         count: 6);
     await _djSay(line ?? "Not feeling those? Say less. Switching the whole vibe up for you.",
         'SWITCHING IT UP', drop: () async {
-      if (AiDjState.i.active) await audioHandler.player.play();
+      if (AiDjState.i.active) await audioHandler.fadeInSlow(2800);
     });
   } finally {
     _djTriggering = false;
@@ -39220,7 +39234,7 @@ Future<void> _speakDjVibeShift(TrackItem current, [TrackItem? prev]) async {
     );
     _djQueueAiPicks(directions[mode], count: 4);
     await _djSay(line ?? fallback[mode], tags[mode], drop: () async {
-      if (AiDjState.i.active) await audioHandler.player.play();
+      if (AiDjState.i.active) await audioHandler.fadeInSlow(2800);
     });
   } finally {
     _djTriggering = false;
@@ -39364,10 +39378,8 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
     try {
       await audioHandler.player.pause();
     } catch (_) {}
-    if (openInPlayer != null && openInPlayer.mounted) {
-      openPlayer(openInPlayer);
-      openInPlayer = null;
-    }
+    openPlayerForDj(openInPlayer);
+    openInPlayer = null;
     final ai = await AiHelper.djLine(
       'intro',
       justPlayed: '',
@@ -39376,12 +39388,9 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
     );
     if (ai != null) djSpeech = ai;
 
-    // Open the player now so you see the DJ talking.
-    if (openInPlayer != null && openInPlayer.mounted) {
-      openPlayer(openInPlayer);
-    }
     await _djSay(djSpeech, modeTag, drop: () async {
       try {
+        audioHandler.nextFadeInMs = 3000;
         await audioHandler.playYouTubeList(sessionQueue, 0, fromDj: true);
       } catch (_) {}
       // Then let the AI plan the rest of the set so it flows.

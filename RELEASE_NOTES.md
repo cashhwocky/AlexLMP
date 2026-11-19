@@ -1,8 +1,13 @@
 All your music, one player.
 
-AlexLMP 3.6.1 polishes the AI DJ.
+AlexLMP 3.6.2 fixes the AI DJ.
 
 ## Fixed
+- **Starting the DJ from Home works again.** It opened the "Add music" menu instead of the player when you only use YouTube Music.
+- **The DJ screen shows up every time the DJ talks,** not only when you start it from the player. Wherever you are in the app, the player comes up with the DJ on screen.
+- **No more crackly audio when the song comes back in.** The song now fades in with one smooth fade.
+
+## From 3.6.1
 - **The DJ screen looks right.** No more yellow underlines or typewriter font, and it's fully solid instead of see-through.
 - **Starting the DJ opens the player** with the DJ screen up straight away while it gets your set ready. When it finishes talking, the screen fades away and the song slowly fades in.
 - **New AI DJ button** in the Bloom colors, with a cleaner DJ icon.
