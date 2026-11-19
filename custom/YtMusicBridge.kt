@@ -176,6 +176,11 @@ object YtMusicBridge {
                 val url = call.argument<String>("url") ?: ""
                 runAsync(result, "YT_ARTIST") { Account.artistPage(url) }
             }
+            "ytArtistDiscography" -> {
+                val url = call.argument<String>("url") ?: ""
+                val singles = call.argument<String>("kind") == "singles"
+                runAsync(result, "YT_ARTIST") { Account.artistDiscography(url, singles) }
+            }
             "ytAlbumPage" -> {
                 val ref = call.argument<String>("ref") ?: ""
                 runAsync(result, "YT_ALBUM") { Account.albumPage(ref) }
@@ -2118,6 +2123,79 @@ object Account {
             "songs" to songs,
             "shelves" to shelves,
         )
+    }
+
+    /**
+     * Every album (or every single / EP) an artist has on YouTube Music,
+     * newest first. Opens the artist's own "Albums" / "Singles" page (the
+     * one behind "See all") and follows it to the end.
+     */
+    fun artistDiscography(urlOrId: String, singles: Boolean): List<Map<String, Any?>> {
+        val channelId = Regex("(UC[A-Za-z0-9_-]{22})").find(urlOrId)?.value
+            ?: throw IOException("Not an artist link")
+        val r = call("browse", JSONObject().put("browseId", channelId), auth = false)
+        val out = ArrayList<Map<String, Any?>>()
+        val seen = HashSet<String>()
+
+        fun addItems(node: Any?) {
+            for (t in all(node, "musicTwoRowItemRenderer")) {
+                val browse = t.optJSONObject("navigationEndpoint")
+                    ?.optJSONObject("browseEndpoint")?.optString("browseId") ?: ""
+                if (!browse.startsWith("MPREb_") || !seen.add(browse)) continue
+                val subtitle = text(t.optJSONObject("subtitle"))
+                val year = Regex("\\b(19|20)\\d{2}\\b").find(subtitle)?.value?.toIntOrNull() ?: 0
+                out.add(mapOf(
+                    "url" to browse,
+                    "title" to text(t.optJSONObject("title")),
+                    "subtitle" to subtitle,
+                    "year" to year,
+                    "thumbnail" to lastThumb(t.optJSONObject("thumbnailRenderer")),
+                ))
+            }
+        }
+
+        // Find the matching shelf on the artist page and its "See all" link.
+        val wanted = if (singles) listOf("single", "ep") else listOf("album")
+        var shelfNode: JSONObject? = null
+        var more: JSONObject? = null
+        for (c in all(r, "musicCarouselShelfRenderer")) {
+            val head = all(c, "musicCarouselShelfBasicHeaderRenderer").firstOrNull() ?: continue
+            val title = text(head.optJSONObject("title")).lowercase()
+            if (wanted.none { title.contains(it) }) continue
+            if (!singles && title.contains("single")) continue
+            shelfNode = c
+            more = head.optJSONObject("moreContentButton")
+                ?.optJSONObject("buttonRenderer")?.optJSONObject("navigationEndpoint")
+                ?.optJSONObject("browseEndpoint")
+                ?: head.optJSONObject("title")?.optJSONArray("runs")?.optJSONObject(0)
+                    ?.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
+            break
+        }
+
+        if (more != null && more.optString("browseId").isNotEmpty()) {
+            val body = JSONObject().put("browseId", more.optString("browseId"))
+            more.optString("params").takeIf { it.isNotEmpty() }?.let { body.put("params", it) }
+            var page = call("browse", body, auth = false)
+            addItems(page)
+            var token = continuationToken(page)
+            var guard = 0
+            while (token != null && guard < 20) {
+                val next = call("browse", JSONObject().put("continuation", token), auth = false)
+                val before = out.size
+                addItems(next)
+                token = continuationToken(next)
+                guard++
+                if (out.size == before) break
+            }
+        }
+        // No "See all" (small artists): what's on the artist page.
+        if (out.isEmpty() && shelfNode != null) addItems(shelfNode)
+
+        // Newest first (same-year releases keep YouTube's order).
+        return out.withIndex()
+            .sortedWith(compareByDescending<IndexedValue<Map<String, Any?>>> { it.value["year"] as Int }
+                .thenBy { it.index })
+            .map { it.value }
     }
 
     /** Artist + album for a song (used by "Go to artist" / "Go to album"). */

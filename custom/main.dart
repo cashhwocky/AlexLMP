@@ -2937,6 +2937,25 @@ class YouTubeMusic {
     return _tracks(raw);
   }
 
+  /// Every album, or every single / EP, from the artist's own page,
+  /// newest first. Subtitle (e.g. "Single • 2024") goes in [YtAlbum.artist].
+  static Future<List<YtAlbum>> artistDiscography(String url,
+      {required bool singles}) async {
+    final raw = await _ytChannel.invokeMethod('ytArtistDiscography',
+            {'url': url, 'kind': singles ? 'singles' : 'albums'}) as List? ??
+        const [];
+    return raw.map((e) {
+      final m = _map(e);
+      return YtAlbum(
+        (m['url'] ?? '').toString(),
+        cleanText(m['title'], 'Album'),
+        cleanText(m['subtitle'], ''),
+        m['thumbnail'] as String?,
+        -1,
+      );
+    }).where((a) => a.url.isNotEmpty).toList();
+  }
+
   /// Every album by an artist (artist page "See all").
   static Future<List<YtAlbum>> artistAlbums(String name) async {
     final raw = await _ytChannel.invokeMethod(
@@ -30719,7 +30738,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.6.2';
+const String kAppVersion = '3.6.3';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -32083,7 +32102,15 @@ Widget ytSectionHeader(String text, {VoidCallback? onSeeAll}) {
 class ArtistAllScreen extends StatefulWidget {
   final String artist;
   final bool albums;
-  const ArtistAllScreen({super.key, required this.artist, required this.albums});
+  /// The artist's page link: lets "See all" list their full discography.
+  final String? url;
+  final bool singles;
+  const ArtistAllScreen(
+      {super.key,
+      required this.artist,
+      required this.albums,
+      this.url,
+      this.singles = false});
 
   @override
   State<ArtistAllScreen> createState() => _ArtistAllScreenState();
@@ -32094,8 +32121,20 @@ class _ArtistAllScreenState extends State<ArtistAllScreen> {
       ? Future.value(const <TrackItem>[])
       : YouTubeMusic.artistSongs(widget.artist);
   late final Future<List<YtAlbum>> _albums = widget.albums
-      ? YouTubeMusic.artistAlbums(widget.artist)
+      ? _loadAlbums()
       : Future.value(const <YtAlbum>[]);
+
+  Future<List<YtAlbum>> _loadAlbums() async {
+    final url = widget.url;
+    if (url != null && url.isNotEmpty) {
+      try {
+        final all =
+            await YouTubeMusic.artistDiscography(url, singles: widget.singles);
+        if (all.isNotEmpty) return all;
+      } catch (_) {}
+    }
+    return YouTubeMusic.artistAlbums(widget.artist);
+  }
 
   Widget _status(Object? err) => Padding(
         padding: const EdgeInsets.all(32),
@@ -32111,7 +32150,9 @@ class _ArtistAllScreenState extends State<ArtistAllScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final title = widget.albums ? 'Albums' : 'Songs';
+    final title = widget.albums
+        ? (widget.singles ? 'Singles & EPs' : 'Albums')
+        : 'Songs';
     return Scaffold(
       backgroundColor: signalLook ? kSigInk : Colors.black,
       appBar: AppBar(
@@ -32146,6 +32187,12 @@ class _ArtistAllScreenState extends State<ArtistAllScreen> {
                 return ListView(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
                   children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                          '${list.length} ${list.length == 1 ? 'release' : 'releases'} · newest first',
+                          style: const TextStyle(color: Colors.white60)),
+                    ),
                     Wrap(
                       spacing: 14,
                       runSpacing: 18,
@@ -32211,9 +32258,11 @@ class _ArtistAllScreenState extends State<ArtistAllScreen> {
   }
 }
 
-void openArtistAll(BuildContext context, String artist, {required bool albums}) =>
+void openArtistAll(BuildContext context, String artist,
+        {required bool albums, String? url, bool singles = false}) =>
     Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => ArtistAllScreen(artist: artist, albums: albums)));
+        builder: (_) => ArtistAllScreen(
+            artist: artist, albums: albums, url: url, singles: singles)));
 
 class YtNetworkImage extends StatelessWidget {
   final String? url;
@@ -32987,7 +33036,20 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: pal.accent.withOpacity(0.5)),
                       ),
-                      child: Text(
+                      child: c.startsWith('Released ')
+                          ? ReleaseDateText(
+                              title: title,
+                              artist: artist,
+                              year: page?.year,
+                              upper: true,
+                              style: TextStyle(
+                                color: pal.accent,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.8,
+                              ),
+                            )
+                          : Text(
                         c.toUpperCase(),
                         style: TextStyle(
                           color: pal.accent,
@@ -33343,6 +33405,18 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
                   style: bloomText(15, color: c.pri, weight: FontWeight.w600)),
             ),
           ),
+          if (page?.year != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Center(
+                child: ReleaseDateText(
+                  title: title,
+                  artist: artist,
+                  year: page!.year,
+                  style: bloomText(13, color: c.t1, weight: FontWeight.w600),
+                ),
+              ),
+            ),
           if (page != null && tracks.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -33855,7 +33929,11 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
           ..add(BloomSection(sh.title.isEmpty ? 'More' : sh.title,
               action: albumShelf ? 'See all' : null,
               onAction: albumShelf
-                  ? () => openArtistAll(context, name, albums: true)
+                  ? () => openArtistAll(context, name,
+                      albums: true,
+                      url: widget.url,
+                      singles: lower.contains('single') ||
+                          lower.contains(' ep'))
                   : null))
           ..add(SizedBox(
             height: (video ? size * 9 / 16 : size) + 52,
@@ -33921,7 +33999,8 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
         list
           ..add(BloomSection('Albums',
               action: 'See all',
-              onAction: () => openArtistAll(context, name, albums: true)))
+              onAction: () => openArtistAll(context, name,
+                  albums: true, url: widget.url)))
           ..add(bloomRow([
             for (final a in page.albums)
               BloomCard(
@@ -34308,11 +34387,15 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
 
     // Shelves from YouTube Music (Albums, Singles, Videos, Fans also like…)
     for (final sh in page.shelves) {
+      final lowT = sh.title.toLowerCase();
       final albumShelf = sh.kind == 'album' &&
-          sh.title.toLowerCase().contains('album');
+          (lowT.contains('album') || lowT.contains('single'));
       out.add(ytSectionHeader(sh.title.isEmpty ? 'More' : sh.title,
           onSeeAll: albumShelf
-              ? () => openArtistAll(context, page.name, albums: true)
+              ? () => openArtistAll(context, page.name,
+                  albums: true,
+                  url: widget.url,
+                  singles: lowT.contains('single'))
               : null));
       if (sh.kind == 'artist') {
         out.add(SizedBox(
@@ -34437,7 +34520,8 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
     // Older simple page (fallback): albums row
     if (page.shelves.isEmpty && page.albums.isNotEmpty) {
       out.add(ytSectionHeader('Albums',
-          onSeeAll: () => openArtistAll(context, page.name, albums: true)));
+          onSeeAll: () => openArtistAll(context, page.name,
+              albums: true, url: widget.url)));
       out.add(SizedBox(
         height: 196,
         child: ListView.separated(
@@ -39198,7 +39282,7 @@ Future<void> _speakDjSkipReaction(TrackItem current, TrackItem? prev) async {
     _djQueueAiPicks(
         'a clearly different direction from ${prev?.artist ?? current.artist}, still their taste',
         count: 6);
-    await _djSay(line ?? "Not feeling those? Say less. Switching the whole vibe up for you.",
+    await _djSay(line ?? "Not those, got it. Going somewhere different.",
         'SWITCHING IT UP', drop: () async {
       if (AiDjState.i.active) await audioHandler.fadeInSlow(2800);
     });
@@ -39215,10 +39299,10 @@ Future<void> _speakDjVibeShift(TrackItem current, [TrackItem? prev]) async {
     _djStep++;
     const tags = ['VIBE SHIFT', 'FROM YOUR HISTORY', 'NEW DISCOVERY', 'CERTIFIED FAVORITES'];
     const fallback = [
-      "That was a solid run. Let's switch up the energy and take it somewhere fresh.",
-      "Diving back into your heavy rotation with some tracks you've had on repeat lately.",
-      "Time to flip the vibe. Sneaking in some fresh picks I think you'll love.",
-      "Keeping the momentum rolling with a few of your liked favorites.",
+      "Changing the pace a little for the next few.",
+      "Back to some of what you've had on repeat lately.",
+      "A few new ones next. Think you'll like these.",
+      "A couple of your favorites coming up.",
     ];
     const directions = [
       'switch the energy, same overall taste',
@@ -39345,19 +39429,19 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
     if (mode == 0 && recentTracks.isNotEmpty) {
       chosen = recentTracks[rng.nextInt(recentTracks.length)];
       modeTag = "FROM YOUR HISTORY";
-      djSpeech = "Hey! Jumping straight into your recent rotation with some tracks you've been playing lately.";
+      djSpeech = "Starting with some of what you've had on lately.";
     } else if (mode == 1 && discoveryTracks.isNotEmpty) {
       chosen = discoveryTracks[rng.nextInt(discoveryTracks.length)];
       modeTag = "NEW DISCOVERY";
-      djSpeech = "Alright, switching up the vibe and sneaking in something fresh for your rotation right now.";
+      djSpeech = "Something you probably haven't heard yet. Give it a minute.";
     } else if (likedTracks.isNotEmpty) {
       chosen = likedTracks[rng.nextInt(likedTracks.length)];
       modeTag = "LIKED FAVORITE";
-      djSpeech = "Bringing back some of your certified favorites right now. Let's get into it.";
+      djSpeech = "One of your favorites to start things off.";
     } else {
       chosen = all[rng.nextInt(all.length)];
       modeTag = "DJ MIX";
-      djSpeech = "Locking in a fresh mix from your library right now. Let's get the session rolling.";
+      djSpeech = "Pulling a set together from your library.";
     }
 
     addSessionTrack(chosen);
@@ -39401,5 +39485,123 @@ Future<String> startOrStepAiDj({BuildContext? openInPlayer}) async {
     return djSpeech;
   } finally {
     _djTriggering = false;
+  }
+}
+
+
+// ─────────────────── Exact release dates (Apple / MusicBrainz) ───────────────────
+
+final Map<String, Future<DateTime?>> _releaseDates = {};
+
+String _normRel(String s) => s
+    .toLowerCase()
+    .replaceAll(RegExp(r'\s*[-–(\[]\s*(single|ep|deluxe|remaster(ed)?|explicit)[^)\]]*[)\]]?', caseSensitive: false), '')
+    .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+    .trim();
+
+/// The exact day a release came out. YouTube Music only gives the year, so
+/// this asks Apple's public music catalogue first, then MusicBrainz.
+Future<DateTime?> releaseDateFor(String title, String artist, {String? year}) {
+  final key = '${_normRel(title)}|${_normRel(artist)}|${year ?? ''}';
+  return _releaseDates.putIfAbsent(key, () async {
+    final y = int.tryParse(RegExp(r'(19|20)\d{2}').firstMatch(year ?? '')?.group(0) ?? '');
+    final t = _normRel(title);
+    final a = _normRel(artist).split(' ').take(3).join(' ');
+    Future<dynamic> getJson(Uri u) async {
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+      try {
+        final req = await client.getUrl(u);
+        req.headers.set('User-Agent', 'AlexLMP/$kAppVersion ( github.com/$kGithubRepo )');
+        req.headers.set('Accept', 'application/json');
+        final res = await req.close().timeout(const Duration(seconds: 10));
+        if (res.statusCode != 200) return null;
+        return jsonDecode(await res.transform(utf8.decoder).join());
+      } finally {
+        client.close(force: true);
+      }
+    }
+
+    DateTime? best;
+    // 1. Apple Music catalogue (albums and singles).
+    try {
+      final j = await getJson(Uri.parse(
+          'https://itunes.apple.com/search?term=${Uri.encodeQueryComponent('$artist $title')}&entity=album&limit=25'));
+      final results = (j is Map ? j['results'] : null) as List? ?? const [];
+      for (final r in results) {
+        if (r is! Map) continue;
+        final name = _normRel('${r['collectionName'] ?? ''}');
+        final who = _normRel('${r['artistName'] ?? ''}');
+        final d = DateTime.tryParse('${r['releaseDate'] ?? ''}');
+        if (d == null) continue;
+        if (name != t && !(name.startsWith(t) && t.length > 3)) continue;
+        if (a.isNotEmpty && !who.contains(a.split(' ').first)) continue;
+        if (y != null && d.year != y && (d.year - y).abs() > 1) continue;
+        if (best == null || (y != null && d.year == y && best.year != y) ||
+            d.isBefore(best)) {
+          best = d;
+        }
+      }
+    } catch (_) {}
+    if (best != null) return DateTime(best.year, best.month, best.day);
+
+    // 2. MusicBrainz.
+    try {
+      final q = 'releasegroup:"${title.replaceAll('"', '')}" AND artist:"${artist.replaceAll('"', '')}"';
+      final j = await getJson(Uri.parse(
+          'https://musicbrainz.org/ws/2/release-group/?query=${Uri.encodeQueryComponent(q)}&fmt=json&limit=10'));
+      final groups = (j is Map ? j['release-groups'] : null) as List? ?? const [];
+      for (final g in groups) {
+        if (g is! Map) continue;
+        final raw = '${g['first-release-date'] ?? ''}';
+        if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(raw)) continue;
+        if (_normRel('${g['title'] ?? ''}') != t) continue;
+        final d = DateTime.tryParse(raw);
+        if (d == null) continue;
+        if (y != null && d.year != y) continue;
+        return d;
+      }
+    } catch (_) {}
+    return null;
+  });
+}
+
+const List<String> _monthNames = [
+  'January', 'February', 'March', 'April', 'May', 'June', 'July',
+  'August', 'September', 'October', 'November', 'December',
+];
+
+/// "Released March 15, 2024" (or "Released 2024" until / unless the exact
+/// day is found).
+class ReleaseDateText extends StatelessWidget {
+  final String title;
+  final String artist;
+  final String? year;
+  final TextStyle style;
+  final bool upper;
+  const ReleaseDateText({
+    super.key,
+    required this.title,
+    required this.artist,
+    required this.year,
+    required this.style,
+    this.upper = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<DateTime?>(
+      future: releaseDateFor(title, artist, year: year),
+      builder: (context, snap) {
+        final d = snap.data;
+        var text = d == null
+            ? (year == null ? '' : 'Released $year')
+            : 'Released ${_monthNames[d.month - 1]} ${d.day}, ${d.year}';
+        if (upper) text = text.toUpperCase();
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 250),
+          child: Text(text, key: ValueKey(text), style: style),
+        );
+      },
+    );
   }
 }

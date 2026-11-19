@@ -1,8 +1,15 @@
 All your music, one player.
 
-AlexLMP 3.6.2 fixes the AI DJ.
+AlexLMP 3.6.3 shows an artist's full discography and real release dates.
+
+## New
+- **Every album and single, newest first.** "See all" on an artist's Albums or Singles now lists everything they have out on YouTube Music, straight from the artist's own page, sorted from newest to oldest.
+- **Exact release dates.** Album and single pages show the full date it came out (like "Released March 15, 2024"), not just the year.
 
 ## Fixed
+- **The AI DJ sounds like a real DJ.** No more cheesy "good morning sunshine" lines. It's calm and talks about the music.
+
+## From 3.6.2
 - **Starting the DJ from Home works again.** It opened the "Add music" menu instead of the player when you only use YouTube Music.
 - **The DJ screen shows up every time the DJ talks,** not only when you start it from the player. Wherever you are in the app, the player comes up with the DJ on screen.
 - **No more crackly audio when the song comes back in.** The song now fades in with one smooth fade.
