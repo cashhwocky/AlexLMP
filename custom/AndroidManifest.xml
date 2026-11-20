@@ -209,6 +209,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity-alias>
+        <!-- Kept so anyone who picked the 3.7 Liquid Glass icon still has a launcher icon. -->
+        <activity-alias
+            android:name=".IconGlass"
+            android:targetActivity=".MainActivity"
+            android:label="AlexLMP"
+            android:icon="@mipmap/ic_alt_bloom"
+            android:roundIcon="@mipmap/ic_alt_bloom"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
         <activity-alias
             android:name=".IconPrism"
             android:targetActivity=".MainActivity"
