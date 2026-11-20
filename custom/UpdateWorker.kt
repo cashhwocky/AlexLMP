@@ -67,7 +67,7 @@ class UpdateWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
     }
 
     companion object {
-        private const val REPO = "cashhwocky/AlexLMP"
+        private const val REPO = "cashhwocky/bitLMP"
         private const val WORK_NAME = "alexlmp_update_check"
         private const val KEY_NOTIFIED = "notified_version"
 

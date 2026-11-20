@@ -31057,7 +31057,7 @@ void showSupportSheet(BuildContext context) {
 const String kDonateCashApp = 'https://cash.app/\$sxlocctrapp';
 const String kDonatePayPal = 'https://paypal.me/alexdesrosier67';
 
-const String kGithubRepo = 'cashhwocky/AlexLMP';
+const String kGithubRepo = 'cashhwocky/bitLMP';
 
 class AppRelease {
   final String version;
