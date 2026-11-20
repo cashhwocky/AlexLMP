@@ -5497,7 +5497,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     final t = audioHandler.currentTrack;
                     if (t == null) return const SizedBox.shrink();
                     return Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
                       child: GlassMiniPlayer(track: t),
                     );
                   },
@@ -5505,7 +5505,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 SafeArea(
                   top: false,
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
                     child: Row(
                       children: [
                         Expanded(
@@ -5522,21 +5522,11 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                           ),
                         ),
                         const SizedBox(width: 10),
-                        SquishyGesture(
-                          pressedScale: 0.86,
+                        CloverSearchButton(
                           onTap: () {
                             HapticFeedback.selectionClick();
                             openGlassSearch(context);
                           },
-                          child: const Frosted(
-                            radius: 32,
-                            child: SizedBox(
-                              width: 64,
-                              height: 64,
-                              child: Icon(Icons.search_rounded,
-                                  color: Colors.white, size: 24),
-                            ),
-                          ),
                         ),
                       ],
                     ),
@@ -31153,7 +31143,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.7.3';
+const String kAppVersion = '3.7.4';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -40762,6 +40752,109 @@ class _EdgePainter extends CustomPainter {
   bool shouldRepaint(_EdgePainter o) => o.radius != radius;
 }
 
+// bitHome tonal colours (from bitMessages).
+const Color kTabLav = Color(0xFFCBC2EB);
+const Color kTabOnLav = Color(0xFF241C4A);
+const Color kTabBarTint = Color(0xFF2E2842);
+const Color kTabInk = Color(0xFFE8E0FF);
+
+/// Tonal glass: blurred, with a deep lavender tint (bitMessages bar).
+class TonalGlass extends StatelessWidget {
+  final Widget child;
+  final double radius;
+  const TonalGlass({super.key, required this.child, this.radius = 30});
+  @override
+  Widget build(BuildContext context) {
+    final r = BorderRadius.circular(radius);
+    return ClipRRect(
+      borderRadius: r,
+      child: glassBlur(
+        filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+              borderRadius: r, color: kTabBarTint.withOpacity(0.82)),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+/// Rounded pill whose edge ripples like a bitHome cookie when [wave] > 0.
+class _WavyPillClipper extends CustomClipper<Path> {
+  final double wave;
+  final double phase;
+  _WavyPillClipper(this.wave, this.phase);
+  @override
+  Path getClip(Size size) {
+    final p = Path();
+    final cx = size.width / 2, cy = size.height / 2;
+    const steps = 160;
+    for (var i = 0; i <= steps; i++) {
+      final t = 2 * pi * i / steps;
+      final c = cos(t), sn = sin(t);
+      final r = pow(pow(c.abs(), 4) + pow(sn.abs(), 4), -0.25).toDouble();
+      final w = 1.0 + wave * cos(9 * t + phase);
+      final x = cx + size.width / 2 * c * r * w;
+      final y = cy + size.height / 2 * sn * r * w;
+      if (i == 0) {
+        p.moveTo(x, y);
+      } else {
+        p.lineTo(x, y);
+      }
+    }
+    return p..close();
+  }
+
+  @override
+  bool shouldReclip(_WavyPillClipper o) => o.wave != wave || o.phase != phase;
+}
+
+/// bitHome clover (search button).
+class _CloverClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final p = Path();
+    final cx = size.width / 2, cy = size.height / 2;
+    const steps = 180;
+    for (var i = 0; i <= steps; i++) {
+      final t = 2 * pi * i / steps;
+      final r = 0.74 + 0.25 * pow(cos(2 * t).abs(), 0.6).toDouble();
+      final x = cx + size.width / 2 * r * cos(t);
+      final y = cy + size.height / 2 * r * sin(t);
+      if (i == 0) {
+        p.moveTo(x, y);
+      } else {
+        p.lineTo(x, y);
+      }
+    }
+    return p..close();
+  }
+
+  @override
+  bool shouldReclip(_CloverClipper o) => false;
+}
+
+/// Lavender clover search button.
+class CloverSearchButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const CloverSearchButton({super.key, required this.onTap});
+  @override
+  Widget build(BuildContext context) => SquishyGesture(
+        pressedScale: 0.95,
+        onTap: onTap,
+        child: ClipPath(
+          clipper: _CloverClipper(),
+          child: Container(
+            width: 68,
+            height: 68,
+            color: kTabLav,
+            child: const Icon(Icons.search_rounded, color: kTabOnLav, size: 26),
+          ),
+        ),
+      );
+}
+
 class GlassTabBar extends StatefulWidget {
   final int index;
   final ValueChanged<int> onSelect;
@@ -40777,20 +40870,20 @@ class GlassTabBar extends StatefulWidget {
 
 class _GlassTabBarState extends State<GlassTabBar>
     with TickerProviderStateMixin {
-  // Lens position in "tab units".
   late final AnimationController _x = AnimationController.unbounded(
       vsync: this, value: widget.index.toDouble());
-  // 1 → 1.08 while dragging (bouncy).
-  late final AnimationController _stretch =
-      AnimationController.unbounded(vsync: this, value: 1);
+  late final AnimationController _wave =
+      AnimationController.unbounded(vsync: this, value: 0);
+  late final AnimationController _phase = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 900));
   bool _dragging = false;
 
-  // Compose spring(dampingRatio 0.72, StiffnessMediumLow = 400).
+  // spring(dampingRatio 0.68, stiffness 400)
   static const _lensSpring =
-      SpringDescription(mass: 1, stiffness: 400, damping: 2 * 0.72 * 20);
-  // spring(dampingRatio 0.55, stiffness 500).
-  static const _stretchSpring =
-      SpringDescription(mass: 1, stiffness: 500, damping: 2 * 0.55 * 22.36);
+      SpringDescription(mass: 1, stiffness: 400, damping: 2 * 0.68 * 20);
+  // spring(dampingRatio 0.5, stiffness 300)
+  static const _waveSpring =
+      SpringDescription(mass: 1, stiffness: 300, damping: 2 * 0.5 * 17.32);
 
   void _go(AnimationController c, double to, SpringDescription d) =>
       c.animateWith(SpringSimulation(d, c.value, to, 0));
@@ -40806,19 +40899,34 @@ class _GlassTabBarState extends State<GlassTabBar>
   @override
   void dispose() {
     _x.dispose();
-    _stretch.dispose();
+    _wave.dispose();
+    _phase.dispose();
     super.dispose();
+  }
+
+  void _endDrag(int n) {
+    final target = _x.value.round().clamp(0, n - 1);
+    setState(() => _dragging = false);
+    _go(_wave, 0, _waveSpring);
+    _go(_x, target.toDouble(), _lensSpring);
+    Future.delayed(const Duration(milliseconds: 700), () {
+      if (mounted && !_dragging) _phase.stop();
+    });
+    if (target != widget.index) {
+      HapticFeedback.selectionClick();
+      widget.onSelect(target);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final n = widget.items.length;
-    return Frosted(
-      radius: 32,
+    return TonalGlass(
+      radius: 30,
       child: SizedBox(
-        height: 64,
+        height: 68,
         child: Padding(
-          padding: const EdgeInsets.all(5),
+          padding: const EdgeInsets.all(7),
           child: LayoutBuilder(builder: (context, c) {
             final tabW = c.maxWidth / n;
             return GestureDetector(
@@ -40826,54 +40934,35 @@ class _GlassTabBarState extends State<GlassTabBar>
               onHorizontalDragStart: (_) {
                 _x.stop();
                 setState(() => _dragging = true);
-                _go(_stretch, 1.08, _stretchSpring);
+                _phase.repeat();
+                _go(_wave, 0.07, _waveSpring);
               },
               onHorizontalDragUpdate: (d) {
                 final before = _x.value.round();
                 _x.value = (_x.value + d.delta.dx / tabW).clamp(0.0, n - 1.0);
                 if (_x.value.round() != before) setState(() {});
               },
-              onHorizontalDragEnd: (_) {
-                final target = _x.value.round().clamp(0, n - 1);
-                setState(() => _dragging = false);
-                _go(_stretch, 1, _stretchSpring);
-                _go(_x, target.toDouble(), _lensSpring);
-                if (target != widget.index) {
-                  HapticFeedback.selectionClick();
-                  widget.onSelect(target);
-                }
-              },
-              onHorizontalDragCancel: () {
-                setState(() => _dragging = false);
-                _go(_stretch, 1, _stretchSpring);
-                _go(_x, widget.index.toDouble(), _lensSpring);
-              },
+              onHorizontalDragEnd: (_) => _endDrag(n),
+              onHorizontalDragCancel: () => _endDrag(n),
               child: AnimatedBuilder(
-                animation: Listenable.merge([_x, _stretch]),
+                animation: Listenable.merge([_x, _wave, _phase]),
                 builder: (context, _) {
-                  final st = _stretch.value;
+                  final wave = _wave.value;
                   final hover = _x.value.round().clamp(0, n - 1);
                   return Stack(
                     children: [
-                      // The lens.
+                      // The lavender pill.
                       Positioned(
                         left: _x.value * tabW,
                         top: 0,
                         bottom: 0,
                         width: tabW,
-                        child: Transform(
-                          alignment: Alignment.center,
-                          transform: Matrix4.diagonal3Values(
-                              st, 1 + (st - 1) * 0.5, 1),
-                          child: CustomPaint(
-                            foregroundPainter:
-                                _EdgePainter(27, top: 0.28, bottom: 0.05),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.13),
-                                borderRadius: BorderRadius.circular(27),
-                              ),
-                            ),
+                        child: Transform.scale(
+                          scale: 1 + wave * 0.8,
+                          child: ClipPath(
+                            clipper: _WavyPillClipper(
+                                wave, _phase.value * 2 * pi),
+                            child: const ColoredBox(color: kTabLav),
                           ),
                         ),
                       ),
@@ -40890,19 +40979,49 @@ class _GlassTabBarState extends State<GlassTabBar>
                                   widget.onSelect(i);
                                 },
                                 child: Builder(builder: (context) {
-                                  final on = _dragging ? i == hover : i == widget.index;
-                                  final col = on ? kGlassInfo : Colors.white;
+                                  final on = _dragging
+                                      ? i == hover
+                                      : i == widget.index;
                                   final (off, onIcon, label) = widget.items[i];
-                                  return Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(on ? onIcon : off, color: col, size: 22),
-                                      Text(label,
-                                          style: TextStyle(
-                                              color: col,
-                                              fontSize: 11.5,
-                                              fontWeight: FontWeight.w600)),
-                                    ],
+                                  return Container(
+                                    color: Colors.transparent,
+                                    alignment: Alignment.center,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(on ? onIcon : off,
+                                            color: on ? kTabOnLav : kTabInk,
+                                            size: 23),
+                                        AnimatedSize(
+                                          duration:
+                                              const Duration(milliseconds: 260),
+                                          curve: Curves.easeOutCubic,
+                                          child: AnimatedOpacity(
+                                            duration: const Duration(
+                                                milliseconds: 200),
+                                            opacity: on ? 1 : 0,
+                                            child: on
+                                                ? Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                            left: 7),
+                                                    child: Text(label,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .clip,
+                                                        softWrap: false,
+                                                        style: const TextStyle(
+                                                            color: kTabOnLav,
+                                                            fontSize: 14,
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .w700)),
+                                                  )
+                                                : const SizedBox.shrink(),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   );
                                 }),
                               ),
@@ -40938,8 +41057,8 @@ class GlassMiniPlayer extends StatelessWidget {
         if (v < -300) audioHandler.skipToNext();
         if (v > 300) audioHandler.skipToPrevious();
       },
-      child: Frosted(
-        radius: 32,
+      child: TonalGlass(
+        radius: 30,
         child: SizedBox(
           height: 64,
           child: Row(

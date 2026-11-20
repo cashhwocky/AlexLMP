@@ -1,8 +1,12 @@
 All your music, one player.
 
-AlexLMP 3.7.3 polishes the Liquid Glass tab bar and mini player.
+AlexLMP 3.7.4 gives the tab bar a Material You twist.
 
 ## Changed
+- **Material You tab bar.** The tab bar and mini player sit on deep lavender glass. A lavender pill marks your tab and shows its name, and when you drag along the bar, the pill follows your finger with a rippling, cookie-like edge before settling on the nearest tab.
+- **Clover search button.** Search is now a lavender clover next to the tab bar.
+
+## From 3.7.3
 - **New tab bar glass.** The tab bar, search button and mini player now use a darker, smoky frosted glass with a thin edge that's brightest along the top. The sliding bubble is softer and stretches a little while you drag it.
 
 ## From 3.7.2
