@@ -1,7 +1,7 @@
 name: alex_lmp
 description: bitLMP Material You Music Player
 publish_to: 'none'
-version: 3.8.0+68
+version: 3.8.1+69
 
 environment:
   sdk: '>=3.2.0 <4.0.0'

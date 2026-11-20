@@ -1,8 +1,12 @@
 All your music, one player.
 
-AlexLMP is now **bitLMP**, joining the bit family of apps (bitMessages, bitDialer, bitMaps and more).
+bitLMP 3.8.1 gets a brand new pixel-art app icon.
 
 ## New
+- **New pixel app icon.** "BIT" over "LMP" in pixel letters, with a little cursor clicking on it. It's the new default icon and fits every launcher shape. If you picked a different icon before, you keep it, and you can switch any time in Settings > App icon.
+
+## From 3.8.0
+- AlexLMP is now **bitLMP**, joining the bit family of apps (bitMessages, bitDialer, bitMaps and more).
 - **New name: bitLMP.** Same app, same features, new name. Your library, likes, playlists and settings all stay, and updates keep installing over your current version.
 - **New app icons.** Every app icon is redesigned with the new bitLMP mark: a disc with three sound bars. The default is a white disc with purple bars on black, matching the other bit apps. All the other icon colors are still in Settings > App icon with the new mark.
 - **Updates you won't miss.** When a new version is out, a full-screen update page shows what's new every time you open the app, with one tap to update.

@@ -30,7 +30,7 @@ class MainActivity : AudioServiceActivity() {
         "classic", "midnight", "sunset", "aurora", "neon",
         "mint", "ember", "gold", "ocean", "white", "bloom",
         "prism", "halo", "frost", "rose", "matrix",
-        "orb", "note", "vinyl", "borealis", "bitlmp",
+        "orb", "note", "vinyl", "borealis", "bitlmp", "pixel",
     )
 
     private fun iconAlias(key: String) = android.content.ComponentName(
@@ -41,11 +41,11 @@ class MainActivity : AudioServiceActivity() {
     private fun currentAppIcon(): String {
         val pm = packageManager
         for (k in appIcons) {
-            if (k == "bitlmp") continue
+            if (k == "pixel") continue
             val st = pm.getComponentEnabledSetting(iconAlias(k))
             if (st == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return k
         }
-        return "bitlmp"
+        return "pixel"
     }
 
     /**
@@ -58,9 +58,9 @@ class MainActivity : AudioServiceActivity() {
             val pm = packageManager
             val enabled = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             val chosen = appIcons.any {
-                it != "bitlmp" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
+                it != "pixel" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
             }
-            val bloom = iconAlias("bitlmp")
+            val bloom = iconAlias("pixel")
             if (chosen && pm.getComponentEnabledSetting(bloom) ==
                 android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
             ) {
@@ -330,7 +330,7 @@ class MainActivity : AudioServiceActivity() {
                     }
                     "getAppIcon" -> result.success(currentAppIcon())
                     "setAppIcon" -> {
-                        val key = call.argument<String>("key") ?: "bitlmp"
+                        val key = call.argument<String>("key") ?: "pixel"
                         if (key !in appIcons) {
                             result.error("ICON", "Unknown icon: $key", null)
                         } else {

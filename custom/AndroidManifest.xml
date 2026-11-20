@@ -328,12 +328,25 @@
             </intent-filter>
         </activity-alias>
         <activity-alias
+            android:name=".IconPixel"
+            android:targetActivity=".MainActivity"
+            android:label="bitLMP"
+            android:icon="@mipmap/ic_alt_pixel"
+            android:roundIcon="@mipmap/ic_alt_pixel"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
             android:name=".IconBitlmp"
             android:targetActivity=".MainActivity"
             android:label="bitLMP"
             android:icon="@mipmap/ic_alt_bitlmp"
             android:roundIcon="@mipmap/ic_alt_bitlmp"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
