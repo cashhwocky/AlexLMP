@@ -440,7 +440,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// 'alex' (default look) or 'community' (Google / Material 3 look).
-  String get appStyle => str('app_style', 'glass');
+  String get appStyle => str('app_style', 'bloom');
   bool get community => appStyle == 'community';
 
   /// 'local' (files on your phone) or 'youtube' (your YouTube Music).
@@ -607,14 +607,17 @@ class AppState extends ChangeNotifier {
       await prefs.setBool('bloom_default_v1', true);
       themeName = 'Lilac';
     }
-    // AlexLMP Liquid Glass (3.7): the only app style and player style.
-    if (prefs.getBool('glass_default_v1') != true) {
-      await prefs.setBool('pure_black', false);
-      await prefs.setBool('glass_default_v1', true);
+    // 3.7.5: back to normal AlexLMP after the Liquid Glass versions.
+    if (prefs.getString('app_style') == 'glass') {
+      await prefs.setString('app_style', 'bloom');
     }
-    await prefs.setString('app_style', 'glass');
-    await prefs.setString('player_style', 'glass');
-    playerStyle = prefs.getString('player_style') ?? 'glass';
+    if (prefs.getString('player_style') == 'glass') {
+      await prefs.setString('player_style', 'bloom');
+    }
+    if (prefs.getString('app_icon') == 'glass') {
+      await prefs.setString('app_icon', 'bloom');
+    }
+    playerStyle = prefs.getString('player_style') ?? 'bloom';
     // The Prestige player was removed.
     if (playerStyle == 'prestige') playerStyle = 'alex';
     animatedBackground = prefs.getBool('animated_bg') ?? false;
@@ -4531,10 +4534,6 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         final bottomInset = MediaQuery.of(context).padding.bottom;
         _dockOverlay = true;
 
-        // AlexLMP Liquid Glass is the only app style now.
-        if (glassLook) {
-          return _glassScaffold(context, pal, tracks);
-        }
         if (appState.appStyle == 'bloom') {
           return _bloomScaffold(context, pal, tracks);
         }
@@ -5399,436 +5398,6 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     TabItem(Icons.settings_outlined, Icons.settings_rounded, 'Settings'),
   ];
 
-  // ═══════════════════════ AlexLMP Liquid Glass shell ═══════════════════════
-
-  static const List<(IconData, IconData, String)> _glassTabs = [
-    (Icons.home_outlined, Icons.home_rounded, 'Home'),
-    (Icons.library_music_outlined, Icons.library_music_rounded, 'Library'),
-    (Icons.auto_awesome_outlined, Icons.auto_awesome_rounded, 'AI'),
-    (Icons.settings_outlined, Icons.settings_rounded, 'Settings'),
-  ];
-
-  Widget _glassScaffold(
-      BuildContext context, AppPalette pal, List<TrackItem> tracks) {
-    final tab = _tab > 3 ? 0 : _tab;
-    _measureBloomBottom();
-    Widget page;
-    switch (tab) {
-      case 1:
-        page = const GlassLibraryPage();
-        break;
-      case 2:
-        page = AiMusicChat(
-          onCommand: _aiCommand,
-          nowPlaying: () {
-            final t = audioHandler.currentTrack;
-            return t == null ? '' : '${t.title} - ${t.artist}';
-          },
-          bg: kGlassBg,
-          surface: const Color(0x21FFFFFF),
-          userBubble: kGlassAccent,
-          onUserBubble: Colors.white,
-          text: Colors.white,
-          subtext: kGlassT2,
-          accent: kGlassAccent,
-          bottomPad: _bloomBottomH,
-          glass: true,
-          onDj: () => startOrStepAiDj(openInPlayer: context),
-        );
-        break;
-      case 3:
-        page = const GlassSettingsPage();
-        break;
-      default:
-        page = _glassHome(context, pal, tracks);
-    }
-    return Scaffold(
-      backgroundColor: kGlassBg,
-      resizeToAvoidBottomInset: false,
-      body: Stack(
-        children: [
-          const Positioned.fill(child: GlassBackdrop()),
-          Positioned.fill(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 280),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              transitionBuilder: (child, anim) => FadeTransition(
-                opacity: anim,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                          begin: Offset(0.03 * _dir, 0), end: Offset.zero)
-                      .animate(anim),
-                  child: child,
-                ),
-              ),
-              child: KeyedSubtree(key: ValueKey('glass$tab'), child: page),
-            ),
-          ),
-          // Fade the content out under the floating bars.
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: _bloomBottomH + 30,
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [kGlassBg.withOpacity(0), kGlassBg.withOpacity(0.7)],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: Column(
-              key: _bloomBottomKey,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ValueListenableBuilder<int>(
-                  valueListenable: audioHandler.currentIndex,
-                  builder: (context, _, __) {
-                    final t = audioHandler.currentTrack;
-                    if (t == null) return const SizedBox.shrink();
-                    return Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-                      child: GlassMiniPlayer(track: t),
-                    );
-                  },
-                ),
-                SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: GlassTabBar(
-                            items: _glassTabs,
-                            index: tab,
-                            onSelect: (i) {
-                              if (i == _tab) return;
-                              setState(() {
-                                _dir = i >= _tab ? 1 : -1;
-                                _tab = i;
-                              });
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        CloverSearchButton(
-                          onTap: () {
-                            HapticFeedback.selectionClick();
-                            openGlassSearch(context);
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _glassHome(BuildContext context, AppPalette pal, List<TrackItem> all) {
-    final yt = appState.homeMode == 'youtube';
-    final acct = ytAccount.value;
-    final first = (acct.signedIn ? (acct.name ?? '') : '').trim().split(' ').first;
-    final local = all.where((t) => !t.isYouTube).toList();
-
-    final profile = SquishyGesture(
-      pressedScale: 0.9,
-      onTap: () => showYtAccountSheet(context),
-      child: Container(
-        width: 38,
-        height: 38,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: const LinearGradient(
-              colors: [Color(0xFF5B86E5), Color(0xFFA770EF)]),
-          border: Border.all(color: Colors.white.withOpacity(0.25), width: 0.7),
-        ),
-        clipBehavior: Clip.antiAlias,
-        alignment: Alignment.center,
-        child: acct.signedIn && acct.photo != null
-            ? Image.network(acct.photo!,
-                width: 38,
-                height: 38,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    const Icon(Icons.person_rounded, color: Colors.white))
-            : Text(first.isEmpty ? 'A' : first.characters.first.toUpperCase(),
-                style: glassText(16, weight: FontWeight.w700)),
-      ),
-    );
-
-    Widget jump({
-      required Widget art,
-      required String title,
-      required String sub,
-      required VoidCallback onOpen,
-      required VoidCallback onPlay,
-      required VoidCallback onShuffle,
-    }) =>
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: SquishyGesture(
-            pressedScale: 0.98,
-            onTap: onOpen,
-            child: Glass(
-              radius: 26,
-              padding: const EdgeInsets.all(14),
-              child: Row(
-                children: [
-                  Container(
-                    width: 104,
-                    height: 104,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: const [
-                        BoxShadow(
-                            color: Color(0x66000000),
-                            blurRadius: 22,
-                            offset: Offset(0, 10)),
-                      ],
-                    ),
-                    child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16), child: art),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('JUMP BACK IN',
-                            style: glassText(11.5,
-                                    color: kGlassT2, weight: FontWeight.w600)
-                                .copyWith(letterSpacing: 1.1)),
-                        const SizedBox(height: 4),
-                        Text(title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: glassText(20, weight: FontWeight.w700)),
-                        Text(sub,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: glassText(13.5,
-                                color: kGlassT2, weight: FontWeight.w400)),
-                        const SizedBox(height: 12),
-                        Row(children: [
-                          glassPill('Play', Icons.play_arrow_rounded, onPlay),
-                          const SizedBox(width: 10),
-                          GlassCircle(
-                              icon: Icons.shuffle_rounded,
-                              size: 36,
-                              tooltip: 'Shuffle',
-                              onTap: onShuffle),
-                        ]),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-
-    Widget quick(List<TrackItem> list, {VoidCallback? onAll}) => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            glassSection('Quick Picks', onAll: onAll),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Glass(
-                child: Column(children: [
-                  for (var i = 0; i < min(4, list.length); i++) ...[
-                    GlassSongRow(track: list[i], onTap: () => _ytPlay(list, i)),
-                    if (i < min(4, list.length) - 1)
-                      const Padding(
-                        padding: EdgeInsets.only(left: 72),
-                        child: Divider(
-                            height: 0.5, thickness: 0.5, color: kGlassLine),
-                      ),
-                  ],
-                ]),
-              ),
-            ),
-          ],
-        );
-
-    Widget shelf(String title, List<YtShelfItem> items) => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            glassSection(title),
-            glassRow([
-              for (final it in items)
-                GlassCard(
-                  art: YtNetworkImage(url: it.thumbnail, size: 150),
-                  title: it.title,
-                  subtitle: it.subtitle,
-                  round: it.kind == 'artist',
-                  onTap: () => openYtShelfItem(context, it),
-                ),
-            ], 206),
-          ],
-        );
-
-    final out = <Widget>[
-      glassTitle(context, 'Home', trailing: profile),
-      Padding(
-        padding: const EdgeInsets.only(bottom: 14),
-        child: glassSource(context),
-      ),
-    ];
-
-    if (yt) {
-      out.add(_ytData((d, err, loading) {
-        final col = <Widget>[];
-        if (d.shelves.isEmpty) {
-          col.add(Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: _ytHomeStatus(pal, err, loading),
-          ));
-        }
-        final mix = d.mixes.isNotEmpty ? d.mixes.first : null;
-        final pool = d.quick.isNotEmpty ? d.quick : d.liked;
-        if (mix != null || pool.isNotEmpty) {
-          col.add(jump(
-            art: mix != null
-                ? YtNetworkImage(url: mix.thumbnail, size: 104)
-                : CustomAlbumArtwork(track: pool.first),
-            title: mix?.title ?? 'Quick Picks',
-            sub: mix?.subtitle ?? 'Made from what you play',
-            onOpen: () => mix != null
-                ? openYtShelfItem(context, mix)
-                : _ytPlay(pool, 0),
-            onPlay: () async {
-              if (mix != null && mix.kind == 'playlist') {
-                List<TrackItem> list = const [];
-                try {
-                  list = (await YouTubeMusic.playlistPage(mix.id)).tracks;
-                } catch (_) {}
-                if (list.isNotEmpty) {
-                  _ytPlay(list, 0);
-                  return;
-                }
-              }
-              if (pool.isNotEmpty) _ytPlay(pool, 0);
-            },
-            onShuffle: () {
-              final p = [...d.quick, ...d.liked];
-              if (p.isNotEmpty) _ytShuffle(p);
-            },
-          ));
-        }
-        if (d.quick.isNotEmpty) {
-          col.add(quick(d.quick,
-              onAll: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => GlassSongsPage(
-                      title: 'Quick Picks', tracks: d.quick)))));
-        }
-        if (d.allMixes.isNotEmpty || d.mixes.isNotEmpty) {
-          col.add(shelf('Made For You',
-              d.allMixes.isNotEmpty ? d.allMixes : d.mixes));
-        }
-        if (d.again.isNotEmpty) col.add(shelf('Listen Again', d.again));
-        for (final sh in d.rest) {
-          final title = sh.title.isEmpty ? 'For You' : sh.title;
-          if (sh.kind == 'song') {
-            final list = [
-              for (final it in sh.items)
-                YouTubeMusic.trackFromShelf(it, it.subtitle)
-            ];
-            col.add(Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                glassSection(title,
-                    onAll: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) =>
-                            GlassSongsPage(title: title, tracks: list)))),
-                glassList([
-                  for (var i = 0; i < min(4, list.length); i++)
-                    GlassSongRow(track: list[i], onTap: () => _ytPlay(list, i)),
-                ], indent: 72),
-              ],
-            ));
-          } else {
-            col.add(shelf(title, sh.items));
-          }
-        }
-        return Column(
-            crossAxisAlignment: CrossAxisAlignment.start, children: col);
-      }));
-    } else if (local.isEmpty) {
-      out.add(Padding(
-        padding: const EdgeInsets.fromLTRB(16, 30, 16, 0),
-        child: _emptyState(context, pal),
-      ));
-    } else {
-      final picks = _quickPicks(local, 12);
-      final recent = _recentFrom(local);
-      final hero = recent.isNotEmpty ? recent : local;
-      out.add(jump(
-        art: CustomAlbumArtwork(track: hero.first),
-        title: recent.isNotEmpty ? hero.first.title : 'Your music',
-        sub: recent.isNotEmpty
-            ? hero.first.artist
-            : '${local.length} ${local.length == 1 ? 'song' : 'songs'}',
-        onOpen: () => _ytPlay(hero, 0),
-        onPlay: () => _ytPlay(hero, 0),
-        onShuffle: () => _ytShuffle(local),
-      ));
-      out.add(quick(picks,
-          onAll: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) =>
-                  GlassSongsPage(title: 'Quick Picks', tracks: picks)))));
-      if (appState.playlists.isNotEmpty) {
-        out
-          ..add(glassSection('Made For You'))
-          ..add(glassRow([
-            for (final pl in appState.playlists)
-              GlassCard(
-                art: PlaylistCoverThumbnail(playlist: pl, size: 150),
-                title: pl.name,
-                subtitle: '${pl.trackIds.length} songs',
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => PlaylistDetailScreen(playlistId: pl.id))),
-              ),
-          ], 206));
-      }
-      if (recent.length > 1) {
-        out
-          ..add(glassSection('Listen Again'))
-          ..add(glassRow([
-            for (var i = 0; i < min(12, recent.length); i++)
-              GlassCard(
-                art: CustomAlbumArtwork(track: recent[i]),
-                title: recent[i].title,
-                subtitle: recent[i].artist,
-                onTap: () => _ytPlay(recent, i),
-              ),
-          ], 206));
-      }
-    }
-    return ListenableBuilder(
-      listenable: Listenable.merge([ytAccount, LibraryStore.revision]),
-      builder: (context, _) => ListView(
-        padding: EdgeInsets.only(bottom: _bloomBottomH + 40),
-        children: out,
-      ),
-    );
-  }
-
   Widget _bloomScaffold(
       BuildContext context, AppPalette pal, List<TrackItem> tracks) {
     final tab = _tab > 3 ? 0 : _tab;
@@ -5911,14 +5480,14 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 SafeArea(
                   top: false,
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-                    child: TabDock(
+                    padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
+                    child: SliderTabBar(
                       items: _bloomTabs,
                       index: tab,
-                      containerColor: c.s2,
-                      indicatorColor: c.lc,
-                      selectedColor: c.onLc,
-                      unselectedColor: c.t2,
+                      barColor: c.s2,
+                      pillColor: c.lc,
+                      onPill: c.onLc,
+                      ink: c.t1,
                       onSelect: (i) {
                         HapticFeedback.selectionClick();
                         if (i == 4) {
@@ -15466,20 +15035,6 @@ class NowPlayingScreen extends StatelessWidget {
 
             Widget wrapDjOverlay(Widget p) => p;
 
-            // AlexLMP Liquid Glass Player is the only player style now.
-            if (glassLook) {
-              return SwipeDownDismiss(
-                child: BloomPlayerView(
-                  track: track,
-                  playing: playing,
-                  loading: loading,
-                  shuffle: shuffle,
-                  repeat: repeat,
-                  liked: liked,
-                ),
-              );
-            }
-
             if (appState.playerStyle == 'bloom') {
               return SwipeDownDismiss(
                 child: wrapDjOverlay(BloomPlayerView(
@@ -17626,6 +17181,49 @@ class SettingsScreen extends StatelessWidget {
     if (!themeOptions.containsKey(themeValue)) themeValue = themeOptions.keys.first;
     return [
       _section(pal, 'Appearance', Icons.palette_rounded, [
+        _dropdown<String>(
+          pal,
+          Icons.style_rounded,
+          'App style',
+          'Look and shapes of the whole app (not the player controls)',
+          appState.appStyle,
+          const {
+            'bloom': 'AlexLMP Bloom (Default)',
+            'alex': 'AlexLMP',
+            'signal': 'AlexLMP Signal',
+            'plus': 'PLUS',
+            'prestige': 'AlexLMP Prestige',
+            'pocket': 'Pocket',
+            'community': 'Community Suggested',
+            'apple': 'Apple Music',
+          },
+          (v) {
+            appState.setStr('app_style', v);
+            if (v == 'bloom') appState.setPlayerStyle('bloom');
+            if (v == 'apple') appState.setPlayerStyle('apple');
+            if (v == 'plus') appState.setPlayerStyle('plus');
+            if (v == 'signal') appState.setPlayerStyle('signal');
+          },
+        ),
+        _dropdown<String>(
+          pal,
+          Icons.tune_rounded,
+          'Player style',
+          'How the player controls look',
+          appState.playerStyle,
+          const {
+            'bloom': 'AlexLMP Bloom (Default)',
+            'alex': 'AlexLMP Classic',
+            'signal': 'AlexLMP Signal',
+            'plus': 'PLUS',
+            'simp': 'AlexLMP',
+            'modern': 'Modern',
+            'expressive': 'Expressive',
+            'apple': 'Apple Music',
+            'jog': 'Community Suggested (Jog Wheel)',
+          },
+          appState.setPlayerStyle,
+        ),
         if (appState.community)
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -18892,10 +18490,6 @@ void showPlaylistEditDialog(BuildContext context) {
 }
 
 void showSearchSheet(BuildContext context, {String? query}) {
-  if (glassLook) {
-    openGlassSearch(context, query: query);
-    return;
-  }
   Navigator.of(context).push(PageRouteBuilder(
     transitionDuration: const Duration(milliseconds: 320),
     reverseTransitionDuration: const Duration(milliseconds: 240),
@@ -23944,7 +23538,7 @@ class _SetupScreenState extends State<SetupScreen> {
     HapticFeedback.mediumImpact();
     appState.setB('setup_done', true);
     final k = _pickedIcon;
-    if (k != null && k != 'glass') {
+    if (k != null && k != 'bloom') {
       Future.delayed(const Duration(milliseconds: 600), () async {
         try {
           appState.setStr('app_icon', k);
@@ -24142,7 +23736,7 @@ class _SetupScreenState extends State<SetupScreen> {
           child: Reveal(
             child: AnimatedAppIcon(
               style: kAppIcons.firstWhere(
-                  (e) => e.key == (_pickedIcon ?? appState.str('app_icon', 'glass')),
+                  (e) => e.key == (_pickedIcon ?? appState.str('app_icon', 'bloom')),
                   orElse: () => kAppIcons.first),
               size: 150,
             ),
@@ -24205,7 +23799,7 @@ class _SetupScreenState extends State<SetupScreen> {
       ];
 
   List<Widget> _icons(Color accent) {
-    final current = _pickedIcon ?? appState.str('app_icon', 'glass');
+    final current = _pickedIcon ?? appState.str('app_icon', 'bloom');
     return [
       _heading(Icons.apps_rounded, 'Step 1 · Icon', 'Pick your icon',
           'Choose how AlexLMP looks on your home screen. Each one has its own launch animation.',
@@ -24473,6 +24067,27 @@ class _SetupScreenState extends State<SetupScreen> {
       ];
 
   List<Widget> _look(Color accent) {
+    const appStyles = {
+      'bloom': 'Bloom',
+      'signal': 'Signal',
+      'alex': 'AlexLMP',
+      'plus': 'PLUS',
+      'prestige': 'Prestige',
+      'pocket': 'Pocket',
+      'community': 'Community',
+      'apple': 'Apple Music',
+    };
+    const players = {
+      'bloom': 'Bloom',
+      'signal': 'Signal',
+      'alex': 'Classic',
+      'plus': 'PLUS',
+      'simp': 'AlexLMP',
+      'modern': 'Modern',
+      'expressive': 'Expressive',
+      'apple': 'Apple Music',
+      'jog': 'Jog Wheel',
+    };
     Widget title(String t, String b) => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -24567,6 +24182,50 @@ class _SetupScreenState extends State<SetupScreen> {
             ),
           );
         },
+      ),
+      ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) => _card2(
+          delay: 70,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              title('App style', 'Home, library and navigation.'),
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final e in appStyles.entries)
+                  _choice(e.value, appState.appStyle == e.key,
+                      () {
+                        appState.setStr('app_style', e.key);
+                        if (e.key == 'plus' ||
+                            e.key == 'apple' ||
+                            e.key == 'bloom' ||
+                            e.key == 'signal') {
+                          appState.setPlayerStyle(e.key);
+                        }
+                      }, accent),
+              ]),
+            ],
+          ),
+        ),
+      ),
+      ListenableBuilder(
+        listenable: appState,
+        builder: (context, _) => _card2(
+          delay: 140,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              title('Player style', 'What you see while a song plays.'),
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final e in players.entries)
+                  _choice(e.value, appState.playerStyle == e.key,
+                      () => appState.setPlayerStyle(e.key), accent),
+              ]),
+            ],
+          ),
+        ),
       ),
       ListenableBuilder(
         listenable: appState,
@@ -28307,10 +27966,6 @@ const List<AppIconStyle> kAppIcons = [
   // Full-bleed: the colour fills the whole icon (no circle inside a
   // square), so it looks right in any launcher shape.
   // Default: Material You lilac, dark bars on a purple cookie.
-  // Default: AlexLMP Liquid Glass, glass bars on a pink-to-blue glow.
-  AppIconStyle('glass', 'Liquid Glass',
-      [Color(0xFFFF5E7E), Color(0xFFA770EF), Color(0xFF5B86E5)], null, null,
-      [Colors.white], 'wave', 'Wave', custom: 'glass'),
   AppIconStyle('bloom', 'Bloom', [Color(0xFFD8CEF2)], Color(0xFF7667AA), null,
       [Color(0xFF3D3258)], 'wave', 'Wave',
       cookie: true, barScale: 1.08),
@@ -28360,7 +28015,7 @@ const List<AppIconStyle> kAppIcons = [
 const double kIconBarScale = 1.35;
 
 AppIconStyle appIconStyle([String? key]) {
-  final k = key ?? appState.str('app_icon', 'glass');
+  final k = key ?? appState.str('app_icon', 'bloom');
   return kAppIcons.firstWhere((e) => e.key == k, orElse: () => kAppIcons.first);
 }
 
@@ -28537,58 +28192,8 @@ class AppIconPainter extends CustomPainter {
         return _paintNote(canvas);
       case 'vinyl':
         return _paintVinyl(canvas);
-      case 'glass':
-        return _paintGlass(canvas);
       default:
         return _paintBorealis(canvas);
-    }
-  }
-
-  /// Liquid Glass: the five bars as glass pills over a soft shine.
-  void _paintGlass(Canvas canvas) {
-    const full = Rect.fromLTWH(0, 0, 108, 108);
-    canvas.drawRect(
-        full,
-        Paint()
-          ..shader = RadialGradient(
-            center: const Alignment(-24 / 54, -32 / 54),
-            radius: 70 / 54,
-            colors: [Colors.white.withOpacity(0.30), Colors.white.withOpacity(0)],
-          ).createShader(full));
-    for (var i = 0; i < 5; i++) {
-      final m = t == 0 ? 1.0 : _mult(i);
-      final introI = Curves.easeOutBack
-          .transform(((intro * 1.4) - i * 0.08).clamp(0.0, 1.0));
-      final h = max(0.5, _half[i] * 1.25 * m * introI);
-      final x = 54 + (_xs[i] - 54) * 1.25;
-      const w = 8.6;
-      final r = RRect.fromRectAndRadius(
-          Rect.fromLTRB(x - w / 2, 54 - h - w / 2, x + w / 2, 54 + h + w / 2),
-          const Radius.circular(w / 2));
-      final box = r.outerRect;
-      canvas.drawRRect(
-          r,
-          Paint()
-            ..shader = LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Colors.white.withOpacity(0.55), Colors.white.withOpacity(0.22)],
-            ).createShader(box));
-      canvas.drawRRect(
-          r,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 0.9
-            ..shader = LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Colors.white, Colors.white.withOpacity(0.35)],
-            ).createShader(box));
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromLTWH(box.left + 1.6, box.top + 1.4, 2.2, box.height * 0.55),
-              const Radius.circular(1.1)),
-          Paint()..color = Colors.white.withOpacity(0.55));
     }
   }
 
@@ -29027,7 +28632,7 @@ Future<void> showAppIconPicker(BuildContext context) async {
     builder: (ctx) => ListenableBuilder(
       listenable: appState,
       builder: (ctx, _) {
-        final current = appState.str('app_icon', 'glass');
+        final current = appState.str('app_icon', 'bloom');
         final maxH = MediaQuery.of(ctx).size.height * 0.82;
         return SafeArea(
           child: ConstrainedBox(
@@ -31143,7 +30748,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.7.4';
+const String kAppVersion = '3.7.5';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -31723,18 +31328,6 @@ class OfflineStore {
 
   static Future<void> _pump() async {
     if (_running) return;
-    if (appState.b('dl_wifi_only', true)) {
-      bool metered = false;
-      try {
-        metered = await _mediaChannel.invokeMethod<bool>('isMetered') ?? false;
-      } catch (_) {}
-      if (metered) {
-        appNotice.value = 'Downloads wait for Wi-Fi (Settings > Download over Wi-Fi only).';
-        _queue.clear();
-        active.value = {};
-        return;
-      }
-    }
     _running = true;
     _batchDone = 0;
     _batchFailed = 0;
@@ -37250,8 +36843,7 @@ class LocalCollectionScreen extends StatelessWidget {
 // ═══════════════════════════ AlexLMP Bloom ═══════════════════════════════
 // Material You "Bloom": lilac tones, scalloped cookie shapes, wavy progress.
 
-/// Bloom pages are reused by AlexLMP Liquid Glass with glass colours/shapes.
-bool get bloomLook => true;
+bool get bloomLook => appState.appStyle == 'bloom';
 
 /// Bloom colours, made from the current theme colour (lilac by default).
 class BloomColors {
@@ -37284,24 +36876,7 @@ class BloomColors {
       });
 }
 
-BloomColors get bc => kGlassColors;
-
-/// Liquid Glass tokens (see-through whites over the dark glass backdrop).
-const BloomColors kGlassColors = BloomColors(
-  kGlassBg,
-  Color(0x14FFFFFF),
-  Color(0x21FFFFFF),
-  Color(0x2EFFFFFF),
-  Colors.white,
-  Colors.black,
-  kGlassAccent,
-  Colors.white,
-  kGlassT2,
-  kGlassT3,
-  Color(0x33FF5E7E),
-  Colors.white,
-  Color(0xFF5B86E5),
-);
+BloomColors get bc => BloomColors.of(appState.palette.accent);
 
 enum BloomKind { cookie, scallop, flower, clover, sunny, gem }
 
@@ -37372,11 +36947,7 @@ class BloomShape extends StatelessWidget {
     if (k == null) {
       return ClipRRect(borderRadius: BorderRadius.circular(radius), child: box);
     }
-    // Liquid Glass: no scallops. Cookies are circles, the rest soft squares.
-    return ClipRRect(
-        borderRadius: BorderRadius.circular(
-            k == BloomKind.cookie ? size : size * 0.22),
-        child: box);
+    return ClipPath(clipper: BloomClipper(k), child: box);
   }
 }
 
@@ -37429,10 +37000,6 @@ class BloomBackdrop extends StatelessWidget {
   const BloomBackdrop({super.key, this.glow});
   @override
   Widget build(BuildContext context) {
-    return const GlassBackdrop();
-  }
-
-  Widget _oldBuild(BuildContext context) {
     final c = bc;
     return DecoratedBox(
       decoration: BoxDecoration(color: c.bg),
@@ -37493,17 +37060,14 @@ class BloomSection extends StatelessWidget {
                 child: Text(title,
                     style: bloomText(20, weight: FontWeight.w700))),
             if (action != null)
-              GestureDetector(
-                onTap: onAction,
-                behavior: HitTestBehavior.opaque,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                  child: Row(children: [
-                    Text(action == 'See all' ? 'See All' : action!,
-                        style: glassText(15, color: kGlassAccent, weight: FontWeight.w500)),
-                    const Icon(Icons.chevron_right_rounded, color: kGlassAccent, size: 20),
-                  ]),
-                ),
+              TextButton(
+                style: TextButton.styleFrom(
+                    foregroundColor: bc.pri,
+                    padding: const EdgeInsets.symmetric(horizontal: 8)),
+                onPressed: onAction,
+                child: Text(action!,
+                    style: const TextStyle(
+                        fontSize: 13.5, fontWeight: FontWeight.w600)),
               ),
           ],
         ),
@@ -37513,22 +37077,7 @@ class BloomSection extends StatelessWidget {
 /// Material 3 expressive grouped list: big outer corners, small inner ones.
 Widget bloomGroup(List<Widget> rows,
     {double outer = 24, double inner = 6, Color? color}) {
-  if (color == null) {
-    return Glass(
-      radius: 22,
-      child: Column(children: [
-        for (var i = 0; i < rows.length; i++) ...[
-          rows[i],
-          if (i < rows.length - 1)
-            const Padding(
-              padding: EdgeInsets.only(left: 70),
-              child: Divider(height: 0.5, thickness: 0.5, color: kGlassLine),
-            ),
-        ],
-      ]),
-    );
-  }
-  final c = color;
+  final c = color ?? bc.s1;
   return Column(
     children: [
       for (var i = 0; i < rows.length; i++)
@@ -37549,29 +37098,6 @@ Widget bloomGroup(List<Widget> rows,
 /// One row of a grouped list, for lazy lists (index [i] of [n]).
 Widget bloomGroupItem(Widget row, int i, int n,
     {double outer = 24, double inner = 6, Color? color}) {
-  if (color == null) {
-    // One continuous glass panel built from lazy rows.
-    final r = BorderRadius.vertical(
-      top: Radius.circular(i == 0 ? 22 : 0),
-      bottom: Radius.circular(i == n - 1 ? 22 : 0),
-    );
-    return ClipRRect(
-      borderRadius: r,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.09),
-        ),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          row,
-          if (i < n - 1)
-            const Padding(
-              padding: EdgeInsets.only(left: 70),
-              child: Divider(height: 0.5, thickness: 0.5, color: kGlassLine),
-            ),
-        ]),
-      ),
-    );
-  }
   return Padding(
     padding: EdgeInsets.only(bottom: i == n - 1 ? 0 : 3),
     child: ClipRRect(
@@ -37829,37 +37355,6 @@ class BloomChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = bc;
-    if (glassLook) {
-      return SquishyGesture(
-        pressedScale: 0.94,
-        onTap: onTap,
-        child: on
-            ? Container(
-                height: 36,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                    color: Colors.white, borderRadius: BorderRadius.circular(18)),
-                child: Text(label,
-                    style: glassText(14, color: Colors.black, weight: FontWeight.w600)),
-              )
-            : Glass(
-                radius: 18,
-                child: Container(
-                  height: 36,
-                  padding: EdgeInsets.symmetric(horizontal: icon != null ? 13 : 16),
-                  alignment: Alignment.center,
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    if (icon != null) ...[
-                      Icon(icon, size: 16, color: kGlassT2),
-                      const SizedBox(width: 6),
-                    ],
-                    Text(label, style: glassText(14, weight: FontWeight.w500)),
-                  ]),
-                ),
-              ),
-      );
-    }
     final ic = on ? Icons.check_rounded : icon;
     return SquishyGesture(
       pressedScale: 0.94,
@@ -38115,8 +37610,7 @@ class BloomNavBar extends StatelessWidget {
 // ── Bloom Search ─────────────────────────────────────────────────────────
 
 class BloomSearchPage extends StatefulWidget {
-  final String? initialQuery;
-  const BloomSearchPage({super.key, this.initialQuery});
+  const BloomSearchPage({super.key});
   @override
   State<BloomSearchPage> createState() => _BloomSearchPageState();
 }
@@ -38124,17 +37618,6 @@ class BloomSearchPage extends StatefulWidget {
 class _BloomSearchPageState extends State<BloomSearchPage> {
   final TextEditingController _ctrl = TextEditingController();
   final FocusNode _focus = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    final q = widget.initialQuery;
-    if (q != null && q.trim().isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _submit(q);
-      });
-    }
-  }
   String? _q; // submitted query
   int _filter = 0; // 0 all, 1 songs, 2 albums, 3 artists, 4 playlists, 5 phone
 
@@ -38263,98 +37746,17 @@ class _BloomSearchPageState extends State<BloomSearchPage> {
       ),
     );
 
-    final glassBar = Row(
-      children: [
-        Expanded(
-          child: Glass(
-            radius: 22,
-            strong: true,
-            child: SizedBox(
-              height: 44,
-              child: Row(children: [
-                const SizedBox(width: 12),
-                const Icon(Icons.search_rounded, color: kGlassT2, size: 21),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: _ctrl,
-                    focusNode: _focus,
-                    textInputAction: TextInputAction.search,
-                    style: glassText(16.5, weight: FontWeight.w400),
-                    cursorColor: kGlassAccent,
-                    decoration: InputDecoration(
-                      hintText: 'Artists, Songs, Lyrics and More',
-                      hintStyle: glassText(16.5, color: kGlassT2, weight: FontWeight.w400),
-                      border: InputBorder.none,
-                      isCollapsed: true,
-                    ),
-                    onChanged: (_) => setState(() {}),
-                    onSubmitted: _submit,
-                  ),
-                ),
-                if (_ctrl.text.isNotEmpty)
-                  GestureDetector(
-                    onTap: () {
-                      _ctrl.clear();
-                      setState(() {});
-                      _focus.requestFocus();
-                    },
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8),
-                      child: Icon(Icons.cancel_rounded, color: kGlassT2, size: 19),
-                    ),
-                  )
-                else
-                  GestureDetector(
-                    onTap: () async {
-                      final t = await listenForSpeech('Search music');
-                      if (t != null) _submit(t);
-                    },
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12),
-                      child: Icon(Icons.mic_rounded, color: kGlassT2, size: 21),
-                    ),
-                  ),
-              ]),
-            ),
-          ),
-        ),
-        if (_q != null || _focus.hasFocus)
-          GestureDetector(
-            onTap: () {
-              _ctrl.clear();
-              _focus.unfocus();
-              setState(() => _q = null);
-            },
-            child: Padding(
-              padding: const EdgeInsets.only(left: 12, right: 2),
-              child: Text('Cancel',
-                  style: glassText(16.5, color: kGlassAccent, weight: FontWeight.w400)),
-            ),
-          ),
-      ],
-    );
-
     return ListenableBuilder(
-      listenable: Listenable.merge([appState, audioHandler.currentIndex, _focus]),
+      listenable: Listenable.merge([appState, audioHandler.currentIndex]),
       builder: (context, _) => ListView(
-        padding: EdgeInsets.fromLTRB(16, top + 10, 16, 200),
+        padding: EdgeInsets.fromLTRB(16, top + 12, 16, 200),
         children: [
           if (_q == null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
-              child: Row(children: [
-                Expanded(
-                    child: Text('Search',
-                        style: glassText(34, weight: FontWeight.w800))),
-                if (Navigator.of(context).canPop())
-                  GlassCircle(
-                      icon: Icons.close_rounded,
-                      tooltip: 'Close',
-                      onTap: () => Navigator.of(context).maybePop()),
-              ]),
+              padding: const EdgeInsets.fromLTRB(4, 4, 4, 14),
+              child: Text('Search', style: bloomText(30, weight: FontWeight.w700)),
             ),
-          glassLook ? glassBar : bar,
+          bar,
           if (_q == null) ..._browse(c) else ..._results(c),
         ],
       ),
@@ -38374,7 +37776,7 @@ class _BloomSearchPageState extends State<BloomSearchPage> {
         const SizedBox(height: 18),
       ],
       if (history.isNotEmpty) ...[
-        BloomSection(glassLook ? 'Recent Searches' : 'Recent', action: 'Clear', onAction: () {
+        BloomSection('Recent', action: 'Clear', onAction: () {
           YouTubeMusic.prefs?.remove('search_history');
           setState(() {});
         }),
@@ -38391,38 +37793,6 @@ class _BloomSearchPageState extends State<BloomSearchPage> {
           ],
         ),
       ],
-      if (glassLook) ...[
-        const BloomSection('Browse Categories'),
-        GridView.count(
-          crossAxisCount: 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: 1.6,
-          children: [
-            for (final (name, _, a, b) in _genres)
-              SquishyGesture(
-                pressedScale: 0.96,
-                onTap: () => _submit('$name playlists', filter: 4),
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(18),
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color.lerp(a, b, 0.25)!, a],
-                    ),
-                    border: Border.all(color: Colors.white.withOpacity(0.18), width: 0.7),
-                  ),
-                  padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-                  alignment: Alignment.bottomLeft,
-                  child: Text(name, style: glassText(17, weight: FontWeight.w700)),
-                ),
-              ),
-          ],
-        ),
-      ] else ...[
       const BloomSection('Browse'),
       GridView.count(
         crossAxisCount: 2,
@@ -38476,7 +37846,6 @@ class _BloomSearchPageState extends State<BloomSearchPage> {
             ),
         ],
       ),
-      ],
     ];
   }
 
@@ -38557,7 +37926,7 @@ class _BloomSearchPageState extends State<BloomSearchPage> {
   List<Widget> _results(BloomColors c) {
     final q = _q!;
     final chips = [
-      (glassLook ? 'Top Results' : 'All', 0),
+      ('All', 0),
       ('Songs', 1),
       ('Albums', 2),
       ('Artists', 3),
@@ -38735,8 +38104,10 @@ class _BloomSearchPageState extends State<BloomSearchPage> {
                 pressedScale: 0.98,
                 onTap: () => openYtArtist(context, top.url, top.name,
                     thumbnail: top.thumbnail),
-                child: Glass(
+                child: Container(
                   padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                      color: c.s2, borderRadius: BorderRadius.circular(32)),
                   child: Row(
                     children: [
                       BloomShape(
@@ -39314,8 +38685,15 @@ class BloomPlayerView extends StatelessWidget {
             ? 'YouTube Music'
             : 'On this phone';
 
-    Widget round(IconData icon, VoidCallback onTap, String tip) =>
-        GlassCircle(icon: icon, size: 46, tooltip: tip, onTap: onTap);
+    Widget round(IconData icon, VoidCallback onTap, String tip) => BloomButton(
+          kind: null,
+          size: 46,
+          bg: c.s2,
+          icon: icon,
+          iconColor: c.t1,
+          tooltip: tip,
+          onTap: onTap,
+        );
 
     // A tap target inside the transport dock.
     Widget dockKey(IconData icon, VoidCallback onTap, String tip,
@@ -39581,18 +38959,9 @@ class BloomPlayerView extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
-            // Tinted liquid glass dock (same look as the tab bar).
-            ClipRRect(
-              borderRadius: BorderRadius.circular(34),
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-                child: Container(
+            Container(
               padding: const EdgeInsets.all(5),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(34),
-                border: Border.all(color: Colors.white.withOpacity(0.14), width: 0.6),
-              ),
+              decoration: dockBox(34),
               child: Row(
                 children: [
                   pill(Icons.lyrics_outlined, 'Lyrics',
@@ -39652,7 +39021,7 @@ class BloomPlayerView extends StatelessWidget {
                   pill(Icons.ios_share_rounded, 'Share', () => shareTrack(track)),
                 ],
               ),
-            ))),
+            ),
             const SizedBox(height: 12),
           ],
         ),
@@ -39665,17 +39034,13 @@ class BloomPlayerView extends StatelessWidget {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Liquid glass: the cover art, heavily frosted, behind everything.
-          ImageFiltered(
-            imageFilter: ui.ImageFilter.blur(sigmaX: 60, sigmaY: 60),
-            child: Transform.scale(scale: 1.3, child: CustomAlbumArtwork(track: track)),
-          ),
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Colors.black.withOpacity(0.30), Colors.black.withOpacity(0.62)],
+                colors: [Color.lerp(c.bg, seed, 0.58)!, Color.lerp(c.bg, Colors.black, 0.45)!],
+                stops: const [0, 0.7],
               ),
             ),
           ),
@@ -40251,536 +39616,11 @@ class ReleaseDateText extends StatelessWidget {
   }
 }
 
+// ── Slider tab bar (from bitMessages) ────────────────────────────────────
+// A tonal bar in the app's own colours. A pill marks your tab and shows its
+// name; drag along the bar and the pill follows your finger with a soft
+// rippling edge, then settles on the nearest tab.
 
-// ═══════════════════════════ AlexLMP Liquid Glass ═══════════════════════════
-// The only app style and player style: iOS-inspired frosted glass floating
-// over soft coloured light, big titles, grouped lists.
-
-bool get glassLook => true;
-
-const Color kGlassAccent = Color(0xFF6E8BFF);
-const Color kGlassBg = Color(0xFF07070B);
-const Color kGlassT2 = Color(0x9EEBEBF5);
-const Color kGlassT3 = Color(0x5CEBEBF5);
-const Color kGlassLine = Color(0x1FFFFFFF);
-
-/// Frosted glass panel. [blur] uses a real backdrop blur (for the floating
-/// bars); without it the panel is a light frosted tint (cheap, for cards).
-class Glass extends StatelessWidget {
-  final Widget child;
-  final double radius;
-  final bool blur;
-  final bool strong;
-  final EdgeInsetsGeometry? padding;
-  final Color? tint;
-  const Glass({
-    super.key,
-    required this.child,
-    this.radius = 22,
-    this.blur = false,
-    this.strong = false,
-    this.padding,
-    this.tint,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final r = BorderRadius.circular(radius);
-    // Same tinted, frosted look as the tab bar (no shiny streak on top).
-    final body = Container(
-      padding: padding,
-      decoration: BoxDecoration(
-        borderRadius: r,
-        color: tint ?? Colors.white.withOpacity(strong ? 0.12 : 0.09),
-        border: Border.all(color: Colors.white.withOpacity(0.14), width: 0.6),
-      ),
-      child: child,
-    );
-    return ClipRRect(
-      borderRadius: r,
-      child: glassBlur(
-        filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-        child: body,
-      ),
-    );
-  }
-}
-
-/// Dark background with soft coloured light. The first light follows the
-/// colours of what's playing.
-class GlassBackdrop extends StatelessWidget {
-  const GlassBackdrop({super.key});
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable: audioHandler.currentIndex,
-      builder: (context, _, __) {
-        final t = audioHandler.currentTrack;
-        final seed = t == null ? const Color(0xFFFF5E7E) : (artSeedNow(t) ?? t.artColors.first);
-        Widget light(Color c, Alignment a, double size, double o) => Align(
-              alignment: a,
-              child: Container(
-                width: size,
-                height: size,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                      colors: [c.withOpacity(o), c.withOpacity(0)]),
-                ),
-              ),
-            );
-        return ColoredBox(
-          color: kGlassBg,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 900),
-                child: KeyedSubtree(
-                  key: ValueKey(seed.value),
-                  child: light(seed, const Alignment(-1.1, -1.05), 560, 0.55),
-                ),
-              ),
-              light(const Color(0xFF5B86E5), const Alignment(1.2, -0.35), 560, 0.50),
-              light(const Color(0xFFA770EF), const Alignment(-0.8, 0.95), 600, 0.40),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-TextStyle glassText(double size,
-        {Color color = Colors.white, FontWeight weight = FontWeight.w600}) =>
-    TextStyle(
-      color: color,
-      fontSize: size,
-      fontWeight: weight,
-      letterSpacing: size >= 20 ? -0.6 : -0.1,
-      height: 1.22,
-    );
-
-/// Big iOS-style page title with an optional button on the right.
-Widget glassTitle(BuildContext context, String title, {Widget? trailing}) =>
-    Padding(
-      padding: EdgeInsets.fromLTRB(
-          20, MediaQuery.of(context).padding.top + 10, 16, 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
-              child: Text(title,
-                  style: glassText(34, weight: FontWeight.w800))),
-          if (trailing != null) trailing,
-        ],
-      ),
-    );
-
-/// Round glass icon button.
-class GlassCircle extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback? onTap;
-  final double size;
-  final String? tooltip;
-  final Color? color;
-  const GlassCircle(
-      {super.key,
-      required this.icon,
-      this.onTap,
-      this.size = 38,
-      this.tooltip,
-      this.color});
-  @override
-  Widget build(BuildContext context) {
-    final b = SquishyGesture(
-      pressedScale: 0.88,
-      onTap: onTap,
-      child: Glass(
-        radius: size / 2,
-        strong: true,
-        child: SizedBox(
-          width: size,
-          height: size,
-          child: Icon(icon, color: color ?? Colors.white, size: size * 0.5),
-        ),
-      ),
-    );
-    return tooltip == null ? b : Tooltip(message: tooltip!, child: b);
-  }
-}
-
-/// White pill button ("Play").
-Widget glassPill(String label, IconData icon, VoidCallback onTap,
-        {bool white = true}) =>
-    SquishyGesture(
-      pressedScale: 0.94,
-      onTap: onTap,
-      child: white
-          ? Container(
-              height: 36,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                  color: Colors.white, borderRadius: BorderRadius.circular(18)),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(icon, color: Colors.black, size: 19),
-                const SizedBox(width: 5),
-                Text(label,
-                    style: glassText(14.5,
-                        color: Colors.black, weight: FontWeight.w700)),
-              ]),
-            )
-          : Glass(
-              radius: 18,
-              strong: true,
-              child: SizedBox(
-                height: 36,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(icon, color: Colors.white, size: 17),
-                    const SizedBox(width: 6),
-                    Text(label, style: glassText(14, weight: FontWeight.w600)),
-                  ]),
-                ),
-              ),
-            ),
-    );
-
-/// iOS-style section header: title + blue "See All ›".
-Widget glassSection(String title, {VoidCallback? onAll, String action = 'See All'}) =>
-    Padding(
-      padding: const EdgeInsets.fromLTRB(20, 24, 14, 10),
-      child: Row(
-        children: [
-          Expanded(child: Text(title, style: glassText(21, weight: FontWeight.w700))),
-          if (onAll != null)
-            GestureDetector(
-              onTap: onAll,
-              behavior: HitTestBehavior.opaque,
-              child: Row(children: [
-                Text(action,
-                    style: glassText(15,
-                        color: kGlassAccent, weight: FontWeight.w500)),
-                const Icon(Icons.chevron_right_rounded,
-                    color: kGlassAccent, size: 20),
-              ]),
-            ),
-        ],
-      ),
-    );
-
-/// iOS-style grouped list in one glass panel with thin dividers.
-Widget glassList(List<Widget> rows, {double indent = 70}) => Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Glass(
-        child: Column(
-          children: [
-            for (var i = 0; i < rows.length; i++) ...[
-              rows[i],
-              if (i < rows.length - 1)
-                Padding(
-                  padding: EdgeInsets.only(left: indent),
-                  child: const Divider(height: 0.5, thickness: 0.5, color: kGlassLine),
-                ),
-            ],
-          ],
-        ),
-      ),
-    );
-
-/// Settings / library row: coloured icon tile, label, value and chevron.
-class GlassRow extends StatelessWidget {
-  final IconData icon;
-  final Color? tile;
-  final String label;
-  final String? value;
-  final VoidCallback? onTap;
-  final Widget? trailing;
-  const GlassRow({
-    super.key,
-    required this.icon,
-    required this.label,
-    this.tile,
-    this.value,
-    this.onTap,
-    this.trailing,
-  });
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-        child: Row(
-          children: [
-            if (tile != null)
-              Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                    color: tile, borderRadius: BorderRadius.circular(8)),
-                child: Icon(icon, color: Colors.white, size: 18),
-              )
-            else
-              Icon(icon, color: kGlassAccent, size: 22),
-            const SizedBox(width: 14),
-            Expanded(
-                child: Text(label,
-                    style: glassText(16.5, weight: FontWeight.w400))),
-            if (trailing != null)
-              trailing!
-            else ...[
-              if (value != null)
-                Text(value!,
-                    style: glassText(15.5, color: kGlassT2, weight: FontWeight.w400)),
-              const SizedBox(width: 4),
-              const Icon(Icons.chevron_right_rounded, color: kGlassT3, size: 22),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Song row for glass lists.
-class GlassSongRow extends StatelessWidget {
-  final TrackItem track;
-  final VoidCallback onTap;
-  final String? subtitle;
-  const GlassSongRow(
-      {super.key, required this.track, required this.onTap, this.subtitle});
-  @override
-  Widget build(BuildContext context) {
-    final playing = audioHandler.currentTrack?.id == track.id;
-    void more() => track.isYouTube
-        ? showYtAddToPlaylist(context, track)
-        : showAddToPlaylistSheet(context, track);
-    return InkWell(
-      onTap: onTap,
-      onLongPress: more,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 9, 4, 9),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: SizedBox(
-                  width: 46, height: 46, child: CustomAlbumArtwork(track: track)),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(track.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: glassText(15,
-                          color: playing ? kGlassAccent : Colors.white)),
-                  Text(subtitle ?? track.artist,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: glassText(13, color: kGlassT2, weight: FontWeight.w400)),
-                ],
-              ),
-            ),
-            if (playing) ...[
-              SizedBox(width: 18, height: 14, child: EqBars(color: kGlassAccent)),
-              const SizedBox(width: 6),
-            ],
-            Text(bloomDur(track.durationSeconds),
-                style: glassText(13, color: kGlassT3, weight: FontWeight.w400)),
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.more_horiz_rounded, color: kGlassT3, size: 20),
-              onPressed: more,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Cover card with title under it.
-class GlassCard extends StatelessWidget {
-  final Widget art;
-  final String title;
-  final String subtitle;
-  final double size;
-  final bool round;
-  final VoidCallback onTap;
-  final VoidCallback? onLongPress;
-  const GlassCard({
-    super.key,
-    required this.art,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-    this.size = 150,
-    this.round = false,
-    this.onLongPress,
-  });
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onLongPress: onLongPress,
-      child: SquishyGesture(
-        pressedScale: 0.96,
-        onTap: onTap,
-        child: SizedBox(
-          width: size,
-          child: Column(
-            crossAxisAlignment:
-                round ? CrossAxisAlignment.center : CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: size,
-                height: size,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(round ? size : 14),
-                  boxShadow: const [
-                    BoxShadow(
-                        color: Color(0x59000000),
-                        blurRadius: 24,
-                        offset: Offset(0, 10)),
-                  ],
-                ),
-                child: ClipRRect(
-                    borderRadius: BorderRadius.circular(round ? size : 14),
-                    child: art),
-              ),
-              const SizedBox(height: 8),
-              Text(title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: round ? TextAlign.center : TextAlign.start,
-                  style: glassText(13.5)),
-              if (subtitle.isNotEmpty)
-                Text(subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: round ? TextAlign.center : TextAlign.start,
-                    style: glassText(12.5, color: kGlassT2, weight: FontWeight.w400)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-Widget glassRow(List<Widget> cards, double height) => SizedBox(
-      height: height,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        itemCount: cards.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 14),
-        itemBuilder: (_, i) => cards[i],
-      ),
-    );
-
-/// iOS-style switch row value.
-Widget glassSwitch(bool on, ValueChanged<bool> onChanged) => Switch.adaptive(
-      value: on,
-      onChanged: onChanged,
-      activeColor: Colors.white,
-      activeTrackColor: const Color(0xFF34C759),
-      inactiveTrackColor: const Color(0x5C787880),
-      inactiveThumbColor: Colors.white,
-      trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
-    );
-
-// ── Liquid glass tab bar you can drag across (same as bitDialer) ─────────
-
-const Color kGlassInfo = Color(0xFF9CB2FF);
-
-/// Real frosted glass, same as bitDialer: blurs what's behind, dark tint so
-/// text stays readable, hairline edge brightest along the top.
-class Frosted extends StatelessWidget {
-  final Widget child;
-  final double radius;
-  const Frosted({super.key, required this.child, required this.radius});
-  @override
-  Widget build(BuildContext context) {
-    final r = BorderRadius.circular(radius);
-    return ClipRRect(
-      borderRadius: r,
-      child: glassBlur(
-        filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: CustomPaint(
-          foregroundPainter: _EdgePainter(radius),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: r,
-              color: const Color(0xFF101014).withOpacity(0.55),
-            ),
-            child: child,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 0.75px border, white 24% at the top fading to 5% at the bottom.
-class _EdgePainter extends CustomPainter {
-  final double radius;
-  final double top;
-  final double bottom;
-  _EdgePainter(this.radius, {this.top = 0.24, this.bottom = 0.05});
-  @override
-  void paint(Canvas canvas, Size s) {
-    final rect = Offset.zero & s;
-    final rr = RRect.fromRectAndRadius(rect.deflate(0.375), Radius.circular(radius));
-    canvas.drawRRect(
-        rr,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.75
-          ..shader = LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.white.withOpacity(top), Colors.white.withOpacity(bottom)],
-          ).createShader(rect));
-  }
-
-  @override
-  bool shouldRepaint(_EdgePainter o) => o.radius != radius;
-}
-
-// bitHome tonal colours (from bitMessages).
-const Color kTabLav = Color(0xFFCBC2EB);
-const Color kTabOnLav = Color(0xFF241C4A);
-const Color kTabBarTint = Color(0xFF2E2842);
-const Color kTabInk = Color(0xFFE8E0FF);
-
-/// Tonal glass: blurred, with a deep lavender tint (bitMessages bar).
-class TonalGlass extends StatelessWidget {
-  final Widget child;
-  final double radius;
-  const TonalGlass({super.key, required this.child, this.radius = 30});
-  @override
-  Widget build(BuildContext context) {
-    final r = BorderRadius.circular(radius);
-    return ClipRRect(
-      borderRadius: r,
-      child: glassBlur(
-        filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-              borderRadius: r, color: kTabBarTint.withOpacity(0.82)),
-          child: child,
-        ),
-      ),
-    );
-  }
-}
-
-/// Rounded pill whose edge ripples like a bitHome cookie when [wave] > 0.
 class _WavyPillClipper extends CustomClipper<Path> {
   final double wave;
   final double phase;
@@ -40810,65 +39650,29 @@ class _WavyPillClipper extends CustomClipper<Path> {
   bool shouldReclip(_WavyPillClipper o) => o.wave != wave || o.phase != phase;
 }
 
-/// bitHome clover (search button).
-class _CloverClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    final p = Path();
-    final cx = size.width / 2, cy = size.height / 2;
-    const steps = 180;
-    for (var i = 0; i <= steps; i++) {
-      final t = 2 * pi * i / steps;
-      final r = 0.74 + 0.25 * pow(cos(2 * t).abs(), 0.6).toDouble();
-      final x = cx + size.width / 2 * r * cos(t);
-      final y = cy + size.height / 2 * r * sin(t);
-      if (i == 0) {
-        p.moveTo(x, y);
-      } else {
-        p.lineTo(x, y);
-      }
-    }
-    return p..close();
-  }
-
-  @override
-  bool shouldReclip(_CloverClipper o) => false;
-}
-
-/// Lavender clover search button.
-class CloverSearchButton extends StatelessWidget {
-  final VoidCallback onTap;
-  const CloverSearchButton({super.key, required this.onTap});
-  @override
-  Widget build(BuildContext context) => SquishyGesture(
-        pressedScale: 0.95,
-        onTap: onTap,
-        child: ClipPath(
-          clipper: _CloverClipper(),
-          child: Container(
-            width: 68,
-            height: 68,
-            color: kTabLav,
-            child: const Icon(Icons.search_rounded, color: kTabOnLav, size: 26),
-          ),
-        ),
-      );
-}
-
-class GlassTabBar extends StatefulWidget {
+class SliderTabBar extends StatefulWidget {
+  final List<TabItem> items;
   final int index;
   final ValueChanged<int> onSelect;
-  final List<(IconData, IconData, String)> items;
-  const GlassTabBar(
-      {super.key,
-      required this.index,
-      required this.onSelect,
-      required this.items});
+  final Color barColor;
+  final Color pillColor;
+  final Color onPill;
+  final Color ink;
+  const SliderTabBar({
+    super.key,
+    required this.items,
+    required this.index,
+    required this.onSelect,
+    required this.barColor,
+    required this.pillColor,
+    required this.onPill,
+    required this.ink,
+  });
   @override
-  State<GlassTabBar> createState() => _GlassTabBarState();
+  State<SliderTabBar> createState() => _SliderTabBarState();
 }
 
-class _GlassTabBarState extends State<GlassTabBar>
+class _SliderTabBarState extends State<SliderTabBar>
     with TickerProviderStateMixin {
   late final AnimationController _x = AnimationController.unbounded(
       vsync: this, value: widget.index.toDouble());
@@ -40878,10 +39682,8 @@ class _GlassTabBarState extends State<GlassTabBar>
       vsync: this, duration: const Duration(milliseconds: 900));
   bool _dragging = false;
 
-  // spring(dampingRatio 0.68, stiffness 400)
   static const _lensSpring =
       SpringDescription(mass: 1, stiffness: 400, damping: 2 * 0.68 * 20);
-  // spring(dampingRatio 0.5, stiffness 300)
   static const _waveSpring =
       SpringDescription(mass: 1, stiffness: 300, damping: 2 * 0.5 * 17.32);
 
@@ -40889,7 +39691,7 @@ class _GlassTabBarState extends State<GlassTabBar>
       c.animateWith(SpringSimulation(d, c.value, to, 0));
 
   @override
-  void didUpdateWidget(GlassTabBar old) {
+  void didUpdateWidget(SliderTabBar old) {
     super.didUpdateWidget(old);
     if (!_dragging && old.index != widget.index) {
       _go(_x, widget.index.toDouble(), _lensSpring);
@@ -40908,12 +39710,11 @@ class _GlassTabBarState extends State<GlassTabBar>
     final target = _x.value.round().clamp(0, n - 1);
     setState(() => _dragging = false);
     _go(_wave, 0, _waveSpring);
-    _go(_x, target.toDouble(), _lensSpring);
+    _go(_x, widget.index.toDouble(), _lensSpring);
     Future.delayed(const Duration(milliseconds: 700), () {
       if (mounted && !_dragging) _phase.stop();
     });
     if (target != widget.index) {
-      HapticFeedback.selectionClick();
       widget.onSelect(target);
     }
   }
@@ -40921,12 +39722,16 @@ class _GlassTabBarState extends State<GlassTabBar>
   @override
   Widget build(BuildContext context) {
     final n = widget.items.length;
-    return TonalGlass(
-      radius: 30,
-      child: SizedBox(
-        height: 68,
-        child: Padding(
+    final r = BorderRadius.circular(30);
+    return ClipRRect(
+      borderRadius: r,
+      child: glassBlur(
+        filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: Container(
+          height: 68,
           padding: const EdgeInsets.all(7),
+          decoration: BoxDecoration(
+              borderRadius: r, color: widget.barColor.withOpacity(0.92)),
           child: LayoutBuilder(builder: (context, c) {
             final tabW = c.maxWidth / n;
             return GestureDetector(
@@ -40940,7 +39745,10 @@ class _GlassTabBarState extends State<GlassTabBar>
               onHorizontalDragUpdate: (d) {
                 final before = _x.value.round();
                 _x.value = (_x.value + d.delta.dx / tabW).clamp(0.0, n - 1.0);
-                if (_x.value.round() != before) setState(() {});
+                if (_x.value.round() != before) {
+                  HapticFeedback.selectionClick();
+                  setState(() {});
+                }
               },
               onHorizontalDragEnd: (_) => _endDrag(n),
               onHorizontalDragCancel: () => _endDrag(n),
@@ -40951,7 +39759,6 @@ class _GlassTabBarState extends State<GlassTabBar>
                   final hover = _x.value.round().clamp(0, n - 1);
                   return Stack(
                     children: [
-                      // The lavender pill.
                       Positioned(
                         left: _x.value * tabW,
                         top: 0,
@@ -40960,9 +39767,9 @@ class _GlassTabBarState extends State<GlassTabBar>
                         child: Transform.scale(
                           scale: 1 + wave * 0.8,
                           child: ClipPath(
-                            clipper: _WavyPillClipper(
-                                wave, _phase.value * 2 * pi),
-                            child: const ColoredBox(color: kTabLav),
+                            clipper:
+                                _WavyPillClipper(wave, _phase.value * 2 * pi),
+                            child: ColoredBox(color: widget.pillColor),
                           ),
                         ),
                       ),
@@ -40972,54 +39779,31 @@ class _GlassTabBarState extends State<GlassTabBar>
                             Expanded(
                               child: SquishyGesture(
                                 pressedScale: 0.95,
-                                onTap: () {
-                                  if (i != widget.index) {
-                                    HapticFeedback.selectionClick();
-                                  }
-                                  widget.onSelect(i);
-                                },
+                                onTap: () => widget.onSelect(i),
                                 child: Builder(builder: (context) {
-                                  final on = _dragging
-                                      ? i == hover
-                                      : i == widget.index;
-                                  final (off, onIcon, label) = widget.items[i];
+                                  final on =
+                                      _dragging ? i == hover : i == widget.index;
+                                  final it = widget.items[i];
                                   return Container(
                                     color: Colors.transparent,
                                     alignment: Alignment.center,
-                                    child: Row(
+                                    child: Column(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        Icon(on ? onIcon : off,
-                                            color: on ? kTabOnLav : kTabInk,
-                                            size: 23),
-                                        AnimatedSize(
-                                          duration:
-                                              const Duration(milliseconds: 260),
-                                          curve: Curves.easeOutCubic,
-                                          child: AnimatedOpacity(
-                                            duration: const Duration(
-                                                milliseconds: 200),
-                                            opacity: on ? 1 : 0,
-                                            child: on
-                                                ? Padding(
-                                                    padding:
-                                                        const EdgeInsets.only(
-                                                            left: 7),
-                                                    child: Text(label,
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .clip,
-                                                        softWrap: false,
-                                                        style: const TextStyle(
-                                                            color: kTabOnLav,
-                                                            fontSize: 14,
-                                                            fontWeight:
-                                                                FontWeight
-                                                                    .w700)),
-                                                  )
-                                                : const SizedBox.shrink(),
-                                          ),
-                                        ),
+                                        Icon(on ? it.selectedIcon : it.icon,
+                                            color: on ? widget.onPill : widget.ink,
+                                            size: 22),
+                                        const SizedBox(height: 2),
+                                        Text(it.label,
+                                            maxLines: 1,
+                                            softWrap: false,
+                                            overflow: TextOverflow.fade,
+                                            style: TextStyle(
+                                                color: on ? widget.onPill : widget.ink,
+                                                fontSize: 11.5,
+                                                fontWeight: on
+                                                    ? FontWeight.w700
+                                                    : FontWeight.w500)),
                                       ],
                                     ),
                                   );
@@ -41036,1482 +39820,6 @@ class _GlassTabBarState extends State<GlassTabBar>
           }),
         ),
       ),
-    );
-  }
-}
-
-/// Floating glass mini player.
-class GlassMiniPlayer extends StatelessWidget {
-  final TrackItem track;
-  const GlassMiniPlayer({super.key, required this.track});
-  @override
-  Widget build(BuildContext context) {
-    final t = track;
-    return GestureDetector(
-      onTap: () => openPlayer(context),
-      onVerticalDragEnd: (d) {
-        if ((d.primaryVelocity ?? 0) < -200) openPlayer(context);
-      },
-      onHorizontalDragEnd: (d) {
-        final v = d.primaryVelocity ?? 0;
-        if (v < -300) audioHandler.skipToNext();
-        if (v > 300) audioHandler.skipToPrevious();
-      },
-      child: TonalGlass(
-        radius: 30,
-        child: SizedBox(
-          height: 64,
-          child: Row(
-            children: [
-              const SizedBox(width: 8),
-              Hero(
-                tag: 'now_playing_art',
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(11),
-                  child: SizedBox(
-                      width: 42, height: 42, child: CustomAlbumArtwork(track: t)),
-                ),
-              ),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(t.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: glassText(14.5)),
-                    Text(t.artist,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: glassText(12.5, color: kGlassT2, weight: FontWeight.w400)),
-                  ],
-                ),
-              ),
-              StreamBuilder<bool>(
-                stream: audioHandler.player.playingStream,
-                initialData: audioHandler.player.playing,
-                builder: (context, snap) {
-                  final playing = snap.data ?? false;
-                  return IconButton(
-                    tooltip: playing ? 'Pause' : 'Play',
-                    icon: Icon(
-                        playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                        color: Colors.white,
-                        size: 30),
-                    onPressed: () =>
-                        playing ? audioHandler.pause() : audioHandler.play(),
-                  );
-                },
-              ),
-              IconButton(
-                tooltip: 'Next',
-                icon: const Icon(Icons.skip_next_rounded,
-                    color: Colors.white, size: 28),
-                onPressed: audioHandler.skipToNext,
-              ),
-              const SizedBox(width: 4),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Voice input (Android speech recognizer). Returns null if cancelled.
-Future<String?> listenForSpeech(String prompt) async {
-  try {
-    final t = await _mediaChannel.invokeMethod<String>('listen', {'prompt': prompt});
-    return (t == null || t.trim().isEmpty) ? null : t.trim();
-  } catch (_) {
-    return null;
-  }
-}
-
-void openGlassSearch(BuildContext context, {String? query}) {
-  Navigator.of(context).push(PageRouteBuilder(
-    transitionDuration: const Duration(milliseconds: 320),
-    reverseTransitionDuration: const Duration(milliseconds: 240),
-    pageBuilder: (_, __, ___) => Scaffold(
-      backgroundColor: kGlassBg,
-      resizeToAvoidBottomInset: false,
-      body: Stack(children: [
-        const Positioned.fill(child: GlassBackdrop()),
-        BloomSearchPage(initialQuery: query),
-      ]),
-    ),
-    transitionsBuilder: (_, a, __, child) => FadeTransition(
-      opacity: CurvedAnimation(parent: a, curve: Curves.easeOut),
-      child: ScaleTransition(
-          scale: Tween(begin: 0.97, end: 1.0)
-              .animate(CurvedAnimation(parent: a, curve: Curves.easeOutCubic)),
-          child: child),
-    ),
-  ));
-}
-
-
-// ── Liquid Glass: Library ────────────────────────────────────────────────
-
-class GlassLibraryPage extends StatelessWidget {
-  const GlassLibraryPage({super.key});
-
-  void _open(BuildContext context, String kind) => Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => GlassLibraryList(kind: kind)));
-
-  @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: Listenable.merge(
-          [appState, LibraryStore.revision, audioHandler.libraryRevision]),
-      builder: (context, _) {
-        final recent = <(Widget Function(double), String, String, VoidCallback, VoidCallback?)>[];
-        recent.add((
-          (s) => Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFF6E8BFF), Color(0xFFA770EF), Color(0xFFFF5E7E)],
-                  ),
-                ),
-                child: Icon(Icons.favorite_rounded,
-                    color: Colors.white, size: s * 0.36),
-              ),
-          'Liked Songs',
-          appState.homeMode == 'youtube' ? 'YouTube Music' : '${audioHandler.likedTracks.length} songs',
-          () => appState.homeMode == 'youtube'
-              ? openYtLikedMusic(context)
-              : Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => const LikedSongsScreen())),
-          null,
-        ));
-        for (final i in LibraryStore.pins) {
-          final pl = i.kind == 'local' ? appState.playlistById(i.id) : null;
-          recent.add((
-            (s) => pl != null
-                ? PlaylistCoverThumbnail(playlist: pl, size: s)
-                : YtNetworkImage(url: i.thumbnail, size: s),
-            i.title,
-            'Pinned',
-            () => LibraryStore.open(context, i),
-            () => LibraryStore.menu(context, i),
-          ));
-        }
-        for (final pl in appState.playlists.reversed) {
-          recent.add((
-            (s) => PlaylistCoverThumbnail(playlist: pl, size: s),
-            pl.name,
-            'Playlist',
-            () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => PlaylistDetailScreen(playlistId: pl.id))),
-            null,
-          ));
-        }
-        for (final i in LibraryStore.saved.reversed) {
-          if (LibraryStore.isPinned(i)) continue;
-          recent.add((
-            (s) => YtNetworkImage(url: i.thumbnail, size: s),
-            i.title,
-            i.kind == 'album' ? i.subtitle : 'Playlist',
-            () => LibraryStore.open(context, i),
-            () => LibraryStore.menu(context, i),
-          ));
-        }
-        final w = (MediaQuery.of(context).size.width - 40 - 14) / 2;
-        return ListView(
-          padding: const EdgeInsets.only(bottom: 200),
-          children: [
-            glassTitle(context, 'Library',
-                trailing: GlassCircle(
-                    icon: Icons.add_rounded,
-                    tooltip: 'New playlist',
-                    onTap: () => showCreateOrEditPlaylistDialog(context))),
-            glassSource(context),
-            const SizedBox(height: 12),
-            glassList([
-              GlassRow(icon: Icons.queue_music_rounded, label: 'Playlists', onTap: () => _open(context, 'playlists')),
-              GlassRow(icon: Icons.person_rounded, label: 'Artists', onTap: () => _open(context, 'artists')),
-              GlassRow(icon: Icons.grid_view_rounded, label: 'Albums', onTap: () => _open(context, 'albums')),
-              GlassRow(icon: Icons.music_note_rounded, label: 'Songs', onTap: () => _open(context, 'songs')),
-              GlassRow(icon: Icons.download_rounded, label: 'Downloaded', onTap: () => _open(context, 'downloaded')),
-            ], indent: 50),
-            glassSection('Recently Added'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Wrap(
-                spacing: 14,
-                runSpacing: 16,
-                children: [
-                  for (final (art, t, s, tap, long) in recent.take(40))
-                    GlassCard(
-                      art: art(w),
-                      title: t,
-                      subtitle: s,
-                      size: w,
-                      onTap: tap,
-                      onLongPress: long,
-                    ),
-                ],
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// YouTube Music / On this phone switch.
-Widget glassSource(BuildContext context) {
-  final yt = appState.homeMode == 'youtube';
-  Widget seg(String label, bool on, String mode) => Expanded(
-        child: GestureDetector(
-          onTap: () {
-            if (!on) appState.setStr('home_mode', mode);
-          },
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            height: 32,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: on ? Colors.white.withOpacity(0.22) : Colors.transparent,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Text(label,
-                style: glassText(13.5,
-                    weight: on ? FontWeight.w600 : FontWeight.w500,
-                    color: on ? Colors.white : kGlassT2)),
-          ),
-        ),
-      );
-  return Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16),
-    child: Glass(
-      radius: 20,
-      padding: const EdgeInsets.all(3),
-      child: Row(children: [
-        seg('YouTube Music', yt, 'youtube'),
-        seg('On this phone', !yt, 'local'),
-      ]),
-    ),
-  );
-}
-
-/// Playlists / Artists / Albums / Songs / Downloaded.
-class GlassLibraryList extends StatefulWidget {
-  final String kind;
-  const GlassLibraryList({super.key, required this.kind});
-  @override
-  State<GlassLibraryList> createState() => _GlassLibraryListState();
-}
-
-class _GlassLibraryListState extends State<GlassLibraryList> {
-  late final Future<List<YtPlaylistRef>> _pl =
-      YouTubeMusic.libraryPlaylists().catchError((_) => <YtPlaylistRef>[]);
-  late final Future<List<YtArtist>> _ar =
-      YouTubeMusic.libraryArtists().catchError((_) => <YtArtist>[]);
-  late final Future<List<YtAlbum>> _al =
-      YouTubeMusic.libraryAlbums().catchError((_) => <YtAlbum>[]);
-
-  String get _title => const {
-        'playlists': 'Playlists',
-        'artists': 'Artists',
-        'albums': 'Albums',
-        'songs': 'Songs',
-        'downloaded': 'Downloaded',
-      }[widget.kind]!;
-
-  Widget _row(Widget art, String t, String s, VoidCallback tap,
-          {bool round = false, VoidCallback? long}) =>
-      InkWell(
-        onTap: tap,
-        onLongPress: long,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          child: Row(children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(round ? 28 : 10),
-              child: SizedBox(width: 52, height: 52, child: art),
-            ),
-            const SizedBox(width: 13),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(t,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: glassText(15.5)),
-                  if (s.isNotEmpty)
-                    Text(s,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: glassText(13, color: kGlassT2, weight: FontWeight.w400)),
-                ],
-              ),
-            ),
-            const Icon(Icons.chevron_right_rounded, color: kGlassT3),
-          ]),
-        ),
-      );
-
-  Widget _lazySongs(List<TrackItem> list) {
-    if (list.isEmpty) return _empty('No songs here yet.');
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Glass(
-        child: Column(children: [
-          for (var i = 0; i < min(list.length, 400); i++) ...[
-            GlassSongRow(
-              track: list[i],
-              onTap: () {
-                audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
-                audioHandler.playYouTubeList(list, i);
-              },
-            ),
-            if (i < min(list.length, 400) - 1)
-              const Padding(
-                padding: EdgeInsets.only(left: 72),
-                child: Divider(height: 0.5, thickness: 0.5, color: kGlassLine),
-              ),
-          ],
-        ]),
-      ),
-    );
-  }
-
-  Widget _empty(String t) => Padding(
-        padding: const EdgeInsets.all(40),
-        child: Center(
-            child: Text(t,
-                textAlign: TextAlign.center,
-                style: glassText(15, color: kGlassT2, weight: FontWeight.w400))),
-      );
-
-  @override
-  Widget build(BuildContext context) {
-    final yt = appState.homeMode == 'youtube';
-    final local = audioHandler.tracks.where((t) => !t.isYouTube).toList();
-    Widget body;
-    switch (widget.kind) {
-      case 'songs':
-        body = _lazySongs(yt ? audioHandler.tracks.where((t) => t.isYouTube).toList() : local);
-        break;
-      case 'downloaded':
-        body = _lazySongs(OfflineStore.tracks());
-        break;
-      case 'artists':
-        body = FutureBuilder<List<YtArtist>>(
-          future: _ar,
-          builder: (context, snap) {
-            final groups = <String, List<TrackItem>>{};
-            for (final t in local) {
-              if (t.artist.isEmpty) continue;
-              groups.putIfAbsent(t.artist, () => []).add(t);
-            }
-            final rows = <Widget>[
-              for (final a in snap.data ?? const <YtArtist>[])
-                _row(YtNetworkImage(url: a.thumbnail, size: 52, fallbackIcon: Icons.person_rounded),
-                    a.name, 'Artist',
-                    () => openYtArtist(context, a.url, a.name, thumbnail: a.thumbnail),
-                    round: true),
-              if (!yt)
-                for (final e in (groups.entries.toList()..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()))))
-                  _row(CustomAlbumArtwork(track: e.value.first), e.key,
-                      '${e.value.length} songs',
-                      () => openLocalArtist(context, e.key, e.value),
-                      round: true),
-            ];
-            if (rows.isEmpty) {
-              return snap.connectionState == ConnectionState.waiting
-                  ? const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator(color: kGlassAccent)))
-                  : _empty('Artists you follow show up here.');
-            }
-            return glassList(rows, indent: 78);
-          },
-        );
-        break;
-      case 'albums':
-        body = FutureBuilder<List<YtAlbum>>(
-          future: _al,
-          builder: (context, snap) {
-            final groups = <String, List<TrackItem>>{};
-            for (final t in local) {
-              if (t.album.isEmpty) continue;
-              groups.putIfAbsent(t.album, () => []).add(t);
-            }
-            final saved = LibraryStore.saved.where((i) => i.kind == 'album');
-            final rows = <Widget>[
-              for (final i in saved)
-                _row(YtNetworkImage(url: i.thumbnail, size: 52), i.title, i.subtitle,
-                    () => LibraryStore.open(context, i),
-                    long: () => LibraryStore.menu(context, i)),
-              for (final a in snap.data ?? const <YtAlbum>[])
-                if (!saved.any((i) => i.id == a.url))
-                  _row(YtNetworkImage(url: a.thumbnail, size: 52), a.title, a.artist,
-                      () => openYtAlbum(context, a)),
-              if (!yt)
-                for (final e in groups.entries)
-                  _row(CustomAlbumArtwork(track: e.value.first), e.key,
-                      e.value.first.artist,
-                      () => openLocalAlbum(context, e.key, e.value)),
-            ];
-            if (rows.isEmpty) {
-              return snap.connectionState == ConnectionState.waiting
-                  ? const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator(color: kGlassAccent)))
-                  : _empty('Albums you save or play show up here.');
-            }
-            return glassList(rows, indent: 78);
-          },
-        );
-        break;
-      default:
-        body = FutureBuilder<List<YtPlaylistRef>>(
-          future: _pl,
-          builder: (context, snap) {
-            final rows = <Widget>[
-              for (final pl in appState.playlists)
-                _row(PlaylistCoverThumbnail(playlist: pl, size: 52), pl.name,
-                    '${pl.trackIds.length} songs',
-                    () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => PlaylistDetailScreen(playlistId: pl.id)))),
-              for (final i in LibraryStore.saved.where((i) => i.kind != 'album'))
-                _row(YtNetworkImage(url: i.thumbnail, size: 52), i.title, 'Saved playlist',
-                    () => LibraryStore.open(context, i),
-                    long: () => LibraryStore.menu(context, i)),
-              if (yt)
-                for (final p in snap.data ?? const <YtPlaylistRef>[])
-                  if (p.playlistId != 'LM')
-                    _row(YtNetworkImage(url: p.thumbnail, size: 52), p.title, p.subtitle,
-                        () => openYtAccountPlaylist(context, p)),
-            ];
-            if (rows.isEmpty) return _empty('Make a playlist with the + button.');
-            return glassList(rows, indent: 78);
-          },
-        );
-    }
-    return Scaffold(
-      backgroundColor: kGlassBg,
-      body: Stack(
-        children: [
-          const Positioned.fill(child: GlassBackdrop()),
-          ListenableBuilder(
-            listenable: Listenable.merge([appState, LibraryStore.revision, audioHandler.libraryRevision]),
-            builder: (context, _) => ListView(
-              padding: const EdgeInsets.only(bottom: 60),
-              children: [
-                glassTitle(context, _title,
-                    trailing: GlassCircle(
-                        icon: Icons.close_rounded,
-                        tooltip: 'Close',
-                        onTap: () => Navigator.of(context).pop())),
-                body,
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Liquid Glass: Settings ───────────────────────────────────────────────
-
-class GlassSettingsPage extends StatelessWidget {
-  const GlassSettingsPage({super.key});
-  @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: Listenable.merge([appState, ytAccount]),
-      builder: (context, _) {
-        final acct = ytAccount.value;
-        final name = acct.signedIn ? (acct.name ?? 'You') : 'Not signed in';
-        return ListView(
-          padding: const EdgeInsets.only(bottom: 200),
-          children: [
-            glassTitle(context, 'Settings'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: SquishyGesture(
-                pressedScale: 0.98,
-                onTap: () => showYtAccountSheet(context),
-                child: Glass(
-                  padding: const EdgeInsets.all(14),
-                  child: Row(children: [
-                    Container(
-                      width: 58,
-                      height: 58,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                            colors: [Color(0xFF5B86E5), Color(0xFFA770EF)]),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      alignment: Alignment.center,
-                      child: acct.signedIn && acct.photo != null
-                          ? Image.network(acct.photo!, width: 58, height: 58, fit: BoxFit.cover)
-                          : Text(name.characters.first.toUpperCase(),
-                              style: glassText(24, weight: FontWeight.w700)),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(name, style: glassText(19)),
-                          Text(acct.signedIn ? 'YouTube Music account' : 'Tap to sign in to YouTube Music',
-                              style: glassText(13.5, color: kGlassT2, weight: FontWeight.w400)),
-                        ],
-                      ),
-                    ),
-                    const Icon(Icons.chevron_right_rounded, color: kGlassT3),
-                  ]),
-                ),
-              ),
-            ),
-            const SizedBox(height: 22),
-            glassList([
-              GlassRow(
-                  icon: Icons.graphic_eq_rounded,
-                  tile: const Color(0xFFFF2D55),
-                  label: 'Sound',
-                  value: appState.b('crossfade_on')
-                      ? 'Crossfade ${appState.d('crossfade_secs', 6.0).round()}s'
-                      : null,
-                  onTap: () => showPlaybackSheet(context)),
-              ValueListenableBuilder<String?>(
-                valueListenable: audioHandler.sleepLabel,
-                builder: (_, l, __) => GlassRow(
-                    icon: Icons.bedtime_rounded,
-                    tile: const Color(0xFF5E5CE6),
-                    label: 'Sleep Timer',
-                    value: l ?? 'Off',
-                    onTap: () => showSleepTimerSheet(context)),
-              ),
-              GlassRow(
-                  icon: Icons.auto_awesome_rounded,
-                  tile: const Color(0xFFAF52DE),
-                  label: 'AI',
-                  onTap: () => showAiSetup(context)),
-            ], indent: 58),
-            const SizedBox(height: 22),
-            glassList([
-              GlassRow(
-                  icon: Icons.play_circle_rounded,
-                  tile: const Color(0xFFFF3B30),
-                  label: 'YouTube Music',
-                  value: appState.homeMode == 'youtube' ? 'On' : 'Off',
-                  trailing: glassSwitch(appState.homeMode == 'youtube',
-                      (v) => appState.setStr('home_mode', v ? 'youtube' : 'local'))),
-              GlassRow(
-                  icon: Icons.download_rounded,
-                  tile: const Color(0xFF34C759),
-                  label: 'Download over Wi-Fi only',
-                  trailing: glassSwitch(appState.b('dl_wifi_only', true),
-                      (v) => appState.setB('dl_wifi_only', v))),
-              GlassRow(
-                  icon: Icons.notifications_rounded,
-                  tile: const Color(0xFFFF9500),
-                  label: 'Update Alerts',
-                  trailing: glassSwitch(appState.b('update_check', true),
-                      (v) => appState.setB('update_check', v))),
-            ], indent: 58),
-            const SizedBox(height: 22),
-            glassList([
-              GlassRow(
-                  icon: Icons.tune_rounded,
-                  tile: const Color(0xFF0A84FF),
-                  label: 'All Settings',
-                  onTap: () => showSettingsSheet(context)),
-              GlassRow(
-                  icon: Icons.info_rounded,
-                  tile: const Color(0xFF8E8E93),
-                  label: 'About AlexLMP',
-                  value: kAppVersion,
-                  onTap: () => showSettingsSheet(context)),
-            ], indent: 58),
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// A full list of songs ("See All").
-class GlassSongsPage extends StatelessWidget {
-  final String title;
-  final List<TrackItem> tracks;
-  const GlassSongsPage({super.key, required this.title, required this.tracks});
-  @override
-  Widget build(BuildContext context) {
-    final n = tracks.length;
-    return Scaffold(
-      backgroundColor: kGlassBg,
-      body: Stack(children: [
-        const Positioned.fill(child: GlassBackdrop()),
-        ValueListenableBuilder<int>(
-          valueListenable: audioHandler.currentIndex,
-          builder: (context, _, __) => ListView.builder(
-            padding: const EdgeInsets.only(bottom: 60),
-            itemCount: n + 1,
-            itemBuilder: (context, i) {
-              if (i == 0) {
-                return glassTitle(context, title,
-                    trailing: GlassCircle(
-                        icon: Icons.close_rounded,
-                        tooltip: 'Close',
-                        onTap: () => Navigator.of(context).pop()));
-              }
-              final k = i - 1;
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: bloomGroupItem(
-                  GlassSongRow(
-                    track: tracks[k],
-                    onTap: () {
-                      audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
-                      audioHandler.playYouTubeList(tracks, k);
-                      openPlayer(context);
-                    },
-                  ),
-                  k,
-                  n,
-                ),
-              );
-            },
-          ),
-        ),
-      ]),
-    );
-  }
-}
-
-
-// ═══════════════════ AlexLMP Liquid Glass Player ("Window") ═══════════════════
-// Sharp album art fills the screen. One clear glass panel at the bottom holds
-// the controls; drag it up and it stretches over the art into lyrics or
-// Up next. Swipe the art sideways to change song.
-
-class GlassPlayerView extends StatefulWidget {
-  final TrackItem track;
-  final bool playing;
-  final bool loading;
-  final bool shuffle;
-  final AudioServiceRepeatMode repeat;
-  final bool liked;
-  const GlassPlayerView({
-    super.key,
-    required this.track,
-    required this.playing,
-    required this.loading,
-    required this.shuffle,
-    required this.repeat,
-    required this.liked,
-  });
-  @override
-  State<GlassPlayerView> createState() => _GlassPlayerViewState();
-}
-
-class _GlassPlayerViewState extends State<GlassPlayerView>
-    with TickerProviderStateMixin {
-  // 0 = small panel, 1 = stretched over the art.
-  late final AnimationController _ex = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 420));
-  // Sideways art offset in pixels while swiping songs.
-  late final AnimationController _dx =
-      AnimationController.unbounded(vsync: this, value: 0);
-  String _mode = 'lyrics'; // or 'queue'
-  double _panelDrag = 1;
-  bool _changing = false;
-
-  @override
-  void didUpdateWidget(GlassPlayerView old) {
-    super.didUpdateWidget(old);
-    if (old.track.id != widget.track.id && !_changing && _dx.value == 0) {
-      // Changed from elsewhere (next button, end of song): small slide in.
-      _dx.value = 40;
-      _spring(_dx, 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _ex.dispose();
-    _dx.dispose();
-    super.dispose();
-  }
-
-  void _spring(AnimationController c, double to, [double v = 0]) =>
-      c.animateWith(SpringSimulation(
-          const SpringDescription(mass: 1, stiffness: 300, damping: 26),
-          c.value,
-          to,
-          v));
-
-  void _open(String mode) {
-    HapticFeedback.selectionClick();
-    if (_ex.value > 0.5 && _mode == mode) {
-      _ex.animateTo(0, curve: Curves.easeOutCubic);
-    } else {
-      setState(() => _mode = mode);
-      _ex.animateTo(1, curve: Curves.easeOutCubic);
-    }
-  }
-
-  Future<void> _swipeEnd(double w, double v) async {
-    final x = _dx.value;
-    final go = x.abs() > w * 0.28 || v.abs() > 700;
-    if (!go) {
-      _spring(_dx, 0, v);
-      return;
-    }
-    _changing = true;
-    HapticFeedback.lightImpact();
-    final dir = x != 0 ? x.sign : v.sign;
-    await _dx.animateTo(dir * w,
-        duration: const Duration(milliseconds: 180), curve: Curves.easeIn);
-    if (dir < 0) {
-      await audioHandler.skipToNext();
-    } else {
-      await audioHandler.skipToPrevious();
-    }
-    _dx.value = -dir * w * 0.6;
-    _spring(_dx, 0);
-    _changing = false;
-  }
-
-  void _more() {
-    final t = widget.track;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF17171E),
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(26))),
-      builder: (ctx) {
-        Widget item(IconData i, String l, VoidCallback f) => ListTile(
-              leading: Icon(i, color: Colors.white),
-              title: Text(l, style: glassText(16, weight: FontWeight.w500)),
-              onTap: () {
-                Navigator.pop(ctx);
-                f();
-              },
-            );
-        return SafeArea(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const SizedBox(height: 10),
-            item(Icons.playlist_add_rounded, 'Add to Playlist',
-                () => t.isYouTube ? showYtAddToPlaylist(context, t) : showAddToPlaylistSheet(context, t)),
-            item(Icons.album_rounded, 'Go to Album', () => goToAlbum(context, t)),
-            item(Icons.person_rounded, 'Go to Artist', () => goToArtist(context, t)),
-            item(Icons.auto_awesome_rounded, 'Ask AI About This Song', () {
-              showAiSongInfo(
-                context,
-                title: t.title,
-                artist: t.artist,
-                onPlay: (song) async {
-                  final r = await aiResolveYt(song);
-                  if (r == null) {
-                    appNotice.value = "Couldn't find ${song.title}";
-                    return;
-                  }
-                  await audioHandler.setShuffleMode(AudioServiceShuffleMode.none);
-                  await audioHandler.playYouTubeList([r], 0);
-                },
-              );
-            }),
-            item(Icons.graphic_eq_rounded, 'AI DJ',
-                () => startOrStepAiDj(openInPlayer: context)),
-            item(Icons.bedtime_rounded, 'Sleep Timer', () => showSleepTimerSheet(context)),
-            item(Icons.ios_share_rounded, 'Share', () => shareTrack(t)),
-            const SizedBox(height: 6),
-          ]),
-        );
-      },
-    );
-  }
-
-  Widget _circle(IconData icon, VoidCallback onTap, String tip,
-      {Color color = Colors.white, double size = 40}) =>
-      Tooltip(
-        message: tip,
-        child: SquishyGesture(
-          pressedScale: 0.86,
-          onTap: onTap,
-          child: _glass(
-            radius: size / 2,
-            child: SizedBox(
-                width: size,
-                height: size,
-                child: Icon(icon, color: color, size: size * 0.52)),
-          ),
-        ),
-      );
-
-  /// Real see-through glass (the player is the only thing on screen, so the
-  /// blur is affordable here).
-  Widget _glass({required Widget child, double radius = 30, double blur = 22}) {
-    final r = BorderRadius.circular(radius);
-    return ClipRRect(
-      borderRadius: r,
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: r,
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.white.withOpacity(0.20),
-                Colors.white.withOpacity(0.07),
-              ],
-            ),
-            border: Border.all(color: Colors.white.withOpacity(0.28), width: 0.8),
-          ),
-          child: child,
-        ),
-      ),
-    );
-  }
-
-  Widget _key(IconData icon, VoidCallback onTap, String tip,
-          {double size = 26, bool on = false}) =>
-      Tooltip(
-        message: tip,
-        child: SquishyGesture(
-          pressedScale: 0.84,
-          onTap: onTap,
-          child: SizedBox(
-            width: 52,
-            height: 52,
-            child: Icon(icon,
-                size: size, color: on ? kGlassAccent : Colors.white),
-          ),
-        ),
-      );
-
-  Widget _controls() {
-    final w = widget;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GlassSeekLine(track: w.track),
-        const SizedBox(height: 6),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            _key(Icons.shuffle_rounded, () {
-              HapticFeedback.selectionClick();
-              audioHandler.setShuffleMode(w.shuffle
-                  ? AudioServiceShuffleMode.none
-                  : AudioServiceShuffleMode.all);
-            }, 'Shuffle', size: 22, on: w.shuffle),
-            _key(Icons.skip_previous_rounded, audioHandler.skipToPrevious,
-                'Previous',
-                size: 40),
-            SquishyGesture(
-              pressedScale: 0.86,
-              onTap: () {
-                HapticFeedback.lightImpact();
-                w.playing ? audioHandler.pause() : audioHandler.play();
-              },
-              child: SizedBox(
-                width: 76,
-                height: 76,
-                child: w.loading
-                    ? const Center(
-                        child: SizedBox(
-                            width: 30,
-                            height: 30,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 3, color: Colors.white)))
-                    : AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 200),
-                        transitionBuilder: (c, a) =>
-                            ScaleTransition(scale: a, child: c),
-                        child: Icon(
-                            w.playing
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                            key: ValueKey(w.playing),
-                            color: Colors.white,
-                            size: 62),
-                      ),
-              ),
-            ),
-            _key(Icons.skip_next_rounded, audioHandler.skipToNext, 'Next',
-                size: 40),
-            _key(
-                w.repeat == AudioServiceRepeatMode.one
-                    ? Icons.repeat_one_rounded
-                    : Icons.repeat_rounded, () {
-              HapticFeedback.selectionClick();
-              audioHandler.setRepeatMode(_nextRepeat(w.repeat));
-            }, 'Repeat',
-                size: 22, on: w.repeat != AudioServiceRepeatMode.none),
-          ],
-        ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            _key(Icons.lyrics_outlined, () => _open('lyrics'), 'Lyrics',
-                size: 22, on: _ex.value > 0.5 && _mode == 'lyrics'),
-            _key(Icons.speaker_group_outlined, () => showPlaybackSheet(context),
-                'Sound',
-                size: 22, on: soundModified),
-            _key(Icons.format_list_bulleted_rounded, () => _open('queue'),
-                'Up next',
-                size: 22, on: _ex.value > 0.5 && _mode == 'queue'),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _likeButton() => SquishyGesture(
-        pressedScale: 0.82,
-        onTap: () {
-          HapticFeedback.lightImpact();
-          appState.toggleLike(widget.track.id);
-        },
-        child: _glass(
-          radius: 23,
-          child: SizedBox(
-            width: 46,
-            height: 46,
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 220),
-              transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
-              child: Icon(
-                  widget.liked
-                      ? Icons.favorite_rounded
-                      : Icons.favorite_border_rounded,
-                  key: ValueKey(widget.liked),
-                  color: widget.liked ? const Color(0xFFFF375F) : Colors.white,
-                  size: 24),
-            ),
-          ),
-        ),
-      );
-
-  Widget _upNext() {
-    return ListenableBuilder(
-      listenable: Listenable.merge(
-          [audioHandler.currentIndex, audioHandler.upNextRevision]),
-      builder: (context, _) {
-        final queued = audioHandler.upNext;
-        final all = audioHandler.tracks;
-        final at = audioHandler.index;
-        final after = <int>[
-          for (var i = at + 1; i < all.length && i < at + 60; i++) i
-        ];
-        Widget row(TrackItem t, VoidCallback? tap, {Widget? trailing}) =>
-            InkWell(
-              onTap: tap,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Row(children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(9),
-                    child: SizedBox(
-                        width: 44, height: 44, child: CustomAlbumArtwork(track: t)),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(t.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: glassText(15)),
-                        Text(t.artist,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: glassText(13,
-                                color: Colors.white.withOpacity(0.65),
-                                weight: FontWeight.w400)),
-                      ],
-                    ),
-                  ),
-                  if (trailing != null) trailing,
-                ]),
-              ),
-            );
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(18, 4, 12, 8),
-          children: [
-            Row(children: [
-              Expanded(
-                  child: Text('Up Next', style: glassText(20, weight: FontWeight.w700))),
-              if (queued.isNotEmpty)
-                GestureDetector(
-                  onTap: audioHandler.clearQueue,
-                  child: Text('Clear',
-                      style: glassText(15, color: kGlassAccent, weight: FontWeight.w500)),
-                ),
-            ]),
-            const SizedBox(height: 6),
-            for (var q = 0; q < queued.length; q++)
-              row(queued[q], null,
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
-                    onPressed: () => audioHandler.removeFromQueue(q),
-                  )),
-            for (final i in after)
-              row(all[i], () => audioHandler.playIndex(i)),
-            if (queued.isEmpty && after.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Text('Nothing up next.',
-                    style: glassText(15, color: Colors.white70, weight: FontWeight.w400)),
-              ),
-          ],
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final t = widget.track;
-    final mq = MediaQuery.of(context);
-    final size = mq.size;
-    final safeB = mq.padding.bottom;
-    const compactH = 234.0;
-    final fullH = size.height - mq.padding.top - 74;
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: AnimatedBuilder(
-        animation: Listenable.merge([_ex, _dx]),
-        builder: (context, _) {
-          final ex = Curves.easeOut.transform(_ex.value.clamp(0.0, 1.0));
-          final panelH = compactH + safeB + (fullH - compactH - safeB) * ex;
-          final dx = _dx.value;
-          final squish = (dx.abs() / size.width).clamp(0.0, 1.0);
-          return Stack(
-            children: [
-              // ── Full-screen art you can swipe sideways ──
-              Positioned.fill(
-                child: GestureDetector(
-                  onHorizontalDragUpdate: (d) => _dx.value += d.delta.dx,
-                  onHorizontalDragEnd: (d) =>
-                      _swipeEnd(size.width, d.velocity.pixelsPerSecond.dx),
-                  onDoubleTap: () =>
-                      widget.playing ? audioHandler.pause() : audioHandler.play(),
-                  child: Transform.translate(
-                    offset: Offset(dx, 0),
-                    child: Transform(
-                      alignment: Alignment.center,
-                      transform: Matrix4.diagonal3Values(
-                          1 - squish * 0.10, 1 - squish * 0.04, 1),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(squish * 60),
-                        child: Hero(
-                          tag: 'now_playing_art',
-                          child: CustomAlbumArtwork(track: t),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              // Shade so the white text and glass stay readable.
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.black.withOpacity(0.35),
-                          Colors.black.withOpacity(0),
-                          Colors.black.withOpacity(0.10 + 0.35 * ex),
-                          Colors.black.withOpacity(0.60 + 0.15 * ex),
-                        ],
-                        stops: const [0, 0.22, 0.55, 1],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              // ── Top: close, Lyrics pill, more ──
-              Positioned(
-                left: 16,
-                right: 16,
-                top: mq.padding.top + 8,
-                child: Row(
-                  children: [
-                    _circle(Icons.keyboard_arrow_down_rounded,
-                        () => Navigator.of(context).maybePop(), 'Close'),
-                    Expanded(
-                      child: Center(
-                        child: AnimatedOpacity(
-                          duration: const Duration(milliseconds: 200),
-                          opacity: ex > 0.5 ? 1 : 0,
-                          child: GestureDetector(
-                            onTap: () => _ex.animateTo(0, curve: Curves.easeOutCubic),
-                            child: Container(
-                              height: 32,
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(16)),
-                              child: Text(_mode == 'lyrics' ? 'Lyrics' : 'Up Next',
-                                  style: glassText(14,
-                                      color: Colors.black, weight: FontWeight.w700)),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    _circle(Icons.more_horiz_rounded, _more, 'More'),
-                  ],
-                ),
-              ),
-              // ── Big title + like, sitting on the panel ──
-              Positioned(
-                left: 22,
-                right: 18,
-                bottom: panelH + 16,
-                child: IgnorePointer(
-                  ignoring: ex > 0.5,
-                  child: Opacity(
-                    opacity: (1 - ex * 1.6).clamp(0.0, 1.0),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              GestureDetector(
-                                onTap: () => goToAlbum(context, t),
-                                child: Text(t.title,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: glassText(t.title.length > 22 ? 34 : 44,
-                                            weight: FontWeight.w800)
-                                        .copyWith(height: 1.05, letterSpacing: -1.2, shadows: const [
-                                      Shadow(color: Color(0x66000000), blurRadius: 18),
-                                    ])),
-                              ),
-                              const SizedBox(height: 4),
-                              GestureDetector(
-                                onTap: () => goToArtist(context, t),
-                                child: Text(t.artist,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: glassText(19,
-                                            color: Colors.white.withOpacity(0.78),
-                                            weight: FontWeight.w500)
-                                        .copyWith(shadows: const [
-                                      Shadow(color: Color(0x66000000), blurRadius: 14),
-                                    ])),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        _likeButton(),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              // ── The glass panel ──
-              Positioned(
-                left: 12,
-                right: 12,
-                bottom: 12 + (safeB > 0 ? 0 : 0),
-                height: panelH,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onVerticalDragStart: (_) {
-                    _ex.stop();
-                    _panelDrag = fullH - compactH - safeB;
-                  },
-                  onVerticalDragUpdate: (d) {
-                    _ex.value = (_ex.value - d.delta.dy / _panelDrag).clamp(0.0, 1.0);
-                  },
-                  onVerticalDragEnd: (d) {
-                    final v = d.velocity.pixelsPerSecond.dy;
-                    final open = v < -400 || (v.abs() < 400 && _ex.value > 0.4);
-                    if (open && _ex.value < 0.5) HapticFeedback.selectionClick();
-                    _ex.animateTo(open ? 1 : 0,
-                        curve: Curves.easeOutCubic,
-                        duration: const Duration(milliseconds: 360));
-                    if (!open && v > 900 && _ex.value < 0.05) {
-                      Navigator.of(context).maybePop();
-                    }
-                  },
-                  child: _glass(
-                    radius: 34,
-                    blur: 28,
-                    child: Padding(
-                      padding: EdgeInsets.fromLTRB(10, 8, 10, 6 + safeB * 0.6),
-                      child: Column(
-                        children: [
-                          Container(
-                            width: 38,
-                            height: 4.5,
-                            margin: const EdgeInsets.only(bottom: 6),
-                            decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.45),
-                                borderRadius: BorderRadius.circular(3)),
-                          ),
-                          if (ex > 0.02)
-                            Expanded(
-                              child: Opacity(
-                                opacity: ((ex - 0.25) / 0.75).clamp(0.0, 1.0),
-                                child: Column(children: [
-                                  Padding(
-                                    padding: const EdgeInsets.fromLTRB(8, 2, 6, 6),
-                                    child: Row(children: [
-                                      ClipRRect(
-                                        borderRadius: BorderRadius.circular(9),
-                                        child: SizedBox(
-                                            width: 46,
-                                            height: 46,
-                                            child: CustomAlbumArtwork(track: t)),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(t.title,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: glassText(16, weight: FontWeight.w700)),
-                                            Text(t.artist,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: glassText(13.5,
-                                                    color: Colors.white.withOpacity(0.7),
-                                                    weight: FontWeight.w400)),
-                                          ],
-                                        ),
-                                      ),
-                                      _likeButton(),
-                                    ]),
-                                  ),
-                                  Expanded(
-                                    child: _mode == 'lyrics'
-                                        ? GlassLyrics(track: t)
-                                        : _upNext(),
-                                  ),
-                                ]),
-                              ),
-                            ),
-                          _controls(),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-/// Thin white glowing progress line with times; drag to seek.
-class GlassSeekLine extends StatefulWidget {
-  final TrackItem track;
-  const GlassSeekLine({super.key, required this.track});
-  @override
-  State<GlassSeekLine> createState() => _GlassSeekLineState();
-}
-
-class _GlassSeekLineState extends State<GlassSeekLine> {
-  double? _drag; // 0..1 while scrubbing
-
-  String _fmt(Duration d) {
-    final s = d.inSeconds;
-    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<Duration>(
-      stream: audioHandler.player.positionStream,
-      builder: (context, snap) {
-        final pos = snap.data ?? audioHandler.player.position;
-        final dur = audioHandler.player.duration ??
-            Duration(seconds: max(1, widget.track.durationSeconds));
-        final total = max(1, dur.inMilliseconds);
-        final v = _drag ?? (pos.inMilliseconds / total).clamp(0.0, 1.0);
-        final shown = Duration(milliseconds: (v * total).round());
-        return LayoutBuilder(builder: (context, c) {
-          final w = c.maxWidth - 24;
-          double at(double x) => ((x - 12) / w).clamp(0.0, 1.0);
-          void done() {
-            final d = _drag;
-            if (d != null) {
-              audioHandler.seek(Duration(milliseconds: (d * total).round()));
-            }
-            setState(() => _drag = null);
-          }
-
-          return GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onHorizontalDragStart: (d) =>
-                setState(() => _drag = at(d.localPosition.dx)),
-            onHorizontalDragUpdate: (d) =>
-                setState(() => _drag = at(d.localPosition.dx)),
-            onHorizontalDragEnd: (_) => done(),
-            onTapUp: (d) {
-              _drag = at(d.localPosition.dx);
-              done();
-            },
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-              child: Column(
-                children: [
-                  SizedBox(
-                    height: 14,
-                    child: CustomPaint(
-                      size: Size(w, 14),
-                      painter: _GlassLinePainter(v, _drag != null),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(children: [
-                    Text(_fmt(shown),
-                        style: glassText(12,
-                            color: Colors.white.withOpacity(0.75),
-                            weight: FontWeight.w500)),
-                    const Spacer(),
-                    Text('-${_fmt(dur - shown)}',
-                        style: glassText(12,
-                            color: Colors.white.withOpacity(0.75),
-                            weight: FontWeight.w500)),
-                  ]),
-                ],
-              ),
-            ),
-          );
-        });
-      },
-    );
-  }
-}
-
-class _GlassLinePainter extends CustomPainter {
-  final double v;
-  final bool active;
-  _GlassLinePainter(this.v, this.active);
-  @override
-  void paint(Canvas canvas, Size s) {
-    final y = s.height / 2;
-    final h = active ? 7.0 : 4.0;
-    final track = RRect.fromLTRBR(0, y - h / 2, s.width, y + h / 2, Radius.circular(h));
-    canvas.drawRRect(track, Paint()..color = Colors.white.withOpacity(0.25));
-    final x = s.width * v;
-    final fill = RRect.fromLTRBR(0, y - h / 2, x, y + h / 2, Radius.circular(h));
-    canvas.drawRRect(
-        fill,
-        Paint()
-          ..color = Colors.white.withOpacity(0.9)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
-    canvas.drawRRect(fill, Paint()..color = Colors.white);
-  }
-
-  @override
-  bool shouldRepaint(_GlassLinePainter o) => o.v != v || o.active != active;
-}
-
-/// Lyrics inside the stretched panel: the live line big and bright.
-class GlassLyrics extends StatelessWidget {
-  final TrackItem track;
-  const GlassLyrics({super.key, required this.track});
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<LyricsResult?>(
-      future: fetchLyrics(track),
-      builder: (context, snap) {
-        if (snap.connectionState != ConnectionState.done) {
-          return const Center(
-              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5));
-        }
-        final r = snap.data;
-        if (r == null || r.isEmpty) {
-          return Center(
-              child: Text('No lyrics for this song.',
-                  style: glassText(16, color: Colors.white70, weight: FontWeight.w500)));
-        }
-        if (r.synced.isEmpty) {
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
-            children: [
-              Text(r.plain!.trim(),
-                  style: glassText(21, weight: FontWeight.w700).copyWith(height: 1.4)),
-            ],
-          );
-        }
-        final lines = r.synced;
-        return StreamBuilder<Duration>(
-          stream: audioHandler.player.positionStream,
-          builder: (context, s) {
-            final pos = s.data ?? audioHandler.player.position;
-            var cur = -1;
-            for (var i = 0; i < lines.length; i++) {
-              if (lines[i].$1 <= pos + const Duration(milliseconds: 250)) {
-                cur = i;
-              } else {
-                break;
-              }
-            }
-            Widget line(int i) {
-              final on = i == cur;
-              final txt = lines[i].$2.trim().isEmpty ? '♪' : lines[i].$2;
-              return GestureDetector(
-                onTap: () => audioHandler.seek(lines[i].$1),
-                child: AnimatedDefaultTextStyle(
-                  duration: const Duration(milliseconds: 260),
-                  curve: Curves.easeOutCubic,
-                  style: glassText(on ? 30 : 21,
-                          color: on
-                              ? Colors.white
-                              : Colors.white.withOpacity(i < cur ? 0.30 : 0.45),
-                          weight: FontWeight.w800)
-                      .copyWith(height: 1.2, shadows: on
-                          ? const [Shadow(color: Color(0x88FFFFFF), blurRadius: 18)]
-                          : null),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 7),
-                    child: Text(txt),
-                  ),
-                ),
-              );
-            }
-
-            final from = max(0, cur - 1);
-            final to = min(lines.length, from + 8);
-            return ClipRect(
-              child: ListView(
-                physics: const NeverScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
-                children: [
-                  for (var i = from; i < to; i++)
-                    KeyedSubtree(key: ValueKey(i), child: line(i)),
-                ],
-              ),
-            );
-          },
-        );
-      },
     );
   }
 }

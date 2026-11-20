@@ -1,34 +1,11 @@
 All your music, one player.
 
-AlexLMP 3.7.4 gives the tab bar a Material You twist.
+AlexLMP 3.7.5 brings back the AlexLMP you know.
 
 ## Changed
-- **Material You tab bar.** The tab bar and mini player sit on deep lavender glass. A lavender pill marks your tab and shows its name, and when you drag along the bar, the pill follows your finger with a rippling, cookie-like edge before settling on the nearest tab.
-- **Clover search button.** Search is now a lavender clover next to the tab bar.
-
-## From 3.7.3
-- **New tab bar glass.** The tab bar, search button and mini player now use a darker, smoky frosted glass with a thin edge that's brightest along the top. The sliding bubble is softer and stretches a little while you drag it.
-
-## From 3.7.2
-- **New default player.** The familiar AlexLMP player layout is back, with Liquid Glass touches: the cover art glows through a frosted background, glass buttons up top, and the bottom controls sit on tinted glass.
-- **Cleaner glass everywhere.** Song lists, Settings and cards now use the same tinted, frosted glass as the tab bar, without the shiny streak on top.
-
-## From 3.7.1
-- **New Liquid Glass app icon.** The AlexLMP sound bars are now made of glass, on a bright pink-to-blue glow. It's the new default icon. If you picked a different icon before, you keep it, and you can switch any time in Settings > App icon.
-
-## From 3.7.0
-- **AlexLMP Liquid Glass.** The whole app is redesigned with frosted glass floating over soft colored light: big titles, clean grouped lists and glass buttons everywhere. It's now the only app style.
-- **A tab bar you can drag.** Slide your finger along the tab bar and the glass bubble follows you, stretches and squishes, then springs onto the tab you let go on. The round search button sits next to it.
-- **Floating glass mini player** above the tab bar. Swipe it sideways to skip, or up to open the player.
-- **New Home.** Jump Back In with Play and Shuffle, Quick Picks, Made For You and more.
-- **New Search.** A glass search bar with voice search, your recent searches, colorful Browse Categories, and results with Top Results, Songs, Albums, Artists and Playlists.
-- **New Library.** Playlists, Artists, Albums, Songs and Downloaded, plus everything you added recently.
-- **New AI page.** Start the AI DJ from the top card, chat in glass bubbles, tap a suggestion, or ask with your voice.
-- **New Settings** with a simple, grouped layout. Every older setting is still under All Settings.
-- **AlexLMP Liquid Glass Player.** The album art fills the whole screen with one clear glass panel at the bottom for the controls. Drag the panel up and it stretches into live lyrics or Up Next. Swipe the art sideways to change songs. It's now the only player style.
-- **Download over Wi-Fi only** (on by default). Downloads wait until you're off mobile data.
-
-- All the other app styles and player styles were removed.
+- **Normal AlexLMP is back.** Thanks for all the feedback on the Liquid Glass versions. The app, the player and the app icon are back to how they were in 3.6.3, and all the app styles and player styles are back too. If you were moved to Liquid Glass, you're switched back automatically.
+- **Smoother tab bar.** The tab bar has a new pill that marks your tab. Drag along the bar and the pill follows your finger with a soft ripple, then settles on the nearest tab. It uses your theme colors.
+- **AI stays.** The AI tab, AI DJ and everything else from 3.6 are all still here.
 
 ## From 3.6.3
 - **Every album and single, newest first.** "See all" on an artist's Albums or Singles now lists everything they have out on YouTube Music, straight from the artist's own page, sorted from newest to oldest.

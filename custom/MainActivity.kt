@@ -28,7 +28,7 @@ class MainActivity : AudioServiceActivity() {
     // Launcher icons (activity-aliases in AndroidManifest.xml).
     private val appIcons = listOf(
         "classic", "midnight", "sunset", "aurora", "neon",
-        "mint", "ember", "gold", "ocean", "white", "bloom", "glass",
+        "mint", "ember", "gold", "ocean", "white", "bloom",
         "prism", "halo", "frost", "rose", "matrix",
         "orb", "note", "vinyl", "borealis",
     )
@@ -41,15 +41,15 @@ class MainActivity : AudioServiceActivity() {
     private fun currentAppIcon(): String {
         val pm = packageManager
         for (k in appIcons) {
-            if (k == "glass") continue
+            if (k == "bloom") continue
             val st = pm.getComponentEnabledSetting(iconAlias(k))
             if (st == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return k
         }
-        return "glass"
+        return "bloom"
     }
 
     /**
-     * Liquid Glass is the default icon now. Anyone who picked
+     * Bloom (Material You lilac) is the default icon now. Anyone who picked
      * an icon before keeps it: turn the default Bloom entry off so they
      * don't get two icons.
      */
@@ -58,9 +58,9 @@ class MainActivity : AudioServiceActivity() {
             val pm = packageManager
             val enabled = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             val chosen = appIcons.any {
-                it != "glass" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
+                it != "bloom" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
             }
-            val bloom = iconAlias("glass")
+            val bloom = iconAlias("bloom")
             if (chosen && pm.getComponentEnabledSetting(bloom) ==
                 android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
             ) {
@@ -103,18 +103,6 @@ class MainActivity : AudioServiceActivity() {
     private var mediaChannel: MethodChannel? = null
     private var updateTapped = false
     private var tts: TextToSpeech? = null
-    private var pendingListen: MethodChannel.Result? = null
-
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
-        @Suppress("DEPRECATION")
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 7301) {
-            val text = data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-            pendingListen?.success(if (resultCode == RESULT_OK) text else null)
-            pendingListen = null
-        }
-    }
     private var ttsReady = false
     private var djPlayer: MediaPlayer? = null
     private var djVoiceStyle: String = "nova"
@@ -340,27 +328,9 @@ class MainActivity : AudioServiceActivity() {
                             result.success(0)
                         }
                     }
-                    "listen" -> {
-                        try {
-                            pendingListen?.success(null)
-                            pendingListen = result
-                            val i = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                                .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                                .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, call.argument<String>("prompt") ?: "Speak")
-                            @Suppress("DEPRECATION")
-                            startActivityForResult(i, 7301)
-                        } catch (e: Exception) {
-                            pendingListen = null
-                            result.success(null)
-                        }
-                    }
-                    "isMetered" -> {
-                        val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-                        result.success(cm.isActiveNetworkMetered)
-                    }
                     "getAppIcon" -> result.success(currentAppIcon())
                     "setAppIcon" -> {
-                        val key = call.argument<String>("key") ?: "glass"
+                        val key = call.argument<String>("key") ?: "bloom"
                         if (key !in appIcons) {
                             result.error("ICON", "Unknown icon: $key", null)
                         } else {
