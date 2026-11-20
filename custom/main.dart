@@ -1862,11 +1862,24 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> play() async {
     if (tracks.isEmpty) return;
-    if (_loadedId == null) {
+    // A song left over from last time can have an expired stream or have
+    // failed to load. Then Play did nothing; load it again instead.
+    final dead = player.processingState == ProcessingState.idle ||
+        player.audioSource == null;
+    if (_loadedId == null || (dead && !_switching)) {
+      final pos = _loadedId == null ? Duration.zero : player.position;
       await _load(_index, play: true);
+      if (pos > const Duration(seconds: 2)) {
+        try {
+          await player.seek(pos);
+        } catch (_) {}
+      }
     } else {
       await _applySpeedAndPitch();
-      if (!player.playing && _fadeSeq == 0 && !_crossfading) {
+      if (_userVolume < 0.2) _userVolume = 1.0;
+      if (!player.playing && !_crossfading) {
+        // A fade that got cut off can leave the song silent.
+        _fadeSeq = 0;
         if (player.volume < 0.01) await player.setVolume(_userVolume);
       }
       if (appState.b('smooth_fade') && !player.playing) {
@@ -4370,6 +4383,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
   int _tab = 0;
   int _dir = 1;
   final GlobalKey _bloomBottomKey = GlobalKey();
+  // Tabs you've opened stay alive, so switching back is instant.
+  final Set<int> _bloomVisited = {0};
   double _bloomBottomH = 130;
   int _libraryFilter = 0;
 
@@ -5403,6 +5418,8 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     final tab = _tab > 3 ? 0 : _tab;
     final c = bc;
     _measureBloomBottom();
+    _bloomVisited.add(tab);
+    Widget pageFor(int tab) {
     Widget page;
     switch (tab) {
       case 1:
@@ -5435,6 +5452,9 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
       default:
         page = _bloomHome(context, pal, tracks);
     }
+    return page;
+    }
+
     return Scaffold(
       backgroundColor: c.bg,
       resizeToAvoidBottomInset: false,
@@ -5442,20 +5462,24 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
         children: [
           const Positioned.fill(child: BloomBackdrop()),
           Positioned.fill(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              switchInCurve: kEmphasizedDecel,
-              switchOutCurve: kEmphasizedAccel,
-              transitionBuilder: (child, anim) => FadeTransition(
-                opacity: anim,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                          begin: Offset(0.04 * _dir, 0), end: Offset.zero)
-                      .animate(anim),
-                  child: child,
-                ),
-              ),
-              child: KeyedSubtree(key: ValueKey('bloom$tab'), child: page),
+            child: Stack(
+              children: [
+                for (final i in (_bloomVisited.toList()..sort()))
+                  KeyedSubtree(
+                    key: ValueKey('bloomTab$i'),
+                    child: Offstage(
+                      offstage: i != tab,
+                      child: TickerMode(
+                        enabled: i == tab,
+                        child: TabFadeIn(
+                          active: i == tab,
+                          dir: _dir.toDouble(),
+                          child: pageFor(i),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           Positioned(
@@ -30748,7 +30772,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.7.5';
+const String kAppVersion = '3.7.6';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -39820,6 +39844,55 @@ class _SliderTabBarState extends State<SliderTabBar>
           }),
         ),
       ),
+    );
+  }
+}
+
+
+/// Fades a kept-alive tab in each time it becomes the active one, without
+/// rebuilding it (so its scroll position and loaded data stay).
+class TabFadeIn extends StatefulWidget {
+  final bool active;
+  final double dir;
+  final Widget child;
+  const TabFadeIn(
+      {super.key, required this.active, required this.dir, required this.child});
+  @override
+  State<TabFadeIn> createState() => _TabFadeInState();
+}
+
+class _TabFadeInState extends State<TabFadeIn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 220), value: 1);
+
+  @override
+  void didUpdateWidget(TabFadeIn old) {
+    super.didUpdateWidget(old);
+    if (widget.active && !old.active) _c.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, child) {
+        final v = Curves.easeOutCubic.transform(_c.value);
+        return Opacity(
+          opacity: v,
+          child: Transform.translate(
+            offset: Offset(14 * widget.dir * (1 - v), 0),
+            child: child,
+          ),
+        );
+      },
+      child: widget.child,
     );
   }
 }

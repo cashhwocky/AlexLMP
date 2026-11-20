@@ -1,8 +1,12 @@
 All your music, one player.
 
-AlexLMP 3.7.5 brings back the AlexLMP you know.
+AlexLMP 3.7.6 fixes the music controls and makes switching tabs instant.
 
-## Changed
+## Fixed
+- **Music controls work again.** Play could do nothing when the song from last time had expired or failed to load, or a fade got cut off and left the song silent. Play now reloads the song (at the same spot) or brings the volume back, so you don't need to reset your settings anymore.
+- **No more lag when switching tabs.** Tabs you've opened stay loaded, so going back to Home, Search, Library or AI is instant and keeps your place.
+
+## From 3.7.5
 - **Normal AlexLMP is back.** Thanks for all the feedback on the Liquid Glass versions. The app and the player are back to how they were in 3.6.3, and all the app styles and player styles are back too. If you were moved to Liquid Glass, you're switched back automatically.
 - **Smoother tab bar.** The tab bar has a new pill that marks your tab. Drag along the bar and the pill follows your finger with a soft ripple, then settles on the nearest tab. It uses your theme colors.
 - **Borealis is the new default app icon.** If you picked a different icon before, you keep it. You can switch any time in Settings > App icon.
