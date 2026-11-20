@@ -196,8 +196,20 @@ def borealis():
 
 ICONS = {"orb": orb, "note": note, "vinyl": vinyl, "borealis": borealis}
 
+def _rr(x, y, w, h, r):
+    return ("M%.2f,%.2f h%.2f a%.2f,%.2f 0 0 1 %.2f,%.2f v%.2f a%.2f,%.2f 0 0 1 -%.2f,%.2f "
+            "h-%.2f a%.2f,%.2f 0 0 1 -%.2f,-%.2f v-%.2f a%.2f,%.2f 0 0 1 %.2f,-%.2f Z") % (
+        x + r, y, w - 2 * r, r, r, r, r, h - 2 * r, r, r, r, r, w - 2 * r, r, r, r, r, h - 2 * r, r, r, r, r)
+
+
+# bitLMP mark: a white disc with three sound bars cut out of it.
+MARK = "M54,27 a27,27 0 1 1 0,54 a27,27 0 1 1 0,-54 Z" + "".join(
+    _rr(x - 2.8, 54 - hh - 2.8, 5.6, 2 * hh + 5.6, 2.8) for x, hh in [(45, 7), (54, 12), (63, 9)])
+
 for key, fn in ICONS.items():
     bg, fg, mono = fn()
+    fg = '<path android:pathData="%s" android:fillType="evenOdd" android:fillColor="#FFFFFFFF"/>' % MARK
+    mono = '<path android:pathData="%s" android:fillType="evenOdd" android:fillColor="#FF000000"/>' % MARK
     write("%s/drawable/ic_alt_%s_bg.xml" % (R, key), vec(bg))
     write("%s/drawable/ic_alt_%s_fg.xml" % (R, key), vec(fg))
     write("%s/drawable/ic_alt_%s_mono.xml" % (R, key), vec(mono))
@@ -210,13 +222,5 @@ for key, fn in ICONS.items():
           '<layer-list xmlns:android="http://schemas.android.com/apk/res/android">'
           '<item android:drawable="@drawable/ic_alt_%s_bg"/>'
           '<item android:drawable="@drawable/ic_alt_%s_fg"/></layer-list>\n' % (key, key))
-
-# Borealis is the main launcher icon too.
-for name in ("ic_launcher", "ic_launcher_round"):
-    write("%s/mipmap-anydpi-v26/%s.xml" % (R, name), HEAD +
-          '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">'
-          '<background android:drawable="@drawable/ic_alt_borealis_bg"/>'
-          '<foreground android:drawable="@drawable/ic_alt_borealis_fg"/>'
-          '<monochrome android:drawable="@drawable/ic_alt_borealis_mono"/></adaptive-icon>\n')
 
 print("Extra app icons generated:", ", ".join(ICONS))

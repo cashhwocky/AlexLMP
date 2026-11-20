@@ -80,13 +80,13 @@ Future<void> main() async {
       builder: () => MyAudioHandler(),
       config: const AudioServiceConfig(
         androidNotificationChannelId: 'com.alexlmp.app.channel.audio',
-        androidNotificationChannelName: 'AlexLMP Music Playback',
+        androidNotificationChannelName: 'bitLMP Music Playback',
         // Stay in the foreground while paused so the media session keeps
         // running: third-party controllers (crDroid's dynamic bar, custom
         // players) lose the session when Android puts the app to sleep.
         androidNotificationOngoing: false,
         androidStopForegroundOnPause: false,
-        // White AlexLMP bars (the full-colour app icon shows up as a plain
+        // White bitLMP bars (the full-colour app icon shows up as a plain
         // white dot in the notification and on Android Auto).
         androidNotificationIcon: 'drawable/ic_stat_alexlmp',
       ),
@@ -236,7 +236,7 @@ class AppPalette {
     playerAccent: Color(0xFFF09CE2),
     playerOnAccent: Color(0xFF3C0036),
   );
-  /// Default theme (AlexLMP Bloom): soft lilac on a dark purple-grey.
+  /// Default theme (bitLMP Bloom): soft lilac on a dark purple-grey.
   static const lilac = AppPalette(
     name: 'Lilac',
     accent: Color(0xFFCBBAFF),
@@ -382,14 +382,14 @@ class AppState extends ChangeNotifier {
   bool stopOnTaskClear = true;
   bool linkSpeedAndPitch = false;
   bool swipeRightForNext = false; // default: swipe left = next (like a carousel)
-  String playerStyle = 'bloom'; // bloom = "AlexLMP Bloom" (default)
+  String playerStyle = 'bloom'; // bloom = "bitLMP Bloom" (default)
   bool animatedBackground = false;
   bool artBackdrop = false;
   AppPalette? _adaptivePalette;
   Color? _adaptiveSeed;
   double speed = 1.0;
   double pitch = 1.0;
-  String playlistName = 'Your AlexLMP Mixes';
+  String playlistName = 'Your bitLMP Mixes';
   String playlistStyle = 'equalizer_bars';
   final Set<String> liked = {};
   final Set<String> deletedIds = {};
@@ -549,7 +549,7 @@ class AppState extends ChangeNotifier {
     // moving background glow off.
     // One-time switch to the defaults: AMOLED (true black) theme, no
     // moving background glow.
-    // The new AlexLMP player becomes everyone's player once.
+    // The new bitLMP player becomes everyone's player once.
     if (prefs.getBool('alex_player_v4') != true) {
       await prefs.setString('player_style', 'alex');
       await prefs.setBool('modern_player_v3', true);
@@ -582,20 +582,20 @@ class AppState extends ChangeNotifier {
       await prefs.setBool('swipe_left_default_v1', true);
     }
     swipeRightForNext = prefs.getBool('swipe_right_next') ?? false;
-    // AlexLMP Signal becomes everyone's look once (other styles stay in
+    // bitLMP Signal becomes everyone's look once (other styles stay in
     // Settings).
-    // AlexLMP Classic is the default player (Signal stays in Settings).
+    // bitLMP Classic is the default player (Signal stays in Settings).
     if (prefs.getBool('classic_player_default_v3') != true) {
       await prefs.setString('player_style', 'alex');
       await prefs.setBool('signal_default_v1', true);
       await prefs.setBool('classic_player_default_v3', true);
     }
-    // Default app style is AlexLMP again (the player stays Signal).
+    // Default app style is bitLMP again (the player stays Signal).
     if (prefs.getBool('alex_app_default_v2') != true) {
       await prefs.setString('app_style', 'alex');
       await prefs.setBool('alex_app_default_v2', true);
     }
-    // AlexLMP Bloom (3.0): the Bloom look, Bloom player and the Lilac
+    // bitLMP Bloom (3.0): the Bloom look, Bloom player and the Lilac
     // theme become everyone's defaults once. Everything can be changed in
     // Settings.
     if (prefs.getBool('bloom_default_v1') != true) {
@@ -607,7 +607,7 @@ class AppState extends ChangeNotifier {
       await prefs.setBool('bloom_default_v1', true);
       themeName = 'Lilac';
     }
-    // 3.7.5: back to normal AlexLMP after the Liquid Glass versions.
+    // 3.7.5: back to normal bitLMP after the Liquid Glass versions.
     if (prefs.getString('app_style') == 'glass') {
       await prefs.setString('app_style', 'bloom');
     }
@@ -1228,7 +1228,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// True while one song is being swapped for the next. The old song is
   /// paused for a moment during the swap; outside apps must not see that as
-  /// "stopped", or they let go of AlexLMP's media session.
+  /// "stopped", or they let go of bitLMP's media session.
   bool _switching = false;
 
   void _publishState() {
@@ -1486,7 +1486,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
           // Signed-in-only songs can't be played yet (YouTube scrambles
           // signed-in streams in a way the extractor can't decode). Say so
           // plainly instead of showing a giant error.
-          appNotice.value = '"${t.title}" isn\'t playable in AlexLMP yet. '
+          appNotice.value = '"${t.title}" isn\'t playable in bitLMP yet. '
               'YouTube only allows it for signed-in accounts.';
         } else {
           appNotice.value =
@@ -2489,7 +2489,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> playFromSearch(String query,
       [Map<String, dynamic>? extras]) async {
-    // "Play music on AlexLMP" with no song named: carry on / start up.
+    // "Play music on bitLMP" with no song named: carry on / start up.
     if (query.trim().isEmpty) {
       await play();
       return;
@@ -4253,7 +4253,7 @@ class AlexLmpApp extends StatelessWidget {
         final textScale = appState.d('text_scale', 1.0);
         return MaterialApp(
           navigatorKey: appNavKey,
-          title: 'AlexLMP',
+          title: 'bitLMP',
           debugShowCheckedModeBanner: false,
           themeMode: ThemeMode.dark,
           darkTheme: ThemeData(
@@ -4444,7 +4444,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     if (appState.b('auto_scan', true)) await scanDeviceAudio();
     await audioHandler.restoreLastSession();
     applyNativeSettings();
-    // Tapping the "update available" notification opens AlexLMP straight
+    // Tapping the "update available" notification opens bitLMP straight
     // into the update.
     _mediaChannel.setMethodCallHandler((call) async {
       if (call.method == 'djSpeaking') {
@@ -5007,7 +5007,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
-  // ═══════════════════════ AlexLMP Signal app style ═══════════════════════
+  // ═══════════════════════ bitLMP Signal app style ═══════════════════════
 
   Widget _signalScaffold(
       BuildContext context, AppPalette pal, List<TrackItem> tracks) {
@@ -5270,7 +5270,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
-  // ═══════════════════════ AlexLMP Bloom app style ═══════════════════════
+  // ═══════════════════════ bitLMP Bloom app style ═══════════════════════
 
   // ── Shared dock + AI tab for every app style ──────────────────────────
   // True when the dock floats over the page (the AI chat then reserves room
@@ -6205,7 +6205,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
-  // ═══════════════════════ AlexLMP Prestige app style ═══════════════════════
+  // ═══════════════════════ bitLMP Prestige app style ═══════════════════════
 
   Widget _prestigeScaffold(
       BuildContext context, AppPalette pal, List<TrackItem> tracks) {
@@ -7480,7 +7480,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     appState.setStr('home_mode', mode);
   }
 
-  /// The "AlexLMP ▾" switcher: Local music / YouTube Music.
+  /// The "bitLMP ▾" switcher: Local music / YouTube Music.
   Widget _modeSwitcher(BuildContext context, AppPalette pal) {
     final yt = appState.homeMode == 'youtube';
     return PopupMenuButton<String>(
@@ -8251,7 +8251,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
           final pls = snap.data ?? const <YtPlaylistRef>[];
           final waiting = snap.data == null &&
               snap.connectionState != ConnectionState.done;
-          // AlexLMP playlists with YouTube Music songs in them (for example
+          // bitLMP playlists with YouTube Music songs in them (for example
           // ones imported from Spotify) show up here too.
           final mine = [
             for (final p in appState.playlists)
@@ -8280,7 +8280,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
               MaterialPageRoute(
                   builder: (_) => PlaylistDetailScreen(playlistId: p.id)));
           String mineSub(Playlist p) =>
-              'AlexLMP · ${p.trackIds.length} ${p.trackIds.length == 1 ? 'song' : 'songs'}';
+              'bitLMP · ${p.trackIds.length} ${p.trackIds.length == 1 ? 'song' : 'songs'}';
           if (_listView) {
             return Column(
               children: [
@@ -8328,7 +8328,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     subtitle: mineSub(p),
                     onTap: () => openMine(p),
                     onLongPress: () => LibraryStore.menu(
-                        context, LibItem('local', p.id, p.name, 'AlexLMP', null)),
+                        context, LibItem('local', p.id, p.name, 'bitLMP', null)),
                   ),
                 for (final p in pls)
                   _libRow(
@@ -9333,7 +9333,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
     );
   }
 
-  // ─────────────────── AlexLMP home (chips + big sections) ───────────────────
+  // ─────────────────── bitLMP home (chips + big sections) ───────────────────
 
   Widget _homeTab(BuildContext context, AppPalette pal, List<TrackItem> tracks) =>
       _homeV2(context, pal, yt: false, tracks: tracks);
@@ -11285,7 +11285,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'Sign in to see and play your playlists and liked songs. Read-only — AlexLMP never changes anything on your account.',
+                  'Sign in to see and play your playlists and liked songs. Read-only — bitLMP never changes anything on your account.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Color(0xFFA6ADB2), fontSize: 13.5),
                 ),
@@ -14493,10 +14493,10 @@ class MiniPlayer extends StatefulWidget {
   /// Smaller version (used by the Apple Music app style).
   final bool compact;
 
-  /// AlexLMP Signal look (same swipe gestures, new design).
+  /// bitLMP Signal look (same swipe gestures, new design).
   final bool signal;
 
-  /// AlexLMP Bloom look.
+  /// bitLMP Bloom look.
   final bool bloom;
 
   const MiniPlayer({
@@ -15697,7 +15697,7 @@ class NowPlayingScreen extends StatelessWidget {
     );
   }
 
-  // ── Default ("AlexLMP") player controls ────────────────────────────────
+  // ── Default ("bitLMP") player controls ────────────────────────────────
   // Shuffle · previous · big morphing play button · next · repeat, then a
   // floating tool bar. (Settings → "SimpMusic design" switches back to the
   // classic pill buttons + segmented bar.)
@@ -16842,7 +16842,7 @@ void showAddMusicSheet(BuildContext context) {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Add Music to AlexLMP',
+              'Add Music to bitLMP',
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w700,
@@ -16930,7 +16930,7 @@ class SettingsScreen extends StatelessWidget {
                                 border: Border.all(
                                     color: Colors.white.withOpacity(0.08)),
                               ),
-                              child: Text('AlexLMP v$kAppVersion',
+                              child: Text('bitLMP v$kAppVersion',
                                   style: TextStyle(
                                       color: pal.accent,
                                       fontSize: 12.5,
@@ -17212,11 +17212,11 @@ class SettingsScreen extends StatelessWidget {
           'Look and shapes of the whole app (not the player controls)',
           appState.appStyle,
           const {
-            'bloom': 'AlexLMP Bloom (Default)',
-            'alex': 'AlexLMP',
-            'signal': 'AlexLMP Signal',
+            'bloom': 'bitLMP Bloom (Default)',
+            'alex': 'bitLMP',
+            'signal': 'bitLMP Signal',
             'plus': 'PLUS',
-            'prestige': 'AlexLMP Prestige',
+            'prestige': 'bitLMP Prestige',
             'pocket': 'Pocket',
             'community': 'Community Suggested',
             'apple': 'Apple Music',
@@ -17236,11 +17236,11 @@ class SettingsScreen extends StatelessWidget {
           'How the player controls look',
           appState.playerStyle,
           const {
-            'bloom': 'AlexLMP Bloom (Default)',
-            'alex': 'AlexLMP Classic',
-            'signal': 'AlexLMP Signal',
+            'bloom': 'bitLMP Bloom (Default)',
+            'alex': 'bitLMP Classic',
+            'signal': 'bitLMP Signal',
             'plus': 'PLUS',
-            'simp': 'AlexLMP',
+            'simp': 'bitLMP',
             'modern': 'Modern',
             'expressive': 'Expressive',
             'apple': 'Apple Music',
@@ -17286,7 +17286,7 @@ class SettingsScreen extends StatelessWidget {
         if (!appState.community)
           _flag(pal, Icons.format_color_fill_rounded, 'm3_colors',
               'Material You colors',
-              'Tonal Material 3 colors made from your theme (keeps AlexLMP shapes)',
+              'Tonal Material 3 colors made from your theme (keeps bitLMP shapes)',
               def: true),
         _flag(pal, Icons.dark_mode_rounded, 'pure_black', 'Pure black',
             'True black backgrounds for OLED screens'),
@@ -17295,7 +17295,7 @@ class SettingsScreen extends StatelessWidget {
             () => showAppIconPicker(context),
             trailing: AnimatedAppIcon(style: appIconStyle(), size: 36)),
         _flag(pal, Icons.play_circle_outline_rounded, 'launch_anim',
-            'Launch animation', 'Animated logo when AlexLMP opens',
+            'Launch animation', 'Animated logo when bitLMP opens',
             def: true),
         _switch(pal, Icons.blur_on_rounded, 'Animated color backgrounds',
             'Slowly moving color glow behind the app', appState.animatedBackground,
@@ -17365,7 +17365,7 @@ class SettingsScreen extends StatelessWidget {
             'Lights up each word as it\'s sung in the lyrics screen',
             def: true),
         _flag(pal, Icons.light_mode_rounded, 'keep_screen_on', 'Keep screen on',
-            'Screen stays on while AlexLMP is open',
+            'Screen stays on while bitLMP is open',
             after: (_) => applyNativeSettings()),
       ]),
     ];
@@ -17400,7 +17400,7 @@ class SettingsScreen extends StatelessWidget {
               ok ? Icons.battery_charging_full_rounded : Icons.battery_alert_rounded,
               'Background playback',
               ok
-                  ? 'Battery optimization is off for AlexLMP'
+                  ? 'Battery optimization is off for bitLMP'
                   : 'Tap so Android never pauses music in the background',
               () async {
                 await Permission.ignoreBatteryOptimizations.request();
@@ -17458,7 +17458,7 @@ class SettingsScreen extends StatelessWidget {
               onPreview: (vKey) async {
                 try {
                   await _mediaChannel.invokeMethod('speakDj', {
-                    'text': "Hey! I'm your AlexLMP DJ, locked into your rotation.",
+                    'text': "Hey! I'm your bitLMP DJ, locked into your rotation.",
                     'voice': vKey,
                   });
                 } catch (_) {}
@@ -17489,7 +17489,7 @@ class SettingsScreen extends StatelessWidget {
           acc.signedIn ? (acc.name ?? 'Signed in') : 'Sign in',
           acc.signedIn
               ? 'Your playlists & likes (read-only)'
-              : 'See your YouTube Music library in AlexLMP',
+              : 'See your YouTube Music library in bitLMP',
           () => showYtAccountSheet(context),
         ),
         _flag(pal, Icons.data_saver_on_rounded, 'yt_data_saver', 'Data saver',
@@ -17573,11 +17573,11 @@ class SettingsScreen extends StatelessWidget {
             '${OfflineStore.count} songs • ${OfflineStore.formatBytes(OfflineStore.totalBytes)} used',
             () => openDownloads(context)),
         _tile(pal, Icons.system_update_rounded, 'Check for updates',
-            'You have AlexLMP $kAppVersion',
+            'You have bitLMP $kAppVersion',
             () => checkForUpdates(context, manual: true)),
         _flag(pal, Icons.notifications_active_rounded, 'update_check',
             'Update notifications',
-            'Checks every hour, even when AlexLMP is closed',
+            'Checks every hour, even when bitLMP is closed',
             def: true),
         _tile(pal, Icons.restart_alt_rounded, 'Reset settings',
             'Put every option on this page back to default (keeps your music, likes & playlists)',
@@ -17608,19 +17608,19 @@ class SettingsScreen extends StatelessWidget {
   List<Widget> _about(BuildContext context, AppPalette pal) {
     return [
       _section(pal, 'About', Icons.info_rounded, [
-        _tile(pal, Icons.music_note_rounded, 'AlexLMP',
+        _tile(pal, Icons.music_note_rounded, 'bitLMP',
             'Material You music player • GPL-3.0', () {},
             trailing: const SizedBox.shrink()),
         _tile(pal, Icons.description_rounded, 'Open-source licenses',
-            'Libraries that make AlexLMP work', () {
+            'Libraries that make bitLMP work', () {
           showLicensePage(
             context: context,
-            applicationName: 'AlexLMP',
+            applicationName: 'bitLMP',
             applicationLegalese: 'Licensed under GPL-3.0',
           );
         }),
         _tile(pal, Icons.bug_report_rounded, 'Report a bug',
-            'Copies your app info and opens the AlexLMP Telegram chat',
+            'Copies your app info and opens the bitLMP Telegram chat',
             () => reportBug(context)),
       ]),
     ];
@@ -21676,7 +21676,7 @@ Future<LyricsResult?> _lrclibSearch(
   try {
     final req =
         await client.getUrl(Uri.https('lrclib.net', '/api/search', params));
-    req.headers.set('User-Agent', 'AlexLMP/$kAppVersion (github.com/$kGithubRepo)');
+    req.headers.set('User-Agent', 'bitLMP/$kAppVersion (github.com/$kGithubRepo)');
     final res = await req.close();
     if (res.statusCode != 200) {
       throw Exception('lrclib.net answered ${res.statusCode}');
@@ -22114,8 +22114,8 @@ class _PlayerSeekState extends State<PlayerSeek> {
   }
 }
 
-// ═══════════════════════ AlexLMP player (default) ═══════════════════════
-// AlexLMP's own layout: "Playing from" header, artwork with a colour glow,
+// ═══════════════════════ bitLMP player (default) ═══════════════════════
+// bitLMP's own layout: "Playing from" header, artwork with a colour glow,
 // an inline seek bar with the times on each side, a play button wrapped in
 // a progress ring, and a dock of labelled shortcuts at the bottom.
 
@@ -22957,7 +22957,7 @@ class ExpressivePlayerView extends StatelessWidget {
     this.alexLayout = false,
   });
 
-  /// AlexLMP player: same look, but shuffle / previous / round play / next /
+  /// bitLMP player: same look, but shuffle / previous / round play / next /
   /// repeat in one row, and Liquid Glass when that's switched on.
   final bool alexLayout;
 
@@ -23403,12 +23403,12 @@ class ExpressivePlayerView extends StatelessWidget {
 }
 
 // ═══════════════════════ First-run setup ═══════════════════════
-// AlexLMP's own onboarding: an animated welcome, permissions, an optional
+// bitLMP's own onboarding: an animated welcome, permissions, an optional
 // YouTube Music sign-in, "make it yours" (crossfade first), then a finish
 // screen. Pure black with slowly drifting colour, segmented progress bar
 // at the top, cards that slide in one after another.
 
-/// Animated AlexLMP mark: equalizer bars that bounce inside a glowing ring.
+/// Animated bitLMP mark: equalizer bars that bounce inside a glowing ring.
 class AlexLogo extends StatefulWidget {
   final double size;
   final Color color;
@@ -23562,7 +23562,7 @@ class _SetupScreenState extends State<SetupScreen> {
     HapticFeedback.mediumImpact();
     appState.setB('setup_done', true);
     final k = _pickedIcon;
-    if (k != null && k != 'borealis') {
+    if (k != null && k != 'bitlmp') {
       Future.delayed(const Duration(milliseconds: 600), () async {
         try {
           appState.setStr('app_icon', k);
@@ -23760,7 +23760,7 @@ class _SetupScreenState extends State<SetupScreen> {
           child: Reveal(
             child: AnimatedAppIcon(
               style: kAppIcons.firstWhere(
-                  (e) => e.key == (_pickedIcon ?? appState.str('app_icon', 'borealis')),
+                  (e) => e.key == (_pickedIcon ?? appState.str('app_icon', 'bitlmp')),
                   orElse: () => kAppIcons.first),
               size: 150,
             ),
@@ -23771,7 +23771,7 @@ class _SetupScreenState extends State<SetupScreen> {
           delayMs: 120,
           child: Center(
             child: Text(
-              'Welcome to AlexLMP',
+              'Welcome to bitLMP',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white,
@@ -23823,10 +23823,10 @@ class _SetupScreenState extends State<SetupScreen> {
       ];
 
   List<Widget> _icons(Color accent) {
-    final current = _pickedIcon ?? appState.str('app_icon', 'borealis');
+    final current = _pickedIcon ?? appState.str('app_icon', 'bitlmp');
     return [
       _heading(Icons.apps_rounded, 'Step 1 · Icon', 'Pick your icon',
-          'Choose how AlexLMP looks on your home screen. Each one has its own launch animation.',
+          'Choose how bitLMP looks on your home screen. Each one has its own launch animation.',
           accent),
       Reveal(
         delayMs: 160,
@@ -24094,7 +24094,7 @@ class _SetupScreenState extends State<SetupScreen> {
     const appStyles = {
       'bloom': 'Bloom',
       'signal': 'Signal',
-      'alex': 'AlexLMP',
+      'alex': 'bitLMP',
       'plus': 'PLUS',
       'prestige': 'Prestige',
       'pocket': 'Pocket',
@@ -24106,7 +24106,7 @@ class _SetupScreenState extends State<SetupScreen> {
       'signal': 'Signal',
       'alex': 'Classic',
       'plus': 'PLUS',
-      'simp': 'AlexLMP',
+      'simp': 'bitLMP',
       'modern': 'Modern',
       'expressive': 'Expressive',
       'apple': 'Apple Music',
@@ -25132,7 +25132,7 @@ class SimpPlayerView extends StatelessWidget {
 }
 
 // ═══════════════════════ PLUS ═══════════════════════
-// AlexLMP's own design. Pure black, one accent colour, a bento grid of
+// bitLMP's own design. Pure black, one accent colour, a bento grid of
 // tiles on Home, numbered picks, and a player with a "barcode" seek bar
 // and a play button that morphs between a rounded square and a circle.
 // Everything is static drawing (no blur, no full-screen animation) so it
@@ -26269,7 +26269,7 @@ class PlusPlayerView extends StatelessWidget {
   }
 }
 
-// ═══════════════════════ AlexLMP Prestige ═══════════════════════
+// ═══════════════════════ bitLMP Prestige ═══════════════════════
 // The whole app sits on the current song's artwork: blurred, slowly
 // drifting, and changing colour with every song. Glass panels, big type,
 // carousels that grow as they reach the front, one floating dock.
@@ -27962,7 +27962,7 @@ class PocketNav extends StatelessWidget {
 }
 
 // ═══════════════════════ App icons + launch animation ═══════════════════════
-// Every icon is the AlexLMP mark (five bars in a circle) in its own colours,
+// Every icon is the bitLMP mark (five bars in a circle) in its own colours,
 // with its own launch animation. The Android side has one launcher
 // "activity-alias" per icon; switching enables that one and relaunches.
 
@@ -27987,6 +27987,9 @@ class AppIconStyle {
 }
 
 const List<AppIconStyle> kAppIcons = [
+  // Default: bitLMP, white disc with purple sound bars on black (bit apps).
+  AppIconStyle('bitlmp', 'bitLMP', [Color(0xFF000000)], null, null,
+      [Colors.white], 'bounce', 'Bounce'),
   // Full-bleed: the colour fills the whole icon (no circle inside a
   // square), so it looks right in any launcher shape.
   // Default: Material You lilac, dark bars on a purple cookie.
@@ -28039,7 +28042,7 @@ const List<AppIconStyle> kAppIcons = [
 const double kIconBarScale = 1.35;
 
 AppIconStyle appIconStyle([String? key]) {
-  final k = key ?? appState.str('app_icon', 'borealis');
+  final k = key ?? appState.str('app_icon', 'bitlmp');
   return kAppIcons.firstWhere((e) => e.key == k, orElse: () => kAppIcons.first);
 }
 
@@ -28097,9 +28100,40 @@ class AppIconPainter extends CustomPainter {
       canvas.clipPath(Path()..addOval(full));
     }
     canvas.drawRect(full, _fill(s.bg, full));
+    _paintMark(canvas);
+    canvas.restore();
+  }
+
+  /// The bitLMP mark: a disc with three sound bars, same as the launcher.
+  void _paintMark(Canvas canvas) {
+    const c = Offset(54, 54);
+    final pulse = s.anim == 'pulse' ? 1 + 0.04 * sin(2 * pi * t * 2) : 1.0;
+    final discCols = s.custom != null ? const [Colors.white] : s.bars;
+    final discRect = Rect.fromCircle(center: c, radius: 27 * pulse);
+    canvas.drawCircle(c, 27 * pulse, _fill(discCols, discRect));
+    final barCol =
+        s.key == 'bitlmp' ? const Color(0xFF6A6BF8) : s.bg.first;
+    const xs = [45.0, 54.0, 63.0];
+    const half = [7.0, 12.0, 9.0];
+    final paint = Paint()
+      ..color = barCol
+      ..isAntiAlias = true;
+    for (var i = 0; i < 3; i++) {
+      final m = t == 0 ? 1.0 : (0.6 + 0.4 * _mult(i)).clamp(0.4, 1.25);
+      final introI = Curves.easeOutBack
+          .transform(((intro * 1.4) - i * 0.1).clamp(0.0, 1.0));
+      final h = max(0.5, half[i] * m * introI);
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromLTRB(xs[i] - 2.8, 54 - h - 2.8, xs[i] + 2.8, 54 + h + 2.8),
+              const Radius.circular(2.8)),
+          paint);
+    }
+  }
+
+  void _oldPaint(Canvas canvas) {
     if (s.custom != null) {
       _paintCustom(canvas, s.custom!);
-      canvas.restore();
       return;
     }
     const c = Offset(54, 54);
@@ -28602,7 +28636,7 @@ class _LaunchSplashState extends State<LaunchSplash>
                           Opacity(
                             opacity: ((v - 0.12) / 0.2).clamp(0.0, 1.0),
                             child: const Text(
-                              'AlexLMP',
+                              'bitLMP',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 30,
@@ -28639,7 +28673,7 @@ class _LaunchSplashState extends State<LaunchSplash>
   }
 }
 
-/// Settings → App icon. Tapping an icon restarts AlexLMP with it.
+/// Settings → App icon. Tapping an icon restarts bitLMP with it.
 Future<void> showAppIconPicker(BuildContext context) async {
   try {
     final k = await _mediaChannel.invokeMethod<String>('getAppIcon');
@@ -28656,7 +28690,7 @@ Future<void> showAppIconPicker(BuildContext context) async {
     builder: (ctx) => ListenableBuilder(
       listenable: appState,
       builder: (ctx, _) {
-        final current = appState.str('app_icon', 'borealis');
+        final current = appState.str('app_icon', 'bitlmp');
         final maxH = MediaQuery.of(ctx).size.height * 0.82;
         return SafeArea(
           child: ConstrainedBox(
@@ -28684,7 +28718,7 @@ Future<void> showAppIconPicker(BuildContext context) async {
                           fontWeight: FontWeight.w800)),
                   const SizedBox(height: 4),
                   const Text(
-                      'Each icon has its own launch animation. AlexLMP restarts to switch.',
+                      'Each icon has its own launch animation. bitLMP restarts to switch.',
                       style: TextStyle(color: Colors.white60, fontSize: 14)),
                   const SizedBox(height: 18),
                   Flexible(
@@ -28757,7 +28791,7 @@ Future<void> _switchAppIcon(BuildContext context, AppIconStyle s) async {
       icon: AnimatedAppIcon(style: s, size: 64),
       title: Text('Switch to ${s.name}?'),
       content: const Text(
-          'AlexLMP will restart to change its icon. Your music keeps playing.\n\n'
+          'bitLMP will restart to change its icon. Your music keeps playing.\n\n'
           'Some launchers take a few seconds to show the new icon, and you may need to add it to your home screen again.'),
       actions: [
         TextButton(
@@ -30772,7 +30806,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.7.6';
+const String kAppVersion = '3.8.0';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -30888,7 +30922,7 @@ class _SupportCardState extends State<SupportCard>
                         ),
                         SizedBox(height: 3),
                         Text(
-                          'AlexLMP is free and made by one person. A tip helps keep it going 💖',
+                          'bitLMP is free and made by one person. A tip helps keep it going 💖',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 13.5,
@@ -30988,7 +31022,7 @@ void showSupportSheet(BuildContext context) {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Support AlexLMP',
+            const Text('Support bitLMP',
                 style: TextStyle(
                     color: Colors.white,
                     fontSize: 22,
@@ -31019,7 +31053,7 @@ void showSupportSheet(BuildContext context) {
   );
 }
 
-/// Donation links (Settings → Support AlexLMP).
+/// Donation links (Settings → Support bitLMP).
 const String kDonateCashApp = 'https://cash.app/\$sxlocctrapp';
 const String kDonatePayPal = 'https://paypal.me/alexdesrosier67';
 
@@ -31062,7 +31096,7 @@ Future<AppRelease> fetchLatestRelease() async {
   try {
     final req = await client
         .getUrl(Uri.parse('https://api.github.com/repos/$kGithubRepo/releases/latest'));
-    req.headers.set('User-Agent', 'AlexLMP/$kAppVersion');
+    req.headers.set('User-Agent', 'bitLMP/$kAppVersion');
     req.headers.set('Accept', 'application/vnd.github+json');
     final res = await req.close();
     final body = await utf8.decoder.bind(res).join();
@@ -31114,13 +31148,8 @@ String _plainNotes(String md) => md
 /// (always checks, and also reports "you're up to date" / errors).
 Future<void> checkForUpdates(BuildContext context, {bool manual = false}) async {
   final prefs = YouTubeMusic.prefs;
-  if (!manual) {
-    if (!appState.b('update_check', true)) return;
-    final last = prefs?.getInt('update_last_check') ?? 0;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    if (now - last < const Duration(hours: 1).inMilliseconds) return;
-    await prefs?.setInt('update_last_check', now);
-  }
+  // Checked every time the app opens.
+  if (!manual && !appState.b('update_check', true)) return;
   AppRelease rel;
   try {
     rel = await fetchLatestRelease();
@@ -31130,15 +31159,14 @@ Future<void> checkForUpdates(BuildContext context, {bool manual = false}) async 
   }
   final newer = compareVersions(rel.version, kAppVersion) > 0;
   if (!newer) {
-    if (manual) appNotice.value = 'You\'re up to date (AlexLMP $kAppVersion).';
+    if (manual) appNotice.value = 'You\'re up to date (bitLMP $kAppVersion).';
     return;
   }
-  if (!manual && prefs?.getString('update_skip') == rel.version) return;
 
   // System notification (stays in the shade until tapped).
   try {
     await _mediaChannel.invokeMethod('showUpdateNotification', {
-      'title': 'AlexLMP ${rel.version} is available',
+      'title': 'bitLMP ${rel.version} is available',
       'text': 'Tap to update.',
       'url': rel.downloadUrl,
       'version': rel.version,
@@ -31146,58 +31174,13 @@ Future<void> checkForUpdates(BuildContext context, {bool manual = false}) async 
   } catch (_) {}
 
   if (!context.mounted) return;
-  final pal = appState.palette;
-  await showDialog<void>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      icon: Icon(Icons.system_update_rounded, color: pal.accent, size: 34),
-      title: Text('Update available'),
-      content: ConstrainedBox(
-        constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.5),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(rel.title,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 17)),
-              const SizedBox(height: 4),
-              Text('You have $kAppVersion  →  new ${rel.version}',
-                  style: const TextStyle(color: Colors.white60)),
-              if (rel.notes.trim().isNotEmpty) ...[
-                const SizedBox(height: 14),
-                SelectableText(_plainNotes(rel.notes),
-                    style: const TextStyle(height: 1.4)),
-              ],
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () {
-            prefs?.setString('update_skip', rel.version);
-            Navigator.pop(ctx);
-          },
-          child: const Text('Skip this version'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Later'),
-        ),
-        FilledButton.icon(
-          onPressed: () {
-            Navigator.pop(ctx);
-            downloadAndInstallUpdate(context, rel);
-          },
-          icon: const Icon(Icons.system_update_rounded),
-          label: const Text('Update'),
-        ),
-      ],
-    ),
-  );
+  if (_updateScreenOpen) return;
+  _updateScreenOpen = true;
+  await Navigator.of(context).push(MaterialPageRoute<void>(
+    fullscreenDialog: true,
+    builder: (_) => UpdateScreen(rel: rel),
+  ));
+  _updateScreenOpen = false;
 }
 
 // ═══════════════════════ Offline saves ═══════════════════════
@@ -31680,7 +31663,7 @@ Future<void> _pushWidget() async {
   try {
     await _mediaChannel.invokeMethod('updateWidget', {
       'title': t?.title ?? 'Nothing playing',
-      'artist': t?.artist ?? 'Open AlexLMP to start',
+      'artist': t?.artist ?? 'Open bitLMP to start',
       'playing': playing,
       'art': artPath,
       'artChanged': trackChanged,
@@ -32480,8 +32463,8 @@ void showYtAccountSheet(BuildContext context) {
                 const SizedBox(height: 6),
                 Text(
                   acc.signedIn
-                      ? 'Your playlists and likes show in Library. AlexLMP only reads them — it never changes anything on your account.'
-                      : 'Sign in to see your YouTube Music playlists and liked songs in your Library. Read-only: AlexLMP never changes your account.',
+                      ? 'Your playlists and likes show in Library. bitLMP only reads them — it never changes anything on your account.'
+                      : 'Sign in to see your YouTube Music playlists and liked songs in your Library. Read-only: bitLMP never changes your account.',
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white60, fontSize: 13.5),
                 ),
@@ -33297,7 +33280,7 @@ class _YtAlbumScreenState extends State<YtAlbumScreen> {
     );
   }
 
-  /// AlexLMP Bloom album / playlist page.
+  /// bitLMP Bloom album / playlist page.
   Widget _bloomPage(BuildContext context, AsyncSnapshot<YtAlbumPage> snap) {
     return ListenableBuilder(
       listenable: Listenable.merge([
@@ -33773,7 +33756,7 @@ class _YtArtistScreenState extends State<YtArtistScreen> {
     unawaited(_loadEntireArtistCatalog(widget.name));
   }
 
-  /// AlexLMP Bloom artist page.
+  /// bitLMP Bloom artist page.
   Widget _bloomArtist(BuildContext context, YtArtistPage? page,
       AsyncSnapshot<YtArtistPage> snap) {
     final c = bc;
@@ -34836,7 +34819,7 @@ class _ArtworkSymbolPainter extends CustomPainter {
 // ═══════════════════════ Spotify playlist import ═══════════════════════
 // Reads a playlist exported from Spotify (Exportify, TuneMyMusic, etc. as a
 // .csv, or a plain text list of "Artist - Title" lines), finds each song on
-// YouTube Music and saves them as an AlexLMP playlist.
+// YouTube Music and saves them as an bitLMP playlist.
 
 class _ImportRow {
   final String title;
@@ -35013,7 +34996,7 @@ Future<void> openSpotifyImport(BuildContext context) async {
               step('1', 'Export your playlist',
                   'Open Exportify, log in with Spotify and tap Export next to the playlist. It saves a .csv file.'),
               step('2', 'Pick the file here',
-                  'AlexLMP finds each song on YouTube Music and saves them as a playlist.'),
+                  'bitLMP finds each song on YouTube Music and saves them as a playlist.'),
               const SizedBox(height: 6),
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
@@ -35162,7 +35145,7 @@ class _SpotifyImportScreenState extends State<SpotifyImportScreen> {
                   color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
           const Text(
-              'AlexLMP looks up each song on YouTube Music and saves the matches as a playlist.',
+              'bitLMP looks up each song on YouTube Music and saves the matches as a playlist.',
               style: TextStyle(color: Colors.white60, fontSize: 14, height: 1.4)),
           const SizedBox(height: 20),
           TextField(
@@ -35279,7 +35262,7 @@ Future<void> reportBug(BuildContext context) async {
     build = '${m['build'] ?? ''}';
   } catch (_) {}
   final report = [
-    'AlexLMP bug report',
+    'bitLMP bug report',
     'Version: $kAppVersion',
     'Phone: $phone',
     if (build.isNotEmpty) 'Build: $build',
@@ -35298,7 +35281,7 @@ Future<void> reportBug(BuildContext context) async {
       title: const Text('Report a bug'),
       content: const Text(
           'Your app version, phone and the last error were copied. '
-          'Paste them in the AlexLMP chat and say what happened.'),
+          'Paste them in the bitLMP chat and say what happened.'),
       actions: [
         TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -35313,8 +35296,8 @@ Future<void> reportBug(BuildContext context) async {
 }
 
 
-// ═══════════════════════ AlexLMP Signal (default look) ═══════════════════════
-// Near-black ink, one accent colour, Space Grotesk headings, and the AlexLMP
+// ═══════════════════════ bitLMP Signal (default look) ═══════════════════════
+// Near-black ink, one accent colour, Space Grotesk headings, and the bitLMP
 // logo bars used as the scrubber, the "now playing" mark and section marks.
 // The mini player and the tabs sit together in one floating dock.
 
@@ -35337,7 +35320,7 @@ TextStyle sigHead(double size,
       letterSpacing: -0.02 * size,
     );
 
-/// The AlexLMP logo: five rounded bars.
+/// The bitLMP logo: five rounded bars.
 class SignalBars extends StatelessWidget {
   final double size;
   final Color? color;
@@ -36447,7 +36430,7 @@ class LibItemRow extends StatelessWidget {
 }
 
 // ═══════════════════════ In-app updates ═══════════════════════
-// Downloads the new APK inside AlexLMP (with progress) and hands it straight
+// Downloads the new APK inside bitLMP (with progress) and hands it straight
 // to Android's installer: no browser, no Downloads folder, no re-tries.
 
 Future<void> downloadAndInstallUpdate(BuildContext context, AppRelease rel) async {
@@ -36457,7 +36440,7 @@ Future<void> downloadAndInstallUpdate(BuildContext context, AppRelease rel) asyn
     return;
   }
   final progress = ValueNotifier<double?>(null);
-  final status = ValueNotifier<String>('Downloading AlexLMP ${rel.version}…');
+  final status = ValueNotifier<String>('Downloading bitLMP ${rel.version}…');
   var cancelled = false;
   final pal = appState.palette;
   final nav = Navigator.of(context, rootNavigator: true);
@@ -36519,7 +36502,7 @@ Future<void> downloadAndInstallUpdate(BuildContext context, AppRelease rel) asyn
   final client = HttpClient();
   try {
     final dir = await getTemporaryDirectory();
-    final file = File(p.join(dir.path, 'AlexLMP-update.apk'));
+    final file = File(p.join(dir.path, 'bitLMP-update.apk'));
     if (await file.exists()) await file.delete();
     final req = await client.getUrl(Uri.parse(url));
     final res = await req.close();
@@ -36552,9 +36535,9 @@ Future<void> downloadAndInstallUpdate(BuildContext context, AppRelease rel) asyn
     var r = await _mediaChannel.invokeMethod<String>('installApk', {'path': file.path});
     if (r == 'needs_permission') {
       // Android sends the user to "Install unknown apps" once. Install as soon
-      // as they come back to AlexLMP.
+      // as they come back to bitLMP.
       status.value =
-          'Turn on "Allow from this source" for AlexLMP, then come back. The update installs right after.';
+          'Turn on "Allow from this source" for bitLMP, then come back. The update installs right after.';
       final back = Completer<void>();
       final l = AppLifecycleListener(onResume: () {
         if (!back.isCompleted) back.complete();
@@ -36566,7 +36549,7 @@ Future<void> downloadAndInstallUpdate(BuildContext context, AppRelease rel) asyn
       if (r == 'needs_permission') {
         close();
         appNotice.value =
-            'Update isn\'t installed: AlexLMP isn\'t allowed to install apps yet. Allow it in Settings > Apps > AlexLMP > Install unknown apps, then try again.';
+            'Update isn\'t installed: bitLMP isn\'t allowed to install apps yet. Allow it in Settings > Apps > bitLMP > Install unknown apps, then try again.';
         return;
       }
     }
@@ -36864,7 +36847,7 @@ class LocalCollectionScreen extends StatelessWidget {
 }
 
 
-// ═══════════════════════════ AlexLMP Bloom ═══════════════════════════════
+// ═══════════════════════════ bitLMP Bloom ═══════════════════════════════
 // Material You "Bloom": lilac tones, scalloped cookie shapes, wavy progress.
 
 bool get bloomLook => appState.appStyle == 'bloom';
@@ -39545,7 +39528,7 @@ Future<DateTime?> releaseDateFor(String title, String artist, {String? year}) {
       final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
       try {
         final req = await client.getUrl(u);
-        req.headers.set('User-Agent', 'AlexLMP/$kAppVersion ( github.com/$kGithubRepo )');
+        req.headers.set('User-Agent', 'bitLMP/$kAppVersion ( github.com/$kGithubRepo )');
         req.headers.set('Accept', 'application/json');
         final res = await req.close().timeout(const Duration(seconds: 10));
         if (res.statusCode != 200) return null;
@@ -39893,6 +39876,113 @@ class _TabFadeInState extends State<TabFadeIn>
         );
       },
       child: widget.child,
+    );
+  }
+}
+
+
+bool _updateScreenOpen = false;
+
+/// Full-screen "update available" page, shown each time the app opens while
+/// a newer version is out.
+class UpdateScreen extends StatelessWidget {
+  final AppRelease rel;
+  const UpdateScreen({super.key, required this.rel});
+  @override
+  Widget build(BuildContext context) {
+    final c = bc;
+    final top = MediaQuery.of(context).padding.top;
+    final bottom = MediaQuery.of(context).padding.bottom;
+    return Scaffold(
+      backgroundColor: c.bg,
+      body: Stack(
+        children: [
+          const Positioned.fill(child: BloomBackdrop()),
+          Column(
+            children: [
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.fromLTRB(24, top + 40, 24, 24),
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 96,
+                        height: 96,
+                        decoration: BoxDecoration(
+                            color: c.lc, borderRadius: BorderRadius.circular(32)),
+                        child: Icon(Icons.system_update_rounded,
+                            color: c.onLc, size: 48),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Text('Update available',
+                        textAlign: TextAlign.center,
+                        style: bloomText(32, weight: FontWeight.w800)),
+                    const SizedBox(height: 8),
+                    Text('bitLMP ${rel.version} is out. You have $kAppVersion.',
+                        textAlign: TextAlign.center,
+                        style: bloomText(16, color: c.t2, weight: FontWeight.w500)),
+                    if (rel.notes.trim().isNotEmpty) ...[
+                      const SizedBox(height: 28),
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                            color: c.s2, borderRadius: BorderRadius.circular(24)),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("What's new",
+                                style: bloomText(18, weight: FontWeight.w700)),
+                            const SizedBox(height: 10),
+                            Text(_plainNotes(rel.notes),
+                                style: bloomText(14.5,
+                                        color: c.t1, weight: FontWeight.w400)
+                                    .copyWith(height: 1.45)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.fromLTRB(24, 8, 24, bottom + 16),
+                child: Column(
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      height: 58,
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: c.pri,
+                          foregroundColor: c.bg,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(29)),
+                        ),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          final ctx = appNavKey.currentContext;
+                          if (ctx != null) downloadAndInstallUpdate(ctx, rel);
+                        },
+                        icon: const Icon(Icons.download_rounded),
+                        label: const Text('Update now',
+                            style: TextStyle(
+                                fontSize: 17, fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text('Not now',
+                          style: bloomText(15, color: c.t2, weight: FontWeight.w600)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

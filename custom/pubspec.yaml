@@ -1,7 +1,7 @@
 name: alex_lmp
-description: AlexLMP Material You Music Player
+description: bitLMP Material You Music Player
 publish_to: 'none'
-version: 3.7.6+67
+version: 3.8.0+68
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -20,7 +20,7 @@ dependencies:
   path: ^1.9.0
   # AI DJ chat tab.
   http: ^1.2.2
-  # Space Grotesk headings in the AlexLMP Signal look.
+  # Space Grotesk headings in the bitLMP Signal look.
   google_fonts: ^6.2.1
 
 dev_dependencies:

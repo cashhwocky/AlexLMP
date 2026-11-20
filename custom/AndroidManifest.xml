@@ -14,7 +14,7 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 
     <application
-        android:label="AlexLMP"
+        android:label="bitLMP"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -22,7 +22,7 @@
         android:enableOnBackInvokedCallback="true"
         android:requestLegacyExternalStorage="true">
 
-        <!-- Android Auto: AlexLMP shows up in the car's app list. -->
+        <!-- Android Auto: bitLMP shows up in the car's app list. -->
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
@@ -51,7 +51,7 @@
 
         <activity
             android:name=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/LaunchTheme"
@@ -69,7 +69,7 @@
         <activity-alias
             android:name=".IconClassic"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_classic"
             android:roundIcon="@mipmap/ic_alt_classic"
             android:enabled="false"
@@ -82,7 +82,7 @@
         <activity-alias
             android:name=".IconMidnight"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_midnight"
             android:roundIcon="@mipmap/ic_alt_midnight"
             android:enabled="false"
@@ -95,7 +95,7 @@
         <activity-alias
             android:name=".IconSunset"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_sunset"
             android:roundIcon="@mipmap/ic_alt_sunset"
             android:enabled="false"
@@ -108,7 +108,7 @@
         <activity-alias
             android:name=".IconAurora"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_aurora"
             android:roundIcon="@mipmap/ic_alt_aurora"
             android:enabled="false"
@@ -121,7 +121,7 @@
         <activity-alias
             android:name=".IconNeon"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_neon"
             android:roundIcon="@mipmap/ic_alt_neon"
             android:enabled="false"
@@ -134,7 +134,7 @@
         <activity-alias
             android:name=".IconMint"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_mint"
             android:roundIcon="@mipmap/ic_alt_mint"
             android:enabled="false"
@@ -147,7 +147,7 @@
         <activity-alias
             android:name=".IconEmber"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_ember"
             android:roundIcon="@mipmap/ic_alt_ember"
             android:enabled="false"
@@ -160,7 +160,7 @@
         <activity-alias
             android:name=".IconGold"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_gold"
             android:roundIcon="@mipmap/ic_alt_gold"
             android:enabled="false"
@@ -173,7 +173,7 @@
         <activity-alias
             android:name=".IconOcean"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_ocean"
             android:roundIcon="@mipmap/ic_alt_ocean"
             android:enabled="false"
@@ -186,7 +186,7 @@
         <activity-alias
             android:name=".IconWhite"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_white"
             android:roundIcon="@mipmap/ic_alt_white"
             android:enabled="false"
@@ -199,7 +199,7 @@
         <activity-alias
             android:name=".IconBloom"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_bloom"
             android:roundIcon="@mipmap/ic_alt_bloom"
             android:enabled="false"
@@ -213,7 +213,7 @@
         <activity-alias
             android:name=".IconGlass"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_bloom"
             android:roundIcon="@mipmap/ic_alt_bloom"
             android:enabled="false"
@@ -226,7 +226,7 @@
         <activity-alias
             android:name=".IconPrism"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_prism"
             android:roundIcon="@mipmap/ic_alt_prism"
             android:enabled="false"
@@ -239,7 +239,7 @@
         <activity-alias
             android:name=".IconHalo"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_halo"
             android:roundIcon="@mipmap/ic_alt_halo"
             android:enabled="false"
@@ -252,7 +252,7 @@
         <activity-alias
             android:name=".IconFrost"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_frost"
             android:roundIcon="@mipmap/ic_alt_frost"
             android:enabled="false"
@@ -265,7 +265,7 @@
         <activity-alias
             android:name=".IconRose"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_rose"
             android:roundIcon="@mipmap/ic_alt_rose"
             android:enabled="false"
@@ -278,7 +278,7 @@
         <activity-alias
             android:name=".IconMatrix"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_matrix"
             android:roundIcon="@mipmap/ic_alt_matrix"
             android:enabled="false"
@@ -291,7 +291,7 @@
         <activity-alias
             android:name=".IconOrb"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_orb"
             android:roundIcon="@mipmap/ic_alt_orb"
             android:enabled="false"
@@ -304,7 +304,7 @@
         <activity-alias
             android:name=".IconNote"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_note"
             android:roundIcon="@mipmap/ic_alt_note"
             android:enabled="false"
@@ -317,7 +317,7 @@
         <activity-alias
             android:name=".IconVinyl"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_vinyl"
             android:roundIcon="@mipmap/ic_alt_vinyl"
             android:enabled="false"
@@ -328,12 +328,25 @@
             </intent-filter>
         </activity-alias>
         <activity-alias
+            android:name=".IconBitlmp"
+            android:targetActivity=".MainActivity"
+            android:label="bitLMP"
+            android:icon="@mipmap/ic_alt_bitlmp"
+            android:roundIcon="@mipmap/ic_alt_bitlmp"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
             android:name=".IconBorealis"
             android:targetActivity=".MainActivity"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:icon="@mipmap/ic_alt_borealis"
             android:roundIcon="@mipmap/ic_alt_borealis"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -350,7 +363,7 @@
 
         <receiver
             android:name=".AlexWidget"
-            android:label="AlexLMP"
+            android:label="bitLMP"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />

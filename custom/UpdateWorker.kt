@@ -15,7 +15,7 @@ import java.net.URL
 import java.util.concurrent.TimeUnit
 
 /**
- * Checks GitHub for a new AlexLMP release about once an hour, even while the
+ * Checks GitHub for a new bitLMP release about once an hour, even while the
  * app is closed, and posts a notification once per new version.
  */
 class UpdateWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
@@ -32,7 +32,7 @@ class UpdateWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
         return try {
             conn.connectTimeout = 15000
             conn.readTimeout = 15000
-            conn.setRequestProperty("User-Agent", "AlexLMP-update-check")
+            conn.setRequestProperty("User-Agent", "bitLMP-update-check")
             conn.setRequestProperty("Accept", "application/vnd.github+json")
             if (conn.responseCode != 200) return Result.retry()
             val body = conn.inputStream.bufferedReader().use { it.readText() }
@@ -57,7 +57,7 @@ class UpdateWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
                     }
                 }
             }
-            notify(ctx, "AlexLMP $latest is available", "Tap to update.", url, latest)
+            notify(ctx, "bitLMP $latest is available", "Tap to update.", url, latest)
             Result.success()
         } catch (_: Exception) {
             Result.retry()
@@ -109,10 +109,10 @@ class UpdateWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
                     android.app.NotificationChannel(
                         channelId, "App updates",
                         android.app.NotificationManager.IMPORTANCE_DEFAULT
-                    ).apply { description = "New AlexLMP versions" }
+                    ).apply { description = "New bitLMP versions" }
                 )
             }
-            // Opens AlexLMP, which downloads and installs the update itself.
+            // Opens bitLMP, which downloads and installs the update itself.
             val open = android.content.Intent(ctx, MainActivity::class.java)
                 .putExtra("alexlmp_update", true)
                 .putExtra("alexlmp_update_url", url)
@@ -144,7 +144,7 @@ class UpdateWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
 }
 
 /**
- * Installs an AlexLMP update APK the app downloaded itself, through Android's
+ * Installs an bitLMP update APK the app downloaded itself, through Android's
  * own package installer (no browser, no Downloads folder). Android still shows
  * its one "Update this app?" confirmation.
  */
@@ -177,7 +177,7 @@ object SelfUpdater {
         val id = installer.createSession(params)
         installer.openSession(id).use { session ->
             file.inputStream().use { input ->
-                session.openWrite("AlexLMP.apk", 0, file.length()).use { out ->
+                session.openWrite("bitLMP.apk", 0, file.length()).use { out ->
                     input.copyTo(out, 1 shl 16)
                     session.fsync(out)
                 }
@@ -217,7 +217,7 @@ class UpdateInstallReceiver : android.content.BroadcastReceiver() {
                     android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE
                 ) ?: "status $status"
                 android.widget.Toast.makeText(
-                    ctx, "AlexLMP update didn't install: $msg", android.widget.Toast.LENGTH_LONG
+                    ctx, "bitLMP update didn't install: $msg", android.widget.Toast.LENGTH_LONG
                 ).show()
             }
         }

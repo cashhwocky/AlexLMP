@@ -32,7 +32,7 @@ class AlexWidget : AppWidgetProvider() {
             ACTION_PREV -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
             else -> return
         }
-        // Goes to AlexLMP's media session (the same thing headphone buttons use).
+        // Goes to bitLMP's media session (the same thing headphone buttons use).
         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, key))
         am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, key))
@@ -109,7 +109,7 @@ class AlexWidget : AppWidgetProvider() {
             val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val views = RemoteViews(context.packageName, R.layout.widget_player)
             views.setTextViewText(R.id.w_title, p.getString("title", "Nothing playing"))
-            views.setTextViewText(R.id.w_artist, p.getString("artist", "Open AlexLMP to start"))
+            views.setTextViewText(R.id.w_artist, p.getString("artist", "Open bitLMP to start"))
             val playing = p.getBoolean("playing", false)
             views.setImageViewResource(
                 R.id.w_play,

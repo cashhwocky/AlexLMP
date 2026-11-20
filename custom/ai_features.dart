@@ -161,7 +161,7 @@ class AiHelper {
     String taste = '',
   }) async {
     final sys =
-        'You are the AI DJ inside AlexLMP, a music player. Sound like a real, laid-back late-night radio DJ who '
+        'You are the AI DJ inside bitLMP, a music player. Sound like a real, laid-back late-night radio DJ who '
         'actually knows music: calm, dry, confident, low-key. NO cheesy or corny stuff: never say good morning, '
         'sunshine, rise and shine, buckle up, let\'s gooo, fam, bestie, vibes check, or anything over-excited, '
         'and no pet names. No exclamation marks. Write ONE spoken line, 12 to 30 words, no emojis, '
@@ -239,7 +239,7 @@ class AiHelper {
     if (RegExp(r'^(hi|hey|hello|yo|sup|what.*up)\b').hasMatch(low)) {
       return nowPlaying.isNotEmpty
           ? "Yo! We've got $nowPlaying spinning right now. Tell me a song, artist, or vibe you want next—or say \"make me a mix\"."
-          : "Yo! I'm your AlexLMP DJ. Tell me any song or artist to play, ask for a workout or late-night mix, or tell me to shuffle your library.";
+          : "Yo! I'm your bitLMP DJ. Tell me any song or artist to play, ask for a workout or late-night mix, or tell me to shuffle your library.";
     }
     if (low.contains('what') && (low.contains('playing') || low.contains('this song'))) {
       return nowPlaying.isNotEmpty

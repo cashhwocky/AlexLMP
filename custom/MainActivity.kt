@@ -30,7 +30,7 @@ class MainActivity : AudioServiceActivity() {
         "classic", "midnight", "sunset", "aurora", "neon",
         "mint", "ember", "gold", "ocean", "white", "bloom",
         "prism", "halo", "frost", "rose", "matrix",
-        "orb", "note", "vinyl", "borealis",
+        "orb", "note", "vinyl", "borealis", "bitlmp",
     )
 
     private fun iconAlias(key: String) = android.content.ComponentName(
@@ -41,11 +41,11 @@ class MainActivity : AudioServiceActivity() {
     private fun currentAppIcon(): String {
         val pm = packageManager
         for (k in appIcons) {
-            if (k == "borealis") continue
+            if (k == "bitlmp") continue
             val st = pm.getComponentEnabledSetting(iconAlias(k))
             if (st == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return k
         }
-        return "borealis"
+        return "bitlmp"
     }
 
     /**
@@ -58,9 +58,9 @@ class MainActivity : AudioServiceActivity() {
             val pm = packageManager
             val enabled = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             val chosen = appIcons.any {
-                it != "borealis" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
+                it != "bitlmp" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
             }
-            val bloom = iconAlias("borealis")
+            val bloom = iconAlias("bitlmp")
             if (chosen && pm.getComponentEnabledSetting(bloom) ==
                 android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
             ) {
@@ -330,7 +330,7 @@ class MainActivity : AudioServiceActivity() {
                     }
                     "getAppIcon" -> result.success(currentAppIcon())
                     "setAppIcon" -> {
-                        val key = call.argument<String>("key") ?: "borealis"
+                        val key = call.argument<String>("key") ?: "bitlmp"
                         if (key !in appIcons) {
                             result.error("ICON", "Unknown icon: $key", null)
                         } else {
@@ -339,7 +339,7 @@ class MainActivity : AudioServiceActivity() {
                                 try {
                                     switchAppIcon(key)
                                 } catch (e: Exception) {
-                                    android.util.Log.e("AlexLMP", "setAppIcon failed", e)
+                                    android.util.Log.e("bitLMP", "setAppIcon failed", e)
                                 }
                             }, 150)
                         }

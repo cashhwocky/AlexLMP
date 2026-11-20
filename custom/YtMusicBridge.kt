@@ -55,7 +55,7 @@ import java.util.concurrent.Executors
 import java.util.zip.GZIPInputStream
 
 /**
- * YouTube Music support for AlexLMP.
+ * YouTube Music support for bitLMP.
  *
  * - ytSearch:  searches YouTube Music songs (NewPipeExtractor, "music_songs" filter).
  * - ytPrepare: resolves a videoId to an audio stream and returns a local URL
@@ -126,13 +126,13 @@ object YtMusicBridge {
         try {
             if (on) {
                 val wl = wakeLock ?: (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager)
-                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AlexLMP:playback")
+                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "bitLMP:playback")
                     .apply { setReferenceCounted(false) }
                     .also { wakeLock = it }
                 // Timeout is a safety net; it's renewed every time playback (re)starts.
                 wl.acquire(4 * 60 * 60 * 1000L)
                 val wifi = wifiLock ?: (ctx.getSystemService(Context.WIFI_SERVICE) as WifiManager)
-                    .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "AlexLMP:stream")
+                    .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "bitLMP:stream")
                     .apply { setReferenceCounted(false) }
                     .also { wifiLock = it }
                 if (!wifi.isHeld) wifi.acquire()
@@ -1490,7 +1490,7 @@ object Account {
         ua: String,
         body: JSONObject,
     ): JSONObject {
-        val c = cookies() ?: throw IOException("Sign in to YouTube Music in AlexLMP to play this.")
+        val c = cookies() ?: throw IOException("Sign in to YouTube Music in bitLMP to play this.")
         val locale = Locale.getDefault()
         val client = JSONObject()
             .put("clientName", clientName)

@@ -1,13 +1,18 @@
 All your music, one player.
 
-AlexLMP 3.7.6 fixes the music controls and makes switching tabs instant.
+AlexLMP is now **bitLMP**, joining the bit family of apps (bitMessages, bitDialer, bitMaps and more).
 
-## Fixed
+## New
+- **New name: bitLMP.** Same app, same features, new name. Your library, likes, playlists and settings all stay, and updates keep installing over your current version.
+- **New app icons.** Every app icon is redesigned with the new bitLMP mark: a disc with three sound bars. The default is a white disc with purple bars on black, matching the other bit apps. All the other icon colors are still in Settings > App icon with the new mark.
+- **Updates you won't miss.** When a new version is out, a full-screen update page shows what's new every time you open the app, with one tap to update.
+
+## From 3.7.6
 - **Music controls work again.** Play could do nothing when the song from last time had expired or failed to load, or a fade got cut off and left the song silent. Play now reloads the song (at the same spot) or brings the volume back, so you don't need to reset your settings anymore.
 - **No more lag when switching tabs.** Tabs you've opened stay loaded, so going back to Home, Search, Library or AI is instant and keeps your place.
 
 ## From 3.7.5
-- **Normal AlexLMP is back.** Thanks for all the feedback on the Liquid Glass versions. The app and the player are back to how they were in 3.6.3, and all the app styles and player styles are back too. If you were moved to Liquid Glass, you're switched back automatically.
+- **Normal bitLMP is back.** Thanks for all the feedback on the Liquid Glass versions. The app and the player are back to how they were in 3.6.3, and all the app styles and player styles are back too. If you were moved to Liquid Glass, you're switched back automatically.
 - **Smoother tab bar.** The tab bar has a new pill that marks your tab. Drag along the bar and the pill follows your finger with a soft ripple, then settles on the nearest tab. It uses your theme colors.
 - **Borealis is the new default app icon.** If you picked a different icon before, you keep it. You can switch any time in Settings > App icon.
 - **AI stays.** The AI tab, AI DJ and everything else from 3.6 are all still here.
@@ -40,7 +45,7 @@ AlexLMP 3.7.6 fixes the music controls and makes switching tabs instant.
 - Settings shows the right version again.
 
 ## From 3.3.0
-AlexLMP 3.3.0 puts AI into search, Home, the player and setup, and redoes the Bloom Home and player.
+bitLMP 3.3.0 puts AI into search, Home, the player and setup, and redoes the Bloom Home and player.
 
 ## New
 - **AI search help.** Searching now fixes typos, understands moods ("songs for a rainy night"), and shows AI picks you can play in one tap, or play all at once.
@@ -53,7 +58,7 @@ AlexLMP 3.3.0 puts AI into search, Home, the player and setup, and redoes the Bl
 - **4 new app icons:** Orb, Note, Vinyl and Borealis, plus Prism, Halo, Frost, Rose and Matrix. Bloom is still the default.
 
 ## From 3.2.0
-AlexLMP 3.2.0 puts the new tab bar and AI DJ in every app style, and redoes the Bloom player, library and settings.
+bitLMP 3.2.0 puts the new tab bar and AI DJ in every app style, and redoes the Bloom player, library and settings.
 
 ## New
 - **Floating tab bar + AI DJ in every app style** (Bloom, Signal, Apple, Prestige, Plus, Pocket and the default look). Home, Mix, Library, AI, Search and Settings now live in the same rounded dock, colored to match each style.
@@ -84,4 +89,4 @@ AI DJ and a new bottom tab bar.
 
 Updating installs over your current version. Your library, likes and settings stay.
 
-If you enjoy AlexLMP, you can support the project from the card at the top of Settings <3
+If you enjoy bitLMP, you can support the project from the card at the top of Settings <3

@@ -9,7 +9,7 @@ class TabItem {
 
 /// Rounded floating tab dock (same design as the bitFocus bottom bar).
 /// Only the selected tab shows its name, so five tabs fit cleanly.
-/// Colours can be passed in so it matches the current AlexLMP palette.
+/// Colours can be passed in so it matches the current bitLMP palette.
 class TabDock extends StatelessWidget {
   final List<TabItem> items;
   final int index;
