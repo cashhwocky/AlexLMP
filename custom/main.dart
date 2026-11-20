@@ -5497,7 +5497,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                     final t = audioHandler.currentTrack;
                     if (t == null) return const SizedBox.shrink();
                     return Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                       child: GlassMiniPlayer(track: t),
                     );
                   },
@@ -5505,7 +5505,7 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                 SafeArea(
                   top: false,
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                     child: Row(
                       children: [
                         Expanded(
@@ -5528,15 +5528,13 @@ class _AlexLmpRootState extends State<AlexLmpRoot> {
                             HapticFeedback.selectionClick();
                             openGlassSearch(context);
                           },
-                          child: const Glass(
-                            radius: 31,
-                            blur: true,
-                            strong: true,
+                          child: const Frosted(
+                            radius: 32,
                             child: SizedBox(
-                              width: 62,
-                              height: 62,
+                              width: 64,
+                              height: 64,
                               child: Icon(Icons.search_rounded,
-                                  color: Colors.white, size: 27),
+                                  color: Colors.white, size: 24),
                             ),
                           ),
                         ),
@@ -31155,7 +31153,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.7.2';
+const String kAppVersion = '3.7.3';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});
@@ -40706,7 +40704,63 @@ Widget glassSwitch(bool on, ValueChanged<bool> onChanged) => Switch.adaptive(
       trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
     );
 
-// ── Liquid glass tab bar you can drag across ──────────────────────────────
+// ── Liquid glass tab bar you can drag across (same as bitDialer) ─────────
+
+const Color kGlassInfo = Color(0xFF9CB2FF);
+
+/// Real frosted glass, same as bitDialer: blurs what's behind, dark tint so
+/// text stays readable, hairline edge brightest along the top.
+class Frosted extends StatelessWidget {
+  final Widget child;
+  final double radius;
+  const Frosted({super.key, required this.child, required this.radius});
+  @override
+  Widget build(BuildContext context) {
+    final r = BorderRadius.circular(radius);
+    return ClipRRect(
+      borderRadius: r,
+      child: glassBlur(
+        filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: CustomPaint(
+          foregroundPainter: _EdgePainter(radius),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: r,
+              color: const Color(0xFF101014).withOpacity(0.55),
+            ),
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 0.75px border, white 24% at the top fading to 5% at the bottom.
+class _EdgePainter extends CustomPainter {
+  final double radius;
+  final double top;
+  final double bottom;
+  _EdgePainter(this.radius, {this.top = 0.24, this.bottom = 0.05});
+  @override
+  void paint(Canvas canvas, Size s) {
+    final rect = Offset.zero & s;
+    final rr = RRect.fromRectAndRadius(rect.deflate(0.375), Radius.circular(radius));
+    canvas.drawRRect(
+        rr,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.75
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.white.withOpacity(top), Colors.white.withOpacity(bottom)],
+          ).createShader(rect));
+  }
+
+  @override
+  bool shouldRepaint(_EdgePainter o) => o.radius != radius;
+}
 
 class GlassTabBar extends StatefulWidget {
   final int index;
@@ -40723,159 +40777,145 @@ class GlassTabBar extends StatefulWidget {
 
 class _GlassTabBarState extends State<GlassTabBar>
     with TickerProviderStateMixin {
-  // Bubble position in "tab units" (0..n-1), moved by a spring.
-  late final AnimationController _pos = AnimationController.unbounded(
+  // Lens position in "tab units".
+  late final AnimationController _x = AnimationController.unbounded(
       vsync: this, value: widget.index.toDouble());
-  // 0..1: how much the bubble is "lifted" (bigger, see-through) while held.
-  late final AnimationController _lift = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 180));
-  double _vel = 0; // tabs per second, for the stretch
-  int? _hover;
+  // 1 → 1.08 while dragging (bouncy).
+  late final AnimationController _stretch =
+      AnimationController.unbounded(vsync: this, value: 1);
+  bool _dragging = false;
+
+  // Compose spring(dampingRatio 0.72, StiffnessMediumLow = 400).
+  static const _lensSpring =
+      SpringDescription(mass: 1, stiffness: 400, damping: 2 * 0.72 * 20);
+  // spring(dampingRatio 0.55, stiffness 500).
+  static const _stretchSpring =
+      SpringDescription(mass: 1, stiffness: 500, damping: 2 * 0.55 * 22.36);
+
+  void _go(AnimationController c, double to, SpringDescription d) =>
+      c.animateWith(SpringSimulation(d, c.value, to, 0));
 
   @override
   void didUpdateWidget(GlassTabBar old) {
     super.didUpdateWidget(old);
-    if (old.index != widget.index && !_lift.isAnimating && _lift.value == 0) {
-      _springTo(widget.index.toDouble());
+    if (!_dragging && old.index != widget.index) {
+      _go(_x, widget.index.toDouble(), _lensSpring);
     }
-  }
-
-  void _springTo(double target, [double velocity = 0]) {
-    final sim = SpringSimulation(
-      const SpringDescription(mass: 1, stiffness: 420, damping: 22),
-      _pos.value,
-      target,
-      velocity,
-    );
-    _pos.animateWith(sim);
   }
 
   @override
   void dispose() {
-    _pos.dispose();
-    _lift.dispose();
+    _x.dispose();
+    _stretch.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final n = widget.items.length;
-    return Glass(
-      radius: 31,
-      blur: true,
-      strong: true,
+    return Frosted(
+      radius: 32,
       child: SizedBox(
-        height: 62,
-        child: LayoutBuilder(builder: (context, c) {
-          final w = c.maxWidth;
-          final slot = (w - 12) / n;
-          double toPos(double dx) => ((dx - 6) / slot - 0.5).clamp(0.0, n - 1.0);
-          return GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTapUp: (d) {
-              final i = toPos(d.localPosition.dx).round();
-              HapticFeedback.selectionClick();
-              _springTo(i.toDouble());
-              widget.onSelect(i);
-            },
-            onHorizontalDragStart: (d) {
-              _pos.stop();
-              _lift.forward();
-              HapticFeedback.lightImpact();
-            },
-            onHorizontalDragUpdate: (d) {
-              final p = toPos(d.localPosition.dx);
-              _vel = (d.delta.dx / slot) * 60;
-              _pos.value = p;
-              final h = p.round();
-              if (h != _hover) {
-                _hover = h;
-                HapticFeedback.selectionClick();
-              }
-              setState(() {});
-            },
-            onHorizontalDragEnd: (d) {
-              final i = _pos.value.round().clamp(0, n - 1);
-              _lift.reverse();
-              _vel = 0;
-              _hover = null;
-              _springTo(i.toDouble(), d.velocity.pixelsPerSecond.dx / slot);
-              widget.onSelect(i);
-            },
-            child: AnimatedBuilder(
-              animation: Listenable.merge([_pos, _lift]),
-              builder: (context, _) {
-                final p = _pos.value;
-                final lift = _lift.value;
-                // Stretch with speed while dragging, squish when it lands.
-                final speed = (_vel.abs() / 8).clamp(0.0, 0.35);
-                final settle = (p - p.roundToDouble()).abs();
-                final sx = 1 + speed + lift * 0.10 + settle * 0.25;
-                final sy = 1 - speed * 0.45 + lift * 0.10 - settle * 0.12;
-                return Stack(
-                  children: [
-                    Positioned(
-                      left: 6 + p * slot,
-                      top: 5,
-                      width: slot,
-                      height: 52,
-                      child: Transform.scale(
-                        scaleX: sx,
-                        scaleY: sy,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(26),
-                            color: Colors.white.withOpacity(0.14 + lift * 0.06),
-                            border: Border.all(
-                                color: Colors.white.withOpacity(0.25 + lift * 0.3),
-                                width: 0.8),
-                            boxShadow: [
-                              BoxShadow(
-                                  color: Colors.white.withOpacity(0.10 * lift),
-                                  blurRadius: 18),
-                            ],
+        height: 64,
+        child: Padding(
+          padding: const EdgeInsets.all(5),
+          child: LayoutBuilder(builder: (context, c) {
+            final tabW = c.maxWidth / n;
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragStart: (_) {
+                _x.stop();
+                setState(() => _dragging = true);
+                _go(_stretch, 1.08, _stretchSpring);
+              },
+              onHorizontalDragUpdate: (d) {
+                final before = _x.value.round();
+                _x.value = (_x.value + d.delta.dx / tabW).clamp(0.0, n - 1.0);
+                if (_x.value.round() != before) setState(() {});
+              },
+              onHorizontalDragEnd: (_) {
+                final target = _x.value.round().clamp(0, n - 1);
+                setState(() => _dragging = false);
+                _go(_stretch, 1, _stretchSpring);
+                _go(_x, target.toDouble(), _lensSpring);
+                if (target != widget.index) {
+                  HapticFeedback.selectionClick();
+                  widget.onSelect(target);
+                }
+              },
+              onHorizontalDragCancel: () {
+                setState(() => _dragging = false);
+                _go(_stretch, 1, _stretchSpring);
+                _go(_x, widget.index.toDouble(), _lensSpring);
+              },
+              child: AnimatedBuilder(
+                animation: Listenable.merge([_x, _stretch]),
+                builder: (context, _) {
+                  final st = _stretch.value;
+                  final hover = _x.value.round().clamp(0, n - 1);
+                  return Stack(
+                    children: [
+                      // The lens.
+                      Positioned(
+                        left: _x.value * tabW,
+                        top: 0,
+                        bottom: 0,
+                        width: tabW,
+                        child: Transform(
+                          alignment: Alignment.center,
+                          transform: Matrix4.diagonal3Values(
+                              st, 1 + (st - 1) * 0.5, 1),
+                          child: CustomPaint(
+                            foregroundPainter:
+                                _EdgePainter(27, top: 0.28, bottom: 0.05),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.13),
+                                borderRadius: BorderRadius.circular(27),
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    Row(
-                      children: [
-                        const SizedBox(width: 6),
-                        for (var i = 0; i < n; i++)
-                          SizedBox(
-                            width: slot,
-                            child: Builder(builder: (context) {
-                              final near = (1 - (p - i).abs()).clamp(0.0, 1.0);
-                              final col = Color.lerp(
-                                  Colors.white, kGlassAccent, near)!;
-                              final (off, on, label) = widget.items[i];
-                              return Transform.scale(
-                                scale: 1 + near * lift * 0.18,
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(near > 0.5 ? on : off,
-                                        color: col, size: 23),
-                                    const SizedBox(height: 2),
-                                    Text(label,
-                                        style: glassText(10.5,
-                                            color: col,
-                                            weight: near > 0.5
-                                                ? FontWeight.w600
-                                                : FontWeight.w500)),
-                                  ],
-                                ),
-                              );
-                            }),
-                          ),
-                      ],
-                    ),
-                  ],
-                );
-              },
-            ),
-          );
-        }),
+                      Row(
+                        children: [
+                          for (var i = 0; i < n; i++)
+                            Expanded(
+                              child: SquishyGesture(
+                                pressedScale: 0.95,
+                                onTap: () {
+                                  if (i != widget.index) {
+                                    HapticFeedback.selectionClick();
+                                  }
+                                  widget.onSelect(i);
+                                },
+                                child: Builder(builder: (context) {
+                                  final on = _dragging ? i == hover : i == widget.index;
+                                  final col = on ? kGlassInfo : Colors.white;
+                                  final (off, onIcon, label) = widget.items[i];
+                                  return Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(on ? onIcon : off, color: col, size: 22),
+                                      Text(label,
+                                          style: TextStyle(
+                                              color: col,
+                                              fontSize: 11.5,
+                                              fontWeight: FontWeight.w600)),
+                                    ],
+                                  );
+                                }),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
+              ),
+            );
+          }),
+        ),
       ),
     );
   }
@@ -40898,12 +40938,10 @@ class GlassMiniPlayer extends StatelessWidget {
         if (v < -300) audioHandler.skipToNext();
         if (v > 300) audioHandler.skipToPrevious();
       },
-      child: Glass(
-        radius: 29,
-        blur: true,
-        strong: true,
+      child: Frosted(
+        radius: 32,
         child: SizedBox(
-          height: 58,
+          height: 64,
           child: Row(
             children: [
               const SizedBox(width: 8),

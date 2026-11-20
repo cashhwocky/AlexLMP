@@ -1,8 +1,11 @@
 All your music, one player.
 
-AlexLMP 3.7.2 brings back the player layout you know, now with Liquid Glass.
+AlexLMP 3.7.3 polishes the Liquid Glass tab bar and mini player.
 
-## New
+## Changed
+- **New tab bar glass.** The tab bar, search button and mini player now use a darker, smoky frosted glass with a thin edge that's brightest along the top. The sliding bubble is softer and stretches a little while you drag it.
+
+## From 3.7.2
 - **New default player.** The familiar AlexLMP player layout is back, with Liquid Glass touches: the cover art glows through a frosted background, glass buttons up top, and the bottom controls sit on tinted glass.
 - **Cleaner glass everywhere.** Song lists, Settings and cards now use the same tinted, frosted glass as the tab bar, without the shiny streak on top.
 
