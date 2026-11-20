@@ -202,7 +202,7 @@
             android:label="AlexLMP"
             android:icon="@mipmap/ic_alt_bloom"
             android:roundIcon="@mipmap/ic_alt_bloom"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -333,7 +333,7 @@
             android:label="AlexLMP"
             android:icon="@mipmap/ic_alt_borealis"
             android:roundIcon="@mipmap/ic_alt_borealis"
-            android:enabled="false"
+            android:enabled="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

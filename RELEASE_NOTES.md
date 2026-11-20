@@ -3,8 +3,9 @@ All your music, one player.
 AlexLMP 3.7.5 brings back the AlexLMP you know.
 
 ## Changed
-- **Normal AlexLMP is back.** Thanks for all the feedback on the Liquid Glass versions. The app, the player and the app icon are back to how they were in 3.6.3, and all the app styles and player styles are back too. If you were moved to Liquid Glass, you're switched back automatically.
+- **Normal AlexLMP is back.** Thanks for all the feedback on the Liquid Glass versions. The app and the player are back to how they were in 3.6.3, and all the app styles and player styles are back too. If you were moved to Liquid Glass, you're switched back automatically.
 - **Smoother tab bar.** The tab bar has a new pill that marks your tab. Drag along the bar and the pill follows your finger with a soft ripple, then settles on the nearest tab. It uses your theme colors.
+- **Borealis is the new default app icon.** If you picked a different icon before, you keep it. You can switch any time in Settings > App icon.
 - **AI stays.** The AI tab, AI DJ and everything else from 3.6 are all still here.
 
 ## From 3.6.3

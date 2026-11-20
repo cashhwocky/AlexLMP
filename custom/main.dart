@@ -23538,7 +23538,7 @@ class _SetupScreenState extends State<SetupScreen> {
     HapticFeedback.mediumImpact();
     appState.setB('setup_done', true);
     final k = _pickedIcon;
-    if (k != null && k != 'bloom') {
+    if (k != null && k != 'borealis') {
       Future.delayed(const Duration(milliseconds: 600), () async {
         try {
           appState.setStr('app_icon', k);
@@ -23736,7 +23736,7 @@ class _SetupScreenState extends State<SetupScreen> {
           child: Reveal(
             child: AnimatedAppIcon(
               style: kAppIcons.firstWhere(
-                  (e) => e.key == (_pickedIcon ?? appState.str('app_icon', 'bloom')),
+                  (e) => e.key == (_pickedIcon ?? appState.str('app_icon', 'borealis')),
                   orElse: () => kAppIcons.first),
               size: 150,
             ),
@@ -23799,7 +23799,7 @@ class _SetupScreenState extends State<SetupScreen> {
       ];
 
   List<Widget> _icons(Color accent) {
-    final current = _pickedIcon ?? appState.str('app_icon', 'bloom');
+    final current = _pickedIcon ?? appState.str('app_icon', 'borealis');
     return [
       _heading(Icons.apps_rounded, 'Step 1 · Icon', 'Pick your icon',
           'Choose how AlexLMP looks on your home screen. Each one has its own launch animation.',
@@ -28015,7 +28015,7 @@ const List<AppIconStyle> kAppIcons = [
 const double kIconBarScale = 1.35;
 
 AppIconStyle appIconStyle([String? key]) {
-  final k = key ?? appState.str('app_icon', 'bloom');
+  final k = key ?? appState.str('app_icon', 'borealis');
   return kAppIcons.firstWhere((e) => e.key == k, orElse: () => kAppIcons.first);
 }
 
@@ -28632,7 +28632,7 @@ Future<void> showAppIconPicker(BuildContext context) async {
     builder: (ctx) => ListenableBuilder(
       listenable: appState,
       builder: (ctx, _) {
-        final current = appState.str('app_icon', 'bloom');
+        final current = appState.str('app_icon', 'borealis');
         final maxH = MediaQuery.of(ctx).size.height * 0.82;
         return SafeArea(
           child: ConstrainedBox(
