@@ -41,11 +41,11 @@ class MainActivity : AudioServiceActivity() {
     private fun currentAppIcon(): String {
         val pm = packageManager
         for (k in appIcons) {
-            if (k == "pixel") continue
+            if (k == "bloom") continue
             val st = pm.getComponentEnabledSetting(iconAlias(k))
             if (st == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return k
         }
-        return "pixel"
+        return "bloom"
     }
 
     /**
@@ -58,9 +58,9 @@ class MainActivity : AudioServiceActivity() {
             val pm = packageManager
             val enabled = android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             val chosen = appIcons.any {
-                it != "pixel" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
+                it != "bloom" && pm.getComponentEnabledSetting(iconAlias(it)) == enabled
             }
-            val bloom = iconAlias("pixel")
+            val bloom = iconAlias("bloom")
             if (chosen && pm.getComponentEnabledSetting(bloom) ==
                 android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
             ) {
@@ -330,7 +330,7 @@ class MainActivity : AudioServiceActivity() {
                     }
                     "getAppIcon" -> result.success(currentAppIcon())
                     "setAppIcon" -> {
-                        val key = call.argument<String>("key") ?: "pixel"
+                        val key = call.argument<String>("key") ?: "bloom"
                         if (key !in appIcons) {
                             result.error("ICON", "Unknown icon: $key", null)
                         } else {

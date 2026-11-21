@@ -23562,7 +23562,7 @@ class _SetupScreenState extends State<SetupScreen> {
     HapticFeedback.mediumImpact();
     appState.setB('setup_done', true);
     final k = _pickedIcon;
-    if (k != null && k != 'pixel') {
+    if (k != null && k != 'bloom') {
       Future.delayed(const Duration(milliseconds: 600), () async {
         try {
           appState.setStr('app_icon', k);
@@ -23760,7 +23760,7 @@ class _SetupScreenState extends State<SetupScreen> {
           child: Reveal(
             child: AnimatedAppIcon(
               style: kAppIcons.firstWhere(
-                  (e) => e.key == (_pickedIcon ?? appState.str('app_icon', 'pixel')),
+                  (e) => e.key == (_pickedIcon ?? appState.str('app_icon', 'bloom')),
                   orElse: () => kAppIcons.first),
               size: 150,
             ),
@@ -23823,7 +23823,7 @@ class _SetupScreenState extends State<SetupScreen> {
       ];
 
   List<Widget> _icons(Color accent) {
-    final current = _pickedIcon ?? appState.str('app_icon', 'pixel');
+    final current = _pickedIcon ?? appState.str('app_icon', 'bloom');
     return [
       _heading(Icons.apps_rounded, 'Step 1 · Icon', 'Pick your icon',
           'Choose how bitLMP looks on your home screen. Each one has its own launch animation.',
@@ -27987,7 +27987,11 @@ class AppIconStyle {
 }
 
 const List<AppIconStyle> kAppIcons = [
-  // Default: pixel BIT / LMP with a cursor.
+  // Default: Bloom.
+  AppIconStyle('bloom', 'Bloom', [Color(0xFFD8CEF2)], Color(0xFF7667AA), null,
+      [Color(0xFF3D3258)], 'wave', 'Wave',
+      cookie: true, barScale: 1.08),
+  // Pixel: BIT / LMP with a cursor.
   AppIconStyle('pixel', 'Pixel', [Color(0xFF262426)], null, null,
       [Colors.white], 'pulse', 'Pulse', custom: 'pixel'),
   // Default: bitLMP, white disc with purple sound bars on black (bit apps).
@@ -27996,9 +28000,6 @@ const List<AppIconStyle> kAppIcons = [
   // Full-bleed: the colour fills the whole icon (no circle inside a
   // square), so it looks right in any launcher shape.
   // Default: Material You lilac, dark bars on a purple cookie.
-  AppIconStyle('bloom', 'Bloom', [Color(0xFFD8CEF2)], Color(0xFF7667AA), null,
-      [Color(0xFF3D3258)], 'wave', 'Wave',
-      cookie: true, barScale: 1.08),
   AppIconStyle('classic', 'Classic', [Color(0xFF101830)], null, null,
       [Color(0xFF567CFF)], 'bounce', 'Bounce'),
   AppIconStyle('midnight', 'Midnight', [Color(0xFF000000)], null, null,
@@ -28045,7 +28046,7 @@ const List<AppIconStyle> kAppIcons = [
 const double kIconBarScale = 1.35;
 
 AppIconStyle appIconStyle([String? key]) {
-  final k = key ?? appState.str('app_icon', 'pixel');
+  final k = key ?? appState.str('app_icon', 'bloom');
   return kAppIcons.firstWhere((e) => e.key == k, orElse: () => kAppIcons.first);
 }
 
@@ -28103,6 +28104,11 @@ class AppIconPainter extends CustomPainter {
       canvas.clipPath(Path()..addOval(full));
     }
     canvas.drawRect(full, _fill(s.bg, full));
+    if (s.key == 'bloom') {
+      // The original Bloom icon: lilac cookie with sound bars.
+      _oldPaint(canvas);
+      return;
+    }
     if (s.key == 'pixel') {
       _paintPixel(canvas);
     } else {
@@ -28730,7 +28736,7 @@ Future<void> showAppIconPicker(BuildContext context) async {
     builder: (ctx) => ListenableBuilder(
       listenable: appState,
       builder: (ctx, _) {
-        final current = appState.str('app_icon', 'pixel');
+        final current = appState.str('app_icon', 'bloom');
         final maxH = MediaQuery.of(ctx).size.height * 0.82;
         return SafeArea(
           child: ConstrainedBox(
@@ -30846,7 +30852,7 @@ class _ClockPainter extends CustomPainter {
 // When you publish a release: bump kAppVersion here to the SAME number as the
 // release tag (tag v2.2.0  ->  kAppVersion '2.2.0').
 
-const String kAppVersion = '3.8.1';
+const String kAppVersion = '3.8.2';
 /// "Support my project" card at the very top of Settings.
 class SupportCard extends StatefulWidget {
   const SupportCard({super.key});

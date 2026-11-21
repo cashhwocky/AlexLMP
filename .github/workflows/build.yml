@@ -232,6 +232,12 @@ jobs:
               else:
                   f = '<path android:pathData="%s" android:fillType="evenOdd">%s</path>' % (
                       MARK_DISC + MARK_BARS, grad("android:fillColor", bars, 27, 27, 81, 81))
+              if k == "bloom":
+                  # The original Bloom icon: lilac cookie with sound bars.
+                  f = '<path android:pathData="%s" android:fillColor="%s"/>' % (COOKIE, disc)
+                  f += GROUP_OPEN.replace("1.35", "0.72")
+                  f += '<path android:pathData="%s" android:strokeWidth="5.4" android:strokeLineCap="round" android:strokeColor="%s"/>' % (BARS, bars[0])
+                  f += '</group>'
               if k == "bitlmp":
                   f = '<path android:pathData="%s" android:fillColor="#FFFFFF"/>' % MARK_DISC
                   f += '<path android:pathData="%s" android:fillColor="#6A6BF8"/>' % MARK_BARS

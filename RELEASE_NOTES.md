@@ -1,9 +1,10 @@
 All your music, one player.
 
-bitLMP 3.8.1 gets a brand new pixel-art app icon.
+bitLMP 3.8.2 brings back the Bloom icon as the default.
 
-## New
-- **New pixel app icon.** "BIT" over "LMP" in pixel letters, with a little cursor clicking on it. It's the new default icon and fits every launcher shape. If you picked a different icon before, you keep it, and you can switch any time in Settings > App icon.
+## Changed
+- **Bloom is the default app icon again.** The lilac Bloom icon is back as the default. If you picked a different icon, you keep it.
+- **New pixel icon to pick.** "BIT" over "LMP" in pixel letters with a little cursor, in Settings > App icon.
 
 ## From 3.8.0
 - AlexLMP is now **bitLMP**, joining the bit family of apps (bitMessages, bitDialer, bitMaps and more).

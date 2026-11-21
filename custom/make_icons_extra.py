@@ -427,12 +427,12 @@ for key, fn in ICONS.items():
           '<item android:drawable="@drawable/ic_alt_%s_bg"/>'
           '<item android:drawable="@drawable/ic_alt_%s_fg"/></layer-list>\n' % (key, key))
 
-# Pixel is the main launcher icon.
+# Bloom is the main launcher icon.
 for name in ("ic_launcher", "ic_launcher_round"):
     write("%s/mipmap-anydpi-v26/%s.xml" % (R, name), HEAD +
           '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">'
-          '<background android:drawable="@drawable/ic_alt_pixel_bg"/>'
-          '<foreground android:drawable="@drawable/ic_alt_pixel_fg"/>'
-          '<monochrome android:drawable="@drawable/ic_alt_pixel_mono"/></adaptive-icon>\n')
+          '<background android:drawable="@drawable/ic_alt_bloom_bg"/>'
+          '<foreground android:drawable="@drawable/ic_alt_bloom_fg"/>'
+          '<monochrome android:drawable="@drawable/ic_alt_mono"/></adaptive-icon>\n')
 
 print("Extra app icons generated:", ", ".join(ICONS))
